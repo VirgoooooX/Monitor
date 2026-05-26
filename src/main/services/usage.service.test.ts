@@ -138,12 +138,15 @@ function createProviderAuthRepoStub(
 }
 
 describe('usage service provider list', () => {
-  it('includes enabled configured providers even when they have no events yet', () => {
-    // `providerAuth` is intentionally omitted — the falls-back-to
-    // baseline + collectors path is what the original draft test was
-    // pinning. With `exactOptionalPropertyTypes: true` enabled in
-    // tsconfig, an explicit `providerAuth: undefined` would be a
-    // type error, so we omit the key instead.
+  it('omits collector toggle keys when no provider_auth row backs them', () => {
+    // Settings declare `qwen` / `kimi` / `xiaomi` as enabled
+    // collectors but no `provider_auth` rows back them. Per the AI
+    // Accounts unification (planning doc §Renderer UI 设计) the
+    // legacy `settings.collectors` map MUST NOT make a provider
+    // appear in the summary. Aggregated usage events are still
+    // counted (the events themselves were captured before the
+    // unification), but the row is hidden until an account is
+    // imported.
     const service = createUsageService({
       settings: createSettingsRepo(baseSettings()),
       usageEvents: createUsageEventsRepoStub([
@@ -156,29 +159,23 @@ describe('usage service provider list', () => {
           eventCount: 1,
         },
       ]),
+      providerAuth: createProviderAuthRepoStub([]),
       now: () => new Date('2026-05-26T08:00:00+08:00').getTime(),
     });
 
     const summary = service.getUsageSummary({ range: 'today' });
     const providers = summary.perProvider.map((p) => p.provider);
 
-    expect(providers).toContain('qwen');
-    expect(providers).toContain('kimi');
-    expect(providers).toContain('xiaomi');
-    expect(summary.perProvider.find((p) => p.provider === 'xiaomi')).toMatchObject({
-      inputTokens: 11,
-      outputTokens: 13,
-      cacheTokens: 17,
-      eventCount: 1,
-    });
+    expect(providers).not.toContain('qwen');
+    expect(providers).not.toContain('kimi');
+    expect(providers).not.toContain('xiaomi');
+    expect(providers).not.toContain('codex');
   });
 
-  it('includes provider_auth-imported providers even with no collector toggle and no events', () => {
-    // Settings have no `gemini-cli` collector toggle, and the usage
-    // events stub returns no row for `gemini-cli`. The provider must
-    // still surface in the summary because a `provider_auth` row was
-    // imported (Requirement 14.1: derived providers cover collectors
-    // ∪ auth ∪ baseline).
+  it('includes enabled provider_auth rows even with no events yet', () => {
+    // An imported `provider_auth` row surfaces in the summary even
+    // before any usage events land — empty-event defaults (zero
+    // totals) still let the renderer display the account.
     const importedAt = new Date('2026-05-20T10:00:00+08:00').getTime();
     const geminiCliRow: ProviderAuthRow = {
       id: '00000000-0000-4000-8000-000000000001',
@@ -194,6 +191,7 @@ describe('usage service provider list', () => {
       lastQuotaAt: null,
       lastErrorCode: null,
       lastErrorMessage: null,
+      enabled: true,
       secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000001',
     };
 
@@ -208,13 +206,57 @@ describe('usage service provider list', () => {
     const providers = summary.perProvider.map((p) => p.provider);
 
     expect(providers).toContain('gemini-cli');
-    // Empty-event default: no usage data yet, but the row is present
-    // with zero totals so the renderer can still display the account.
     expect(summary.perProvider.find((p) => p.provider === 'gemini-cli')).toMatchObject({
       inputTokens: 0,
       outputTokens: 0,
       cacheTokens: 0,
       eventCount: 0,
     });
+  });
+
+  it('hides disabled provider_auth rows from the summary', () => {
+    // `enabled: false` means the user paused the account; the
+    // summary MUST NOT surface it (planning doc §Backend 刷新).
+    // Disabled rows still live in `provider_auth` so the user can
+    // re-enable them, but the usage panel treats them as gone.
+    const importedAt = new Date('2026-05-20T10:00:00+08:00').getTime();
+    const disabledRow: ProviderAuthRow = {
+      id: '00000000-0000-4000-8000-000000000002',
+      provider: 'deepseek',
+      label: 'deepseek:paused',
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: 'health_only',
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: false,
+      secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000002',
+    };
+
+    const service = createUsageService({
+      settings: createSettingsRepo(baseSettings()),
+      usageEvents: createUsageEventsRepoStub([
+        {
+          provider: 'deepseek',
+          inputTokens: 5,
+          outputTokens: 0,
+          cacheTokens: 0,
+          costUsd: null,
+          eventCount: 1,
+        },
+      ]),
+      providerAuth: createProviderAuthRepoStub([disabledRow]),
+      now: () => new Date('2026-05-26T08:00:00+08:00').getTime(),
+    });
+
+    const summary = service.getUsageSummary({ range: 'today' });
+    const providers = summary.perProvider.map((p) => p.provider);
+
+    expect(providers).not.toContain('deepseek');
   });
 });

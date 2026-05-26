@@ -350,7 +350,7 @@ export const providerAuthMetadataSchema = z
     id: trimmedNonEmpty,
     provider: providerIdSchema,
     label: trimmedNonEmpty,
-    source: z.literal('cpa-auth-file'),
+    source: z.enum(['cpa-auth-file', 'manual-api-key']),
     accountId: z.string().nullable(),
     projectId: z.string().nullable(),
     quotaCapability: quotaCapabilitySchema,
@@ -360,6 +360,7 @@ export const providerAuthMetadataSchema = z
     lastQuotaAt: z.number().int().nullable(),
     lastErrorCode: providerAuthErrorCodeSchema.nullable(),
     lastErrorMessage: z.string().max(80).nullable(),
+    enabled: z.boolean(),
   })
   .strict();
 
@@ -1092,6 +1093,67 @@ export const validateProviderAuthInputSchema = z
   .strict();
 
 /**
+ * Input for `desktop:createProviderAuthApiKey`. The renderer collects
+ * the API-key + (optional) base URL from a manual entry form and
+ * the service shapes them into a {@link ProviderAuthSecretPayload}
+ * before encrypting. Only API-key providers (`gemini-api`,
+ * `deepseek`, `xiaomi`, `openai-compatible`) accept this entry —
+ * OAuth providers must come in via `importProviderAuthFile`.
+ *
+ * Validation rules:
+ *   - `provider` is restricted to the manual-API-key subset. Other
+ *     `ProviderId` values fail at the schema layer with a closed
+ *     enum mismatch.
+ *   - `apiKey` is `trimmedNonEmpty` so a whitespace-only value is
+ *     rejected before the secret store ever sees it.
+ *   - `label` is optional; when absent the service generates a
+ *     provider-specific default (`Gemini API key` etc.).
+ *   - `baseUrl`, when present, must parse as an http(s) URL. The
+ *     handler additionally requires `baseUrl` for
+ *     `'openai-compatible'` (the schema cannot encode that
+ *     conditional without a `superRefine` that depends on the
+ *     `provider` field, so the service double-checks).
+ */
+export const manualApiKeyProviderSchema = z.enum([
+  'gemini-api',
+  'deepseek',
+  'xiaomi',
+  'openai-compatible',
+]);
+
+const optionalBaseUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .url()
+  .refine(
+    (v) => v.startsWith('http://') || v.startsWith('https://'),
+    'baseUrl must be http(s)://',
+  )
+  .optional();
+
+export const createProviderAuthApiKeyInputSchema = z
+  .object({
+    provider: manualApiKeyProviderSchema,
+    label: z.string().trim().min(1).max(120).optional(),
+    apiKey: trimmedNonEmpty,
+    baseUrl: optionalBaseUrlSchema,
+  })
+  .strict();
+
+/**
+ * Input for `desktop:setProviderAuthEnabled`. Idempotent on a
+ * missing id (the handler returns `null`); the schema only checks
+ * the shape.
+ */
+export const setProviderAuthEnabledInputSchema = z
+  .object({
+    id: trimmedNonEmpty,
+    enabled: z.boolean(),
+  })
+  .strict();
+
+/**
  * Result envelope for `desktop:validateProviderAuth`. `ok` is a
  * direct boolean rather than the `IpcResult` discriminator because
  * a "validation failed" outcome is a normal, non-exceptional answer
@@ -1227,6 +1289,14 @@ export const desktopApiSchemas = {
   validateProviderAuth: {
     input: validateProviderAuthInputSchema,
     output: providerAuthValidationResultSchema,
+  },
+  createProviderAuthApiKey: {
+    input: createProviderAuthApiKeyInputSchema,
+    output: providerAuthMetadataSchema,
+  },
+  setProviderAuthEnabled: {
+    input: setProviderAuthEnabledInputSchema,
+    output: providerAuthMetadataSchema.nullable(),
   },
 } as const;
 

@@ -89,6 +89,7 @@ export interface ParseResult {
 // ---------------------------------------------------------------------------
 
 const ACCESS_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
+  // CPA-exported wrapper format (the original v1 import path).
   ['metadata', 'access_token'],
   ['metadata', 'token', 'access_token'],
   ['access_token'],
@@ -96,6 +97,14 @@ const ACCESS_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
   ['metadata', 'token'], // when value is string, treat as token
   ['metadata', 'id_token'],
   ['metadata', 'cookie'],
+  // Native CLI on-disk formats — picked up by the auto-discovery
+  // path. Codex CLI writes `~/.codex/auth.json` with a `tokens`
+  // sub-object; Claude Code writes `~/.claude/.credentials.json`
+  // with a `claudeAiOauth` sub-object. Both ship in the official
+  // CLIs and predate the CPA wrapper format, so the discovery flow
+  // would fail to parse them without these extra paths.
+  ['tokens', 'access_token'],
+  ['claudeAiOauth', 'accessToken'],
 ];
 
 const API_KEY_PATHS: ReadonlyArray<readonly string[]> = [
@@ -126,17 +135,24 @@ const EXPIRY_PATHS: ReadonlyArray<readonly string[]> = [
   ['expires_in'],
   ['metadata', 'expiry'],
   ['metadata', 'expires_in'],
+  // Native CLI: Claude uses `claudeAiOauth.expiresAt` (epoch ms),
+  // Gemini CLI / Antigravity use `expiry_date` (epoch ms).
+  ['claudeAiOauth', 'expiresAt'],
+  ['expiry_date'],
 ];
 
 // Auxiliary path lists. The service layer / lightweight validate path
 // will treat a missing `refreshToken` as informational only; it is the
 // `accessToken` (or `apiKey`) that gates a successful import.
 const REFRESH_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
+  // CPA wrapper.
   ['metadata', 'refresh_token'],
   ['metadata', 'token', 'refresh_token'],
   ['refresh_token'],
   ['token', 'refresh_token'],
   ['tokens', 'refresh_token'],
+  // Claude Code native.
+  ['claudeAiOauth', 'refreshToken'],
 ];
 
 const BASE_URL_PATHS: ReadonlyArray<readonly string[]> = [

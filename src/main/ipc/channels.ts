@@ -67,6 +67,10 @@ export const DESKTOP_INVOKE_CHANNELS = {
   deleteProviderAuth: 'desktop:deleteProviderAuth',
   refreshProviderQuota: 'desktop:refreshProviderQuota',
   validateProviderAuth: 'desktop:validateProviderAuth',
+  // AI 账号 unified entry points (planning doc §IPC). New v2 channels;
+  // the existing CPA channels stay as the file-import path.
+  createProviderAuthApiKey: 'desktop:createProviderAuthApiKey',
+  setProviderAuthEnabled: 'desktop:setProviderAuthEnabled',
 } as const;
 
 /** Compile-time union of every supported invoke method name. */

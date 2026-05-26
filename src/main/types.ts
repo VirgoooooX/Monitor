@@ -478,11 +478,16 @@ export interface ProviderAuthMetadata {
    */
   label: string;
   /**
-   * Where the row originated. v1 only supports the CPA auth-file
-   * import flow; future entry points (e.g. `'manual-api-key'`)
-   * extend this union.
+   * Where the row originated.
+   *
+   *   - `'cpa-auth-file'`   — imported from a CPA / CLIProxyAPI auth file
+   *                           via the OS file dialog.
+   *   - `'manual-api-key'`  — typed in by the user on the AI accounts
+   *                           settings panel; only API-key providers
+   *                           (`gemini-api`, `deepseek`, `xiaomi`,
+   *                           `openai-compatible`) take this path.
    */
-  source: 'cpa-auth-file';
+  source: 'cpa-auth-file' | 'manual-api-key';
   /** ChatGPT / Codex account id when the parser could extract one. */
   accountId: string | null;
   /** Google project id (Gemini CLI / Antigravity) when known. */
@@ -499,6 +504,62 @@ export interface ProviderAuthMetadata {
   lastErrorCode: ProviderAuthErrorCode | null;
   /** ≤80 chars, pre-redacted. `null` iff there is no error. */
   lastErrorMessage: string | null;
+  /**
+   * `true` while the account participates in quota / usage refresh.
+   * `false` keeps the row visible in Settings but excludes it from
+   * scheduled refreshes, the quota cache, and the usage summary —
+   * the user can re-enable it without re-importing.
+   *
+   * New rows default to `true`; pre-existing rows from before the
+   * field landed migrate to `true` via the SQLite default.
+   */
+  enabled: boolean;
+}
+
+/**
+ * Subset of API-key providers that accept a manually-typed credential
+ * via the "AI 账号" settings panel. OAuth-style providers
+ * (`claude-code`, `codex`, `gemini-cli`, `antigravity`) are NOT in
+ * this set — they require the full CPA auth-file import flow because
+ * the access token must be paired with a refresh token / project id
+ * the user cannot reasonably copy-paste.
+ */
+export type ManualApiKeyProvider =
+  | 'gemini-api'
+  | 'deepseek'
+  | 'xiaomi'
+  | 'openai-compatible';
+
+/**
+ * Renderer-supplied input for `desktop:createProviderAuthApiKey`.
+ *
+ * The renderer cannot ship a plain Secret_Payload across the IPC
+ * boundary because the contract is renderer-blind by construction
+ * (Requirement 1.4). This shape is the manual entry point: it
+ * carries only the small set of fields the user typed into the form,
+ * and the service shapes them into the canonical
+ * {@link ProviderAuthSecretPayload} before encrypting.
+ *
+ * `baseUrl` is required for `'openai-compatible'` and optional for
+ * the other API-key providers.
+ */
+export interface CreateProviderAuthApiKeyInput {
+  provider: ManualApiKeyProvider;
+  /** Optional user-readable label. The service generates a sensible default when blank. */
+  label?: string;
+  /** Required, non-empty. Encrypted at rest under `cpaAuth.providerAuth.<id>`. */
+  apiKey: string;
+  /** Required for `'openai-compatible'`; optional otherwise. */
+  baseUrl?: string;
+}
+
+/**
+ * Renderer-supplied input for `desktop:setProviderAuthEnabled`. The
+ * handler is idempotent on a missing id (returns `null`).
+ */
+export interface SetProviderAuthEnabledInput {
+  id: string;
+  enabled: boolean;
 }
 
 /**
@@ -1015,7 +1076,26 @@ export interface DesktopApi {
   importProviderAuthFile(input: {
     provider: ProviderId;
   }): Promise<ProviderAuthMetadata>;
+  /**
+   * Create a new `provider_auth` row from a manually-typed API key.
+   * Only API-key providers (`gemini-api`, `deepseek`, `xiaomi`,
+   * `openai-compatible`) accept this entry; OAuth providers must go
+   * through `importProviderAuthFile`. The returned metadata is
+   * structurally redacted — the API key is never echoed back.
+   */
+  createProviderAuthApiKey(
+    input: CreateProviderAuthApiKeyInput,
+  ): Promise<ProviderAuthMetadata>;
   deleteProviderAuth(input: { id: string }): Promise<void>;
+  /**
+   * Toggle the per-account `enabled` flag. Disabling clears the
+   * account's quota cache; enabling makes it eligible for the next
+   * scheduled refresh. Returns the updated metadata, or `null` when
+   * the id does not exist (idempotent — same shape as `delete`).
+   */
+  setProviderAuthEnabled(
+    input: SetProviderAuthEnabledInput,
+  ): Promise<ProviderAuthMetadata | null>;
   refreshProviderQuota(input?: {
     id?: string;
     provider?: ProviderId;

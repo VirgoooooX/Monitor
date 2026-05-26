@@ -73,6 +73,7 @@ function makeRow(
     lastQuotaAt: 1_700_000_000_000,
     lastErrorCode: null,
     lastErrorMessage: null,
+    enabled: true,
   };
   return { ...base, ...overrides };
 }

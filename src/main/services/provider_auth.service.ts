@@ -45,6 +45,9 @@ import type {
   ProviderAuthSecretPayload,
   ProviderId,
   ProviderAuthDiagnosticsEntry,
+  CreateProviderAuthApiKeyInput,
+  SetProviderAuthEnabledInput,
+  ManualApiKeyProvider,
 } from '../types';
 import { PROVIDER_DEFAULT_CAPABILITY } from '../types';
 import type {
@@ -103,6 +106,26 @@ export interface ProviderAuthService {
    *   map them to `unavailable` / `auth_expired`).
    */
   importFromFile(input: { provider: ProviderId }): Promise<ProviderAuthMetadata>;
+  /**
+   * Create a new account from a manually-typed API key. Only the
+   * `ManualApiKeyProvider` subset is accepted (OAuth-style providers
+   * must use `importFromFile`). The returned metadata is structurally
+   * redacted — the API key is never echoed back.
+   *
+   * @throws {ProviderAuthError} with code `validation` for empty
+   *   `apiKey`, missing `baseUrl` on `'openai-compatible'`, or any
+   *   other shape violation; `SecretsUnavailableError` /
+   *   `SecretsDecryptError` propagate from the secret store.
+   */
+  createApiKey(input: CreateProviderAuthApiKeyInput): ProviderAuthMetadata;
+  /**
+   * Toggle the per-account `enabled` flag. Returns the updated
+   * metadata, or `null` when the id does not exist (idempotent —
+   * matches the {@link remove} contract). Disabling does not delete
+   * the row or the secret; it just opts the account out of every
+   * scheduled refresh path.
+   */
+  setEnabled(input: SetProviderAuthEnabledInput): ProviderAuthMetadata | null;
   /** Idempotent delete; safe to call when no row exists. */
   remove(id: string): void;
   /** Lightweight (no upstream call) validate of a stored account. */
@@ -170,6 +193,7 @@ export function redactRow(row: ProviderAuthRow): ProviderAuthMetadata {
     lastQuotaAt: row.lastQuotaAt,
     lastErrorCode: row.lastErrorCode,
     lastErrorMessage: row.lastErrorMessage,
+    enabled: row.enabled,
   };
 }
 
@@ -453,6 +477,7 @@ export function createProviderAuthService(
       lastQuotaAt: null,
       lastErrorCode: null,
       lastErrorMessage: null,
+      enabled: true,
       secretKey,
     };
 
@@ -528,6 +553,176 @@ export function createProviderAuthService(
       repo.remove(id);
       secrets.remove(secretKey);
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // createApiKey()
+  // -------------------------------------------------------------------------
+  //
+  // Manual API-key entry path. Symmetric to `importFromFile` (atomic
+  // secret + row write inside `runInTxn`, lightweight validate to
+  // populate `lastErrorCode`) but skips the file dialog and the
+  // CPA parser — we already know the API key and the optional
+  // base URL the user typed in.
+  //
+  // Validation rules duplicated from the IPC schema layer so the
+  // service is robust on its own (the schema is the first line of
+  // defence; the duplication keeps unit tests honest):
+  //
+  //   - `apiKey` non-empty after `trim()`.
+  //   - `provider === 'openai-compatible'` requires `baseUrl`.
+  //   - For any provider, `baseUrl` (when present) is forwarded
+  //     verbatim — additional URL parsing is the schema's job.
+  //
+  // The new row defaults to `enabled: true` so the next refresh
+  // tick picks it up immediately.
+  function createApiKey(
+    input: CreateProviderAuthApiKeyInput,
+  ): ProviderAuthMetadata {
+    const apiKey = input.apiKey.trim();
+    if (apiKey.length === 0) {
+      throw new ProviderAuthError(
+        'validation',
+        bound('api key must not be empty'),
+      );
+    }
+    const baseUrl =
+      typeof input.baseUrl === 'string' && input.baseUrl.trim().length > 0
+        ? input.baseUrl.trim()
+        : undefined;
+    if (input.provider === 'openai-compatible' && baseUrl === undefined) {
+      throw new ProviderAuthError(
+        'validation',
+        bound('base url is required for openai-compatible'),
+      );
+    }
+
+    const id = uuid();
+    const secretKey = `cpaAuth.providerAuth.${id}`;
+    const importedAt = now();
+
+    const label =
+      typeof input.label === 'string' && input.label.trim().length > 0
+        ? input.label.trim()
+        : defaultLabelFor(input.provider);
+
+    const payload: ProviderAuthSecretPayload = baseUrl !== undefined
+      ? { apiKey, baseUrl }
+      : { apiKey };
+
+    const row: ProviderAuthRow = {
+      id,
+      provider: input.provider,
+      label,
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: PROVIDER_DEFAULT_CAPABILITY[input.provider],
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: true,
+      secretKey,
+    };
+
+    runInTxn(() => {
+      secrets.set(secretKey, JSON.stringify(payload));
+      try {
+        repo.insert(row);
+      } catch (err) {
+        try {
+          secrets.remove(secretKey);
+        } catch {
+          // See importFromFile() — the original error is what matters.
+        }
+        throw err;
+      }
+    });
+
+    // Lightweight validate. For an API-key payload the only thing
+    // we can check is "apiKey is non-empty", which we already
+    // enforced above; the call is still useful because it persists
+    // `lastValidatedAt` so the UI shows a fresh "刚刚校验" timestamp.
+    const validation = validateLightweight(input.provider, payload);
+    const validatedAt = now();
+    repo.update(id, {
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    });
+
+    const finalised: ProviderAuthRow = {
+      ...row,
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    };
+    return redactRow(finalised);
+  }
+
+  // -------------------------------------------------------------------------
+  // setEnabled()
+  // -------------------------------------------------------------------------
+  //
+  // Toggle the per-account refresh opt-in. Idempotent on a missing
+  // id (returns `null`, mirroring `remove`'s no-op-on-missing
+  // contract — the IPC handler maps that into a successful envelope).
+  //
+  // Quota cache eviction for `enabled=false` is the QuotaService's
+  // responsibility (`refresh({ id })` deletes the cache entry when
+  // it sees `enabled=false`); we keep this method narrowly focused
+  // on the row write so it stays trivial to test.
+  function setEnabled(
+    input: SetProviderAuthEnabledInput,
+  ): ProviderAuthMetadata | null {
+    const existing = repo.get(input.id);
+    if (existing === null) {
+      return null;
+    }
+    // Short-circuit when the value is already correct — avoids a
+    // pointless `updatedAt` bump on a no-op toggle.
+    if (existing.enabled === input.enabled) {
+      return redactRow(existing);
+    }
+    const ts = now();
+    repo.update(input.id, {
+      enabled: input.enabled,
+      updatedAt: ts,
+    });
+    const updated: ProviderAuthRow = {
+      ...existing,
+      enabled: input.enabled,
+      updatedAt: ts,
+    };
+    return redactRow(updated);
+  }
+
+  /**
+   * Default label used when the user does not supply one in the
+   * manual API-key form. Falls back to the provider's zh-CN brand
+   * label so the row is recognisable in the settings list at a
+   * glance.
+   */
+  function defaultLabelFor(provider: ManualApiKeyProvider): string {
+    switch (provider) {
+      case 'gemini-api':
+        return 'Gemini API key';
+      case 'deepseek':
+        return 'DeepSeek API key';
+      case 'xiaomi':
+        return '小米 Mimo API key';
+      case 'openai-compatible':
+        return 'OpenAI 兼容 API key';
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -617,6 +812,8 @@ export function createProviderAuthService(
   return {
     list,
     importFromFile,
+    createApiKey,
+    setEnabled,
     remove,
     validate,
   };

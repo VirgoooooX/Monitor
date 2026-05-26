@@ -786,6 +786,58 @@
   text-overflow: ellipsis;
 }
 
+/* ── Nested settings groups ─────────────────────────────────────────── */
+
+.settings-view__subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 2px;
+  padding-top: 16px;
+  border-top: 1px solid var(--sv-border);
+}
+
+.settings-view__subsection-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.settings-view__subsection-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  color: #14b8a6;
+  background: rgba(20, 184, 166, 0.08);
+  border: 1px solid rgba(20, 184, 166, 0.24);
+  border-radius: 7px;
+}
+
+.settings-view__subsection-titles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-view__subsection-title {
+  margin: 0;
+  color: var(--sv-text);
+  font-size: var(--type-base, 14px);
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.settings-view__subsection-hint {
+  margin: 0;
+  color: var(--sv-text-faint);
+  font-size: var(--type-sm, 13px);
+  letter-spacing: 0.02em;
+}
+
 /* ── Sticky save bar ────────────────────────────────────────────────── */
 
 .settings-view__form-pad {

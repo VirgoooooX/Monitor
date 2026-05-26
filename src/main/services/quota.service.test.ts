@@ -61,6 +61,7 @@ function makeRow(
     lastQuotaAt: null,
     lastErrorCode: null,
     lastErrorMessage: null,
+    enabled: true,
     secretKey: `cpaAuth.providerAuth.${id}`,
     ...overrides,
   };

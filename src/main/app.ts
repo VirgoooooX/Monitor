@@ -83,27 +83,13 @@ import {
 } from './store/retention';
 import { createCompactWindow, createExpandedWindow } from './windows';
 import { createTray } from './tray';
-import {
-  createCodexCollector,
-} from './collectors/usage/codex.collector';
-import {
-  createGeminiCollector,
-} from './collectors/usage/gemini.collector';
-import {
-  createAntigravityCollector,
-} from './collectors/usage/antigravity.collector';
-import {
-  createOpenCodeCollector,
-} from './collectors/usage/opencode.collector';
-import {
-  createDeepSeekCollector,
-} from './collectors/usage/deepseek.collector';
-import {
-  persistCapabilityResult,
-  applyEmptyWindowGuard,
-  type RunUsageCollectorOptions,
-} from './collectors/usage/Collector';
-import type { UsageCollector } from './collectors/usage/types';
+// `app.ts` no longer drives per-collector usage ticks (the AI
+// Accounts unification moved that responsibility to
+// `quotaService.refresh` against `provider_auth` rows); the legacy
+// usage collector factories below are intentionally NOT imported
+// here. The factory modules continue to live in
+// `./collectors/usage/*` for the Codex local-log fallback inside
+// `quotaService` and for any future per-account adapter code.
 import type { AppSettings } from './types';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -543,14 +529,20 @@ async function boot(): Promise<void> {
   const { createQuotaService } = require('./services/quota.service') as typeof import('./services/quota.service');
   const { createSecretsAdmin } = require('./security/secrets.admin') as typeof import('./security/secrets.admin');
   const { adapterRegistry } = require('./services/quota/adapters') as typeof import('./services/quota/adapters');
-  const { parseLocalRateLimits } = require('./collectors/usage/codex-quota.collector') as typeof import('./collectors/usage/codex-quota.collector');
+  // Codex local-log fallback (`parseLocalRateLimits`) is intentionally
+  // NOT wired in. The AI Accounts unification makes the per-account
+  // `provider_auth` row the single source of truth for which providers
+  // appear in the quota / usage UI; the legacy fallback would cause a
+  // Codex card to surface in the floating widget whenever
+  // `~/.codex/sessions/...` exists on disk, even when the user has no
+  // imported account. Removing the dep collapses the fallback branch
+  // inside `quotaService.refresh`.
   const secretsAdmin = createSecretsAdmin(secretsModule);
   const quotaService = createQuotaService({
     settings: repositories.settings,
     providerAuth: repositories.providerAuth,
     secrets: secretsAdmin,
     adapters: adapterRegistry,
-    parseCodexLocalRateLimits: parseLocalRateLimits,
   });
 
   // Provider_Auth service (cpa-quota-import task 10.5). Owns import /
@@ -593,6 +585,38 @@ async function boot(): Promise<void> {
     uuid: () => crypto.randomUUID(),
     now: () => Date.now(),
   });
+
+  // Auto-discovery: scan the user's well-known credential paths
+  // (`~/.codex/auth.json`, `~/.claude/.credentials.json`,
+  // `~/.gemini/oauth_creds.json`, `~/.antigravity/auth.json`) and
+  // import any unknown credential as a fresh `provider_auth` row
+  // with `enabled: true` so it participates in the next quota
+  // refresh tick. The scan is idempotent — credentials that
+  // already exist on disk and have already been imported (manually
+  // or by a previous boot) are detected via secret-fingerprint
+  // matching and skipped.
+  //
+  // Errors are non-fatal: a missing or unreadable file MUST NOT
+  // prevent the rest of the boot sequence from completing. The
+  // service swallows individual probe failures internally.
+  const { runDiscovery: runAuthFileDiscovery } =
+    require('./services/auth-file.discovery') as typeof import('./services/auth-file.discovery');
+  void runAuthFileDiscovery({
+    providerAuthRepo: repositories.providerAuth,
+    secrets: secretsAdmin,
+  })
+    .then((report) => {
+      if (report.imported > 0) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[auth-discovery] imported=${report.imported} skipped=${report.skipped} failed=${report.failed} missing=${report.missing}`,
+        );
+      }
+    })
+    .catch(() => {
+      // Discovery never throws but defence-in-depth: if it did,
+      // we do not want it to crash the boot.
+    });
 
   // Diagnostics service (task 9.3 + network-quick-actions task 11.1).
   // The `openClashConfigChanges` repository feeds the
@@ -777,90 +801,37 @@ async function boot(): Promise<void> {
     quotaService,
     getDiagnostics: () => diagnosticsService.export(),
     runRefreshNow: async () => {
-      // Run all collectors immediately (including usage)
+      // Run network / openclash / nodeScan collectors immediately,
+      // and trigger a quota refresh against every enabled
+      // provider_auth row. The legacy per-provider usage collector
+      // tick is no longer registered (the AI Accounts unification
+      // moved that responsibility to `quotaService`).
       await Promise.allSettled([
         scheduler.runNow('network'),
         scheduler.runNow('openclash'),
         scheduler.runNow('nodeScan'),
-        scheduler.runNow('usage'),
+        quotaService.refresh(),
       ]);
     },
     openExpanded: () => openOrFocusExpanded(repositories, settings),
   });
 
-  // 10. Register usage collector scheduler task.
-  //     Runs all enabled usage collectors every `usageMs` interval.
-  //     Uses the shared `runUsageCollector` orchestrator so behaviour
-  //     (capability check → tick → empty guard → persist) stays in
-  //     one place and doesn't drift from the canonical implementation.
-  scheduler.register({
-    id: 'usage',
-    intervalMs: settings.refreshIntervals.usageMs,
-    async fn() {
-      const currentSettings = _settings ?? settings;
-      const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
-
-      // Build collectors list
-      const collectors: Array<{ id: string; enabled: boolean; create: () => UsageCollector }> = [
-        { id: 'codex', enabled: currentSettings.collectors.codex?.enabled !== false, create: () => createCodexCollector() },
-        { id: 'gemini', enabled: currentSettings.collectors.gemini?.enabled !== false, create: () => createGeminiCollector() },
-        { id: 'antigravity', enabled: currentSettings.collectors.antigravity?.enabled ?? false, create: () => createAntigravityCollector() },
-        { id: 'opencode', enabled: currentSettings.collectors.opencode?.enabled ?? false, create: () => createOpenCodeCollector() },
-        {
-          id: 'deepseek',
-          enabled: currentSettings.collectors.deepseek?.enabled ?? false,
-          create: () => createDeepSeekCollector({ getSecret: (k) => sec.get(k) }),
-        },
-      ];
-
-      await Promise.allSettled(
-        collectors.map(async ({ id, enabled, create }) => {
-          if (!enabled) {
-            persistCapabilityResult(repositories.settings, id, { status: 'disabled' });
-            return;
-          }
-          const collector = create();
-          const now = Date.now();
-
-          // Capability check
-          let capResult = await collector.capabilityCheck();
-          if (capResult.status === 'unavailable' || capResult.status === 'disabled') {
-            persistCapabilityResult(repositories.settings, id, capResult);
-            repositories.collectorHealth.recordFailure(
-              id, now,
-              `skipped: ${capResult.status}${capResult.status === 'unavailable' && 'reason' in capResult ? ` (${capResult.reason})` : ''}`,
-            );
-            return;
-          }
-
-          // Run tick
-          try {
-            await collector.tick({
-              usageEvents: repositories.usageEvents,
-              now: () => Date.now(),
-            });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            repositories.collectorHealth.recordFailure(id, now, msg);
-            persistCapabilityResult(repositories.settings, id, capResult);
-            return;
-          }
-
-          // Apply "ok with all zeros" guard via the shared helper
-          const guardOpts: RunUsageCollectorOptions = {
-            settings: repositories.settings,
-            collectorHealth: repositories.collectorHealth,
-            usageEvents: repositories.usageEvents,
-            now,
-          };
-          capResult = applyEmptyWindowGuard(capResult, id, guardOpts);
-
-          persistCapabilityResult(repositories.settings, id, capResult);
-          repositories.collectorHealth.recordSuccess(id, Date.now());
-        }),
-      );
-    },
-  });
+  // 10. Usage collector scheduler (LEGACY collectors path).
+  //
+  //     The hardcoded `codex / gemini / antigravity / opencode /
+  //     deepseek` scheduler that read `currentSettings.collectors[id]`
+  //     was removed when the AI Accounts settings panel replaced the
+  //     per-provider collector toggles with per-account
+  //     `provider_auth.enabled` switches. Quota / availability
+  //     refresh is now driven entirely by `quotaService.refresh()`
+  //     against the enabled `provider_auth` rows; local-log AI
+  //     usage collectors are intentionally not registered in this
+  //     iteration (the local logs continue to be parsed by the
+  //     fallback path inside `quotaService` for Codex).
+  //
+  //     `settings.collectors` remains in the persisted settings
+  //     blob for forward-compat with older databases, but no
+  //     scheduler tick reads it.
 
   // 11. System tray. Holds the app lifecycle on Windows/Linux.
   _tray = createTray({

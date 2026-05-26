@@ -20,7 +20,7 @@
 import type { MonitorDatabase } from './db';
 
 /** Bump when adding a new migration. Equals `MIGRATIONS.length`. */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 interface Migration {
   /** 1-based version this migration *upgrades to*. */
@@ -222,6 +222,29 @@ const providerAuthSchema: Migration = {
 };
 
 /**
+ * Migration #4 — `provider_auth.enabled` per-account toggle.
+ *
+ * Adds a boolean (stored as INTEGER 0/1) `enabled` column to
+ * `provider_auth` so each account can be paused without deleting it.
+ * Default `1` keeps every pre-existing account active after the
+ * upgrade. The renderer surfaces this as the per-row enable switch
+ * in the AI Accounts settings panel; the quota / usage services skip
+ * `enabled = 0` rows on every refresh path.
+ */
+const providerAuthEnabledColumn: Migration = {
+  version: 4,
+  description: 'Add provider_auth.enabled toggle column',
+  up(db) {
+    // `ALTER TABLE ... ADD COLUMN` requires the default to be a
+    // constant. INTEGER 1 lines up with the boolean mapping the row
+    // mapper applies on the way out (`row.enabled !== 0`).
+    db.exec(
+      `ALTER TABLE provider_auth ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`,
+    );
+  },
+};
+
+/**
  * Ordered list of migrations. Append new entries; never mutate the
  * existing ones — historical installs replay this list from their
  * current `user_version` to the latest.
@@ -230,6 +253,7 @@ const MIGRATIONS: readonly Migration[] = [
   initialSchema,
   openclashConfigChangesSchema,
   providerAuthSchema,
+  providerAuthEnabledColumn,
 ];
 
 /**

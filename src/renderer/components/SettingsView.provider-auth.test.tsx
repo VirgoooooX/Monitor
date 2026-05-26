@@ -10,15 +10,11 @@
 // matching `desktop.*` IPC method is invoked with the documented
 // payload.
 //
-// The test also smoke-renders the eight pre-existing settings sections
-// (appearance / controller / probes / groups / router / intervals /
-// switching / management / collectors) to confirm task 12.4's
-// invariant that "the test must not break the existing eight
-// sections" — i.e. adding the Provider_Auth section is a strictly
-// additive UI change. The smoke check uses each section's stable
-// DOM id (`#settings-section-<id>`) rather than peeking into the
-// rail or specific copy, so it survives unrelated section copy
-// edits.
+// The test also smoke-renders the settings sections (appearance /
+// controller / probes / groups / router / intervals / switching /
+// management / collectors). Provider_Auth now lives inside the
+// Collectors section so the settings rail does not duplicate the
+// "AI source" concept.
 //
 // We mock `window.desktop` with `vi.stubGlobal` so the cleanup in
 // `afterEach` is total. Every IPC method the component touches is a
@@ -125,6 +121,7 @@ function makeRow(
     lastQuotaAt: 1_700_000_000_000,
     lastErrorCode: null,
     lastErrorMessage: null,
+    enabled: true,
   };
   return { ...base, ...overrides };
 }
@@ -239,7 +236,7 @@ afterEach(() => {
 // ===========================================================================
 
 describe('SettingsView Provider_Auth — smoke render', () => {
-  it('renders all nine settings sections (eight pre-existing + provider-auth)', async () => {
+  it('renders the settings sections with Provider_Auth inside the AI Accounts panel', async () => {
     installDesktopBridge();
 
     render(<SettingsView />);
@@ -251,7 +248,7 @@ describe('SettingsView Provider_Auth — smoke render', () => {
       expect(document.getElementById('settings-section-controller')).not.toBeNull();
     });
 
-    // The eight pre-existing sections must all be present after the
+    // The top-level settings sections must all be present after the
     // load finishes.
     expect(document.getElementById('settings-section-appearance')).not.toBeNull();
     expect(document.getElementById('settings-section-controller')).not.toBeNull();
@@ -261,12 +258,16 @@ describe('SettingsView Provider_Auth — smoke render', () => {
     expect(document.getElementById('settings-section-intervals')).not.toBeNull();
     expect(document.getElementById('settings-section-switching')).not.toBeNull();
     expect(document.getElementById('settings-section-management')).not.toBeNull();
-    expect(document.getElementById('settings-section-collectors')).not.toBeNull();
+    // The 8th rail entry was renamed from `collectors` (legacy) to
+    // `accounts` (AI Accounts unification). The hardcoded provider
+    // toggles disappeared with the rename.
+    expect(document.getElementById('settings-section-accounts')).not.toBeNull();
+    expect(document.getElementById('settings-section-collectors')).toBeNull();
 
-    // The new section must also be present.
-    expect(
-      document.getElementById('settings-section-provider-auth'),
-    ).not.toBeNull();
+    // Provider_Auth lives inside the AI Accounts section, not as a
+    // separate rail item.
+    expect(document.getElementById('settings-section-provider-auth')).toBeNull();
+    expect(screen.getByTestId('provider-auth-import')).toBeDefined();
   });
 
   it('renders the empty-state copy for provider-auth when listProviderAuths returns []', async () => {
@@ -283,6 +284,28 @@ describe('SettingsView Provider_Auth — smoke render', () => {
 
     expect(screen.getByTestId('provider-auth-list-empty').textContent ?? '')
       .toMatch(/尚未导入/);
+  });
+
+  it('does not show a red error when the import file picker is cancelled', async () => {
+    const importProviderAuthFile = vi.fn(async () => {
+      throw { code: 'cancelled', message: 'user cancelled file selection' };
+    });
+    installDesktopBridge({ importProviderAuthFile });
+
+    render(<SettingsView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('provider-auth-import')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByTestId('provider-auth-import'));
+
+    await waitFor(() => {
+      expect(importProviderAuthFile).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('provider-auth-error')).toBeNull();
+    });
   });
 });
 

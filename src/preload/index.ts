@@ -32,6 +32,7 @@ import {
 import type {
   AppSettings,
   ConfigSwitchResult,
+  CreateProviderAuthApiKeyInput,
   DashboardState,
   DesktopApi,
   DesktopPushChannel,
@@ -44,6 +45,7 @@ import type {
   ProviderAuthMetadata,
   ProviderId,
   QuotaStatus,
+  SetProviderAuthEnabledInput,
   SwitchNodeInput,
   SwitchNodeResult,
   SwitchOpenClashConfigInput,
@@ -302,6 +304,24 @@ const desktopApi: DesktopApi = {
   deleteProviderAuth(input: { id: string }): Promise<void> {
     return invoke<void>(
       DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
+      input,
+    );
+  },
+
+  createProviderAuthApiKey(
+    input: CreateProviderAuthApiKeyInput,
+  ): Promise<ProviderAuthMetadata> {
+    return invoke<ProviderAuthMetadata>(
+      DESKTOP_INVOKE_CHANNELS.createProviderAuthApiKey,
+      input,
+    );
+  },
+
+  setProviderAuthEnabled(
+    input: SetProviderAuthEnabledInput,
+  ): Promise<ProviderAuthMetadata | null> {
+    return invoke<ProviderAuthMetadata | null>(
+      DESKTOP_INVOKE_CHANNELS.setProviderAuthEnabled,
       input,
     );
   },

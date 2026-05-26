@@ -41,7 +41,9 @@ import type {
   AppSettings,
   ColorMode,
   CompactTheme,
+  CreateProviderAuthApiKeyInput,
   ManagementConfigFileEntry,
+  ManualApiKeyProvider,
   ProviderAuthMetadata,
   ProviderId,
   RefreshIntervalSettings,
@@ -294,16 +296,10 @@ const SECTIONS: readonly SectionDef[] = [
     icon: <Network size={14} strokeWidth={1.75} />,
   },
   {
-    id: 'collectors',
-    label: '采集器',
-    hint: 'AI 用量来源',
+    id: 'accounts',
+    label: 'AI 账号',
+    hint: '导入认证文件或填写 API key',
     icon: <Sparkles size={14} strokeWidth={1.75} />,
-  },
-  {
-    id: 'provider-auth',
-    label: 'AI 账号 / Quota',
-    hint: '导入 CPA 认证文件',
-    icon: <KeyRound size={14} strokeWidth={1.75} />,
   },
 ];
 
@@ -317,33 +313,34 @@ const INTERVAL_META: Record<keyof RefreshIntervalSettings, { label: string; hint
   retentionMs: { label: '清理', hint: '历史数据保留' },
 };
 
-const COLLECTOR_META: Record<string, { label: string; hint: string }> = {
-  codex: { label: 'Codex', hint: 'OpenAI · 5h / weekly' },
-  gemini: { label: 'Gemini', hint: 'Google AI Studio' },
-  antigravity: { label: 'Antigravity', hint: 'Anthropic Claude usage' },
-  opencode: { label: 'OpenCode', hint: '本地日志' },
-  deepseek: { label: 'DeepSeek', hint: 'API balance · usage' },
-};
-
-const COLLECTOR_IDS = ['codex', 'gemini', 'antigravity', 'opencode', 'deepseek'] as const;
-
 // ---------------------------------------------------------------------------
 // Provider Auth section metadata
 // ---------------------------------------------------------------------------
 
 /**
- * Picker order for the Provider_Auth section. Mirrors the closed
- * `ProviderId` union from `src/main/types.ts`. The order here drives
- * the dropdown order in the Section UI; it is intentionally the same
- * as the order in `PROVIDER_LABELS` and the parser/repo enums, so
- * adding a new `ProviderId` only requires updating the union and the
- * label map.
+ * Picker order for the CPA file-import path. Mirrors the closed
+ * `ProviderId` union from `src/main/types.ts` — every provider is
+ * eligible for file import because the CPA parser handles each
+ * dialect.
  */
-const PROVIDER_PICKER_ORDER: readonly ProviderId[] = [
+const FILE_IMPORT_PICKER_ORDER: readonly ProviderId[] = [
   'claude-code',
   'codex',
   'gemini-cli',
   'antigravity',
+  'gemini-api',
+  'deepseek',
+  'xiaomi',
+  'openai-compatible',
+];
+
+/**
+ * Picker order for the manual API-key entry form. Restricted to the
+ * `ManualApiKeyProvider` subset — OAuth-style providers (`claude-code`,
+ * `codex`, `gemini-cli`, `antigravity`) require the full CPA file
+ * import flow and are intentionally absent here.
+ */
+const MANUAL_API_KEY_PICKER_ORDER: readonly ManualApiKeyProvider[] = [
   'gemini-api',
   'deepseek',
   'xiaomi',
@@ -438,7 +435,7 @@ export function SettingsView(): JSX.Element {
   // material; `rows` only carries the redacted `ProviderAuthMetadata`
   // shape.
   const [providerPick, setProviderPick] = useState<ProviderId>(
-    PROVIDER_PICKER_ORDER[0]!,
+    FILE_IMPORT_PICKER_ORDER[0]!,
   );
   const [providerAuthRows, setProviderAuthRows] = useState<
     ProviderAuthMetadata[]
@@ -449,6 +446,19 @@ export function SettingsView(): JSX.Element {
   const [providerAuthError, setProviderAuthError] = useState<
     { code: string; message: string } | null
   >(null);
+
+  // ── Manual API-key entry form ─────────────────────────────────────
+  // The form is closed by default; the user opens it from the
+  // "输入 API Key" button. State is local to the section so the
+  // values do not flow through the global `dirty` flag.
+  const [apiKeyFormOpen, setApiKeyFormOpen] = useState(false);
+  const [apiKeyProvider, setApiKeyProvider] = useState<ManualApiKeyProvider>(
+    MANUAL_API_KEY_PICKER_ORDER[0]!,
+  );
+  const [apiKeyLabel, setApiKeyLabel] = useState('');
+  const [apiKeyValue, setApiKeyValue] = useState('');
+  const [apiKeyBaseUrl, setApiKeyBaseUrl] = useState('');
+  const [apiKeyShow, setApiKeyShow] = useState(false);
 
   // Load initial settings
   useEffect(() => {
@@ -549,16 +559,37 @@ export function SettingsView(): JSX.Element {
     [],
   );
 
-  const toggleCollector = useCallback((id: string, enabled: boolean) => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        collectors: { ...prev.collectors, [id]: { enabled } },
-      };
-    });
-    setSaveSuccess(false);
-  }, []);
+  const toggleProviderAuthEnabled = useCallback(
+    async (id: string, enabled: boolean) => {
+      const desktop = window.desktop;
+      if (!desktop) return;
+      // Optimistically flip the local row so the switch animates
+      // instantly; the IPC re-fetch below reconciles against the
+      // canonical metadata main returned (or rolls back on failure).
+      setProviderAuthRows((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, enabled } : r)),
+      );
+      setProviderAuthBusyId(id);
+      setProviderAuthError(null);
+      try {
+        const updated = await desktop.setProviderAuthEnabled({ id, enabled });
+        if (updated !== null) {
+          setProviderAuthRows((prev) =>
+            prev.map((r) => (r.id === id ? updated : r)),
+          );
+        }
+      } catch (err: unknown) {
+        // Rollback the optimistic flip.
+        setProviderAuthRows((prev) =>
+          prev.map((r) => (r.id === id ? { ...r, enabled: !enabled } : r)),
+        );
+        setProviderAuthError(extractIpcError(err));
+      } finally {
+        setProviderAuthBusyId(null);
+      }
+    },
+    [],
+  );
 
   // Probe URL list management
   const updateProbeUrl = useCallback((index: number, value: string) => {
@@ -821,6 +852,67 @@ export function SettingsView(): JSX.Element {
       setProviderAuthBusyId(null);
     }
   }, []);
+
+  /**
+   * Submit the manual API-key form. Mirrors the import handler:
+   * busy sentinel, error parking, list mutation on success.
+   * Validation that the renderer can do up front (empty key,
+   * missing baseUrl for openai-compatible) happens before the IPC
+   * call so the user gets a faster failure; the main-side schema
+   * does the same checks for defence in depth.
+   */
+  const handleProviderAuthCreateApiKey = useCallback(async () => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    const trimmedKey = apiKeyValue.trim();
+    if (trimmedKey.length === 0) {
+      setProviderAuthError({
+        code: 'validation',
+        message: 'API key 不能为空',
+      });
+      return;
+    }
+    if (
+      apiKeyProvider === 'openai-compatible' &&
+      apiKeyBaseUrl.trim().length === 0
+    ) {
+      setProviderAuthError({
+        code: 'validation',
+        message: 'OpenAI 兼容账号必须填写 Base URL',
+      });
+      return;
+    }
+    setProviderAuthBusyId('__create__');
+    setProviderAuthError(null);
+    try {
+      const input: CreateProviderAuthApiKeyInput = {
+        provider: apiKeyProvider,
+        apiKey: trimmedKey,
+      };
+      if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
+      const trimmedBase = apiKeyBaseUrl.trim();
+      if (trimmedBase.length > 0) input.baseUrl = trimmedBase;
+      const row = await desktop.createProviderAuthApiKey(input);
+      setProviderAuthRows((prev) => {
+        const idx = prev.findIndex((r) => r.id === row.id);
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+      // Reset the form on success so the user can add another
+      // account without re-opening the form.
+      setApiKeyValue('');
+      setApiKeyLabel('');
+      setApiKeyBaseUrl('');
+      setApiKeyShow(false);
+      setApiKeyFormOpen(false);
+    } catch (err: unknown) {
+      setProviderAuthError(extractIpcError(err));
+    } finally {
+      setProviderAuthBusyId(null);
+    }
+  }, [apiKeyProvider, apiKeyLabel, apiKeyValue, apiKeyBaseUrl]);
 
   // ---------------------------------------------------------------------------
   // Save / discard handlers
@@ -1452,38 +1544,12 @@ export function SettingsView(): JSX.Element {
             </div>
           </Section>
 
-          {/* ── Collectors ───────────────────────────────────── */}
-          <Section id="collectors" section={SECTIONS[8]!}>
-            <div className="settings-view__collectors">
-              {COLLECTOR_IDS.map((id) => {
-                const toggle = settings.collectors[id];
-                const enabled = toggle?.enabled ?? false;
-                const meta = COLLECTOR_META[id] ?? { label: id, hint: '' };
-                return (
-                  <CollectorToggle
-                    key={id}
-                    id={id}
-                    label={meta.label}
-                    hint={meta.hint}
-                    enabled={enabled}
-                    onChange={(v) => toggleCollector(id, v)}
-                  />
-                );
-              })}
-            </div>
-          </Section>
-
-          {/* ── Provider Auth (CPA imports) ──────────────────── */}
-          <Section
-            id="settings-section-provider-auth"
-            title="AI 账号 / Quota"
-            hint="导入 CPA 认证文件以启用多账号 quota 聚合"
-            icon={<KeyRound size={14} strokeWidth={1.75} />}
-          >
+          {/* ── AI 账号 ─────────────────────────────────────── */}
+          <Section id="accounts" section={SECTIONS[8]!}>
             <div className="settings-view__row">
               <Field
-                label="Provider"
-                hint="选择待导入的 AI 服务商"
+                label="账号类型 (CPA 文件)"
+                hint="选择这份 CPA 认证文件对应的服务"
               >
                 <select
                   className="settings-view__input"
@@ -1491,10 +1557,10 @@ export function SettingsView(): JSX.Element {
                   onChange={(e) =>
                     setProviderPick(e.target.value as ProviderId)
                   }
-                  aria-label="Provider"
+                  aria-label="账号类型 (CPA 文件)"
                   disabled={providerAuthBusyId === '__import__'}
                 >
-                  {PROVIDER_PICKER_ORDER.map((id) => (
+                  {FILE_IMPORT_PICKER_ORDER.map((id) => (
                     <option key={id} value={id}>
                       {PROVIDER_LABELS[id]}
                     </option>
@@ -1503,23 +1569,162 @@ export function SettingsView(): JSX.Element {
               </Field>
 
               <Field
-                label="导入"
-                hint="主进程打开文件选择器，渲染进程不接触 token / API key"
+                label="操作"
+                hint="主进程打开文件选择器，不向页面暴露 token / API key"
               >
-                <button
-                  type="button"
-                  className="settings-view__btn-secondary"
-                  onClick={() => void handleProviderAuthImport()}
-                  disabled={providerAuthBusyId === '__import__'}
-                  data-testid="provider-auth-import"
-                >
-                  <Plus size={13} strokeWidth={2} aria-hidden="true" />
-                  {providerAuthBusyId === '__import__'
-                    ? '导入中…'
-                    : '导入 CPA 认证文件'}
-                </button>
+                <div className="settings-view__row settings-view__row--inline">
+                  <button
+                    type="button"
+                    className="settings-view__btn-secondary"
+                    onClick={() => void handleProviderAuthImport()}
+                    disabled={providerAuthBusyId === '__import__'}
+                    data-testid="provider-auth-import"
+                  >
+                    <Plus size={13} strokeWidth={2} aria-hidden="true" />
+                    {providerAuthBusyId === '__import__'
+                      ? '导入中…'
+                      : '导入 CPA 认证文件'}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-view__btn-secondary"
+                    onClick={() => {
+                      setApiKeyFormOpen((v) => !v);
+                      setProviderAuthError(null);
+                    }}
+                    disabled={providerAuthBusyId === '__create__'}
+                    data-testid="provider-auth-open-api-key-form"
+                    aria-expanded={apiKeyFormOpen}
+                  >
+                    <KeyRound size={13} strokeWidth={2} aria-hidden="true" />
+                    {apiKeyFormOpen ? '收起 API Key 表单' : '输入 API Key'}
+                  </button>
+                </div>
               </Field>
             </div>
+
+            {apiKeyFormOpen && (
+              <div
+                className="settings-view__api-key-form"
+                data-testid="provider-auth-api-key-form"
+              >
+                <div className="settings-view__row">
+                  <Field
+                    label="账号类型"
+                    hint="只支持纯 API key 的服务；OAuth 类账号请使用 CPA 文件导入"
+                  >
+                    <select
+                      className="settings-view__input"
+                      value={apiKeyProvider}
+                      onChange={(e) =>
+                        setApiKeyProvider(
+                          e.target.value as ManualApiKeyProvider,
+                        )
+                      }
+                      aria-label="API key 账号类型"
+                      disabled={providerAuthBusyId === '__create__'}
+                      data-testid="provider-auth-api-key-provider"
+                    >
+                      {MANUAL_API_KEY_PICKER_ORDER.map((id) => (
+                        <option key={id} value={id}>
+                          {PROVIDER_LABELS[id]}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field
+                    label="显示名称"
+                    hint="可选；留空使用默认名称"
+                  >
+                    <input
+                      className="settings-view__input"
+                      type="text"
+                      value={apiKeyLabel}
+                      onChange={(e) => setApiKeyLabel(e.target.value)}
+                      placeholder="例如 主账号 / 备用 key"
+                      autoComplete="off"
+                      disabled={providerAuthBusyId === '__create__'}
+                      data-testid="provider-auth-api-key-label"
+                    />
+                  </Field>
+                </div>
+
+                <div className="settings-view__row">
+                  <Field
+                    label="API Key"
+                    hint="保存后即加密落库；保存成功不再回显"
+                  >
+                    <div className="settings-view__input-affix">
+                      <input
+                        className="settings-view__input"
+                        type={apiKeyShow ? 'text' : 'password'}
+                        value={apiKeyValue}
+                        onChange={(e) => setApiKeyValue(e.target.value)}
+                        placeholder="sk-..."
+                        autoComplete="off"
+                        disabled={providerAuthBusyId === '__create__'}
+                        data-testid="provider-auth-api-key-value"
+                      />
+                      <button
+                        type="button"
+                        className="settings-view__input-action"
+                        onClick={() => setApiKeyShow((v) => !v)}
+                        aria-label={apiKeyShow ? '隐藏 API key' : '显示 API key'}
+                      >
+                        {apiKeyShow ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </Field>
+
+                  {apiKeyProvider === 'openai-compatible' && (
+                    <Field
+                      label="Base URL"
+                      hint="必填，例如 https://api.example.com/v1"
+                    >
+                      <input
+                        className="settings-view__input"
+                        type="url"
+                        value={apiKeyBaseUrl}
+                        onChange={(e) => setApiKeyBaseUrl(e.target.value)}
+                        placeholder="https://..."
+                        autoComplete="off"
+                        disabled={providerAuthBusyId === '__create__'}
+                        data-testid="provider-auth-api-key-base-url"
+                      />
+                    </Field>
+                  )}
+                </div>
+
+                <div className="settings-view__management-actions">
+                  <button
+                    type="button"
+                    className="settings-view__btn-secondary"
+                    onClick={() => void handleProviderAuthCreateApiKey()}
+                    disabled={providerAuthBusyId === '__create__'}
+                    data-testid="provider-auth-api-key-submit"
+                  >
+                    <Check size={13} strokeWidth={2} aria-hidden="true" />
+                    {providerAuthBusyId === '__create__'
+                      ? '保存中…'
+                      : '保存账号'}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-view__btn-secondary"
+                    onClick={() => {
+                      setApiKeyFormOpen(false);
+                      setApiKeyValue('');
+                      setApiKeyShow(false);
+                      setProviderAuthError(null);
+                    }}
+                    disabled={providerAuthBusyId === '__create__'}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
 
             {providerAuthError !== null && (
               <p
@@ -1537,6 +1742,9 @@ export function SettingsView(): JSX.Element {
               rows={providerAuthRows}
               onRefresh={(id) => void handleProviderAuthRefresh(id)}
               onDelete={(id) => void handleProviderAuthDelete(id)}
+              onToggleEnabled={(id, enabled) =>
+                void toggleProviderAuthEnabled(id, enabled)
+              }
               busyId={providerAuthBusyId}
             />
           </Section>
@@ -1768,46 +1976,6 @@ function ToggleField({ label, hint, checked, onChange }: ToggleFieldProps): JSX.
           onChange={(e) => onChange(e.target.checked)}
         />
         <span className="settings-view__switch-track" aria-hidden="true">
-          <span className="settings-view__switch-thumb" />
-        </span>
-      </span>
-    </label>
-  );
-}
-
-interface CollectorToggleProps {
-  readonly id: string;
-  readonly label: string;
-  readonly hint: string;
-  readonly enabled: boolean;
-  readonly onChange: (next: boolean) => void;
-}
-
-function CollectorToggle({
-  id,
-  label,
-  hint,
-  enabled,
-  onChange,
-}: CollectorToggleProps): JSX.Element {
-  return (
-    <label
-      className={`settings-view__collector${enabled ? ' settings-view__collector--on' : ''}`}
-      htmlFor={`settings-collector-${id}`}
-    >
-      <input
-        id={`settings-collector-${id}`}
-        type="checkbox"
-        className="settings-view__collector-input"
-        checked={enabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span className="settings-view__collector-body">
-        <span className="settings-view__collector-label">{label}</span>
-        <span className="settings-view__collector-hint">{hint}</span>
-      </span>
-      <span className={`settings-view__switch${enabled ? ' settings-view__switch--on' : ''}`} aria-hidden="true">
-        <span className="settings-view__switch-track">
           <span className="settings-view__switch-thumb" />
         </span>
       </span>

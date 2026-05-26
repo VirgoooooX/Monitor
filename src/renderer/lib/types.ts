@@ -69,6 +69,9 @@ export type {
   QuotaCapability,
   ProviderAuthMetadata,
   ProviderAuthErrorCode,
+  ManualApiKeyProvider,
+  CreateProviderAuthApiKeyInput,
+  SetProviderAuthEnabledInput,
 
   // Settings
   RouterHealthSettings,

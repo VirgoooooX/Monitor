@@ -351,6 +351,7 @@ function makeRow(overrides: Partial<ProviderAuthRowT> = {}): ProviderAuthRowT {
     lastQuotaAt: null,
     lastErrorCode: null,
     lastErrorMessage: null,
+    enabled: true,
     secretKey: `cpaAuth.providerAuth.${id}`,
     ...overrides,
   };

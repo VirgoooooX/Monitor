@@ -249,7 +249,12 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
   const cache = new Map<CacheKey, CacheEntry>();
   {
     const persisted = loadPersistedSnapshots(deps.settings);
-    const liveIds = new Set(deps.providerAuth.list().map((row) => row.id));
+    // Only enabled rows are eligible to participate in the cache —
+    // a row that was disabled before shutdown should not surface a
+    // stale snapshot on the next boot.
+    const liveIds = new Set(
+      deps.providerAuth.list().filter((row) => row.enabled).map((row) => row.id),
+    );
     for (const snap of persisted) {
       const key =
         snap.providerAuthId !== null ? snap.providerAuthId : CODEX_LOCAL_KEY;
@@ -257,6 +262,15 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
       // deleted between sessions (Requirement 11.5 reconciliation
       // applied at boot rather than at refresh time).
       if (key !== CODEX_LOCAL_KEY && !liveIds.has(key)) continue;
+      // Drop the legacy Codex local-log sentinel unconditionally
+      // when no fallback hook is wired (the AI Accounts unification
+      // path). Without this, a previous session that ran with the
+      // fallback enabled would persist its `__codex_local__`
+      // snapshot to settings, and `getQuotaStatus()` would surface
+      // it on the next boot even though no account exists.
+      if (key === CODEX_LOCAL_KEY && deps.parseCodexLocalRateLimits === undefined) {
+        continue;
+      }
       // A persisted snapshot whose last persisted `status` was `'ok'`
       // OR `'stale'` represents a former successful refresh whose
       // `windows` / `kind` / `rawPlanLabel` survived to this boot.
@@ -330,32 +344,49 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
     const now = getClock();
 
     // 1. Enumerate target accounts.
+    //    Disabled (`enabled=false`) rows are filtered out here so
+    //    every downstream branch (throttle / dispatch / cache eviction)
+    //    treats them as if they did not exist — the renderer's
+    //    `enabled` toggle is the single source of truth for "should
+    //    this account be polled".
     const allRows = deps.providerAuth.list();
+    const enabledRows = allRows.filter((r) => r.enabled);
     let targets: ProviderAuthRow[];
     if (input?.id !== undefined) {
-      targets = allRows.filter((r) => r.id === input.id);
+      targets = enabledRows.filter((r) => r.id === input.id);
     } else if (input?.provider !== undefined) {
-      targets = allRows.filter((r) => r.provider === input.provider);
+      targets = enabledRows.filter((r) => r.provider === input.provider);
     } else {
-      targets = allRows;
+      targets = enabledRows;
     }
 
-    // 2. Drop cache entries whose row no longer exists. We only do
-    //    this on a full-scope refresh ({} / undefined) so that a
-    //    targeted `{ id }` refresh does not silently flush other
-    //    accounts. Missing rows in a `{ provider }` scope are
-    //    handled implicitly by the per-key throttle below.
+    // 1a. A targeted `{ id }` refresh against a disabled account
+    //     is a no-op for the adapter, but we still drop any leftover
+    //     cache entry so `getQuotaStatus()` does not surface stale
+    //     snapshots for an account the user just paused.
+    if (input?.id !== undefined && targets.length === 0) {
+      cache.delete(input.id);
+    }
+
+    // 2. Drop cache entries whose row no longer exists OR has been
+    //    disabled. We only do this on a full-scope refresh ({} /
+    //    undefined) so that a targeted `{ id }` refresh does not
+    //    silently flush other accounts. Missing rows in a
+    //    `{ provider }` scope are handled implicitly by the
+    //    per-key throttle below.
     if (input === undefined || (input.id === undefined && input.provider === undefined)) {
-      const liveIds = new Set(allRows.map((r) => r.id));
+      const liveIds = new Set(enabledRows.map((r) => r.id));
       for (const key of Array.from(cache.keys())) {
         if (key === CODEX_LOCAL_KEY) continue;
         if (!liveIds.has(key)) cache.delete(key);
       }
     } else if (input.provider !== undefined && input.id === undefined) {
       // Provider-scoped refresh: prune cache entries for this
-      // provider whose row was deleted between calls.
+      // provider whose row was deleted OR disabled between calls.
       const liveIdsForProvider = new Set(
-        allRows.filter((r) => r.provider === input.provider).map((r) => r.id),
+        enabledRows
+          .filter((r) => r.provider === input.provider)
+          .map((r) => r.id),
       );
       for (const [key, entry] of Array.from(cache.entries())) {
         if (key === CODEX_LOCAL_KEY) continue;
@@ -515,13 +546,15 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
     }
 
     // 6. Codex local-log fallback (Requirement 11.6). Triggered when
-    //    Codex is in scope of the refresh AND there is no Codex
-    //    `provider_auth` row. The fallback respects the throttle on
-    //    the sentinel key the same way regular accounts do.
+    //    Codex is in scope of the refresh AND there is no enabled
+    //    Codex `provider_auth` row. The fallback respects the
+    //    throttle on the sentinel key the same way regular accounts
+    //    do. A disabled Codex row counts the same as no row at all
+    //    for fallback purposes — the user opted out of that account.
     const codexInScope =
       input?.id === undefined &&
       (input?.provider === undefined || input.provider === 'codex');
-    const hasCodexRow = allRows.some((r) => r.provider === 'codex');
+    const hasCodexRow = enabledRows.some((r) => r.provider === 'codex');
     if (codexInScope && !hasCodexRow && deps.parseCodexLocalRateLimits) {
       const cached = cache.get(CODEX_LOCAL_KEY);
       const due =

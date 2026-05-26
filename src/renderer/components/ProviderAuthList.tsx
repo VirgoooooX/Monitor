@@ -217,6 +217,11 @@ export interface ProviderAuthListProps {
   readonly rows: ReadonlyArray<ProviderAuthMetadata>;
   readonly onRefresh: (id: string) => void;
   readonly onDelete: (id: string) => void;
+  /** Toggle the per-row `enabled` flag. Optional so legacy call
+   *  sites that have not been migrated to per-account switches keep
+   *  rendering rows with the toggle hidden — the action is visible
+   *  only when this callback is supplied. */
+  readonly onToggleEnabled?: (id: string, enabled: boolean) => void;
   /** ID of the row whose refresh / delete IPC is currently in flight,
    *  or `null` when no row is busy. Used to disable both the firing
    *  row's buttons (avoid double-fire) and signal "切换中" state. */
@@ -231,6 +236,7 @@ export function ProviderAuthList({
   rows,
   onRefresh,
   onDelete,
+  onToggleEnabled,
   busyId,
 }: ProviderAuthListProps): JSX.Element {
   // Stable ascending sort by `importedAt`, ties broken by `id` for
@@ -255,7 +261,7 @@ export function ProviderAuthList({
         className="provider-auth-list__empty"
         data-testid="provider-auth-list-empty"
       >
-        尚未导入任何 CPA 认证文件
+        尚未导入任何 AI 账号
       </p>
     );
   }
@@ -274,6 +280,9 @@ export function ProviderAuthList({
           busy={busyId === row.id}
           onRefresh={onRefresh}
           onDelete={onDelete}
+          {...(onToggleEnabled !== undefined
+            ? { onToggleEnabled }
+            : {})}
         />
       ))}
     </ul>
@@ -290,6 +299,7 @@ interface ProviderAuthRowProps {
   readonly busy: boolean;
   readonly onRefresh: (id: string) => void;
   readonly onDelete: (id: string) => void;
+  readonly onToggleEnabled?: (id: string, enabled: boolean) => void;
 }
 
 function ProviderAuthRow({
@@ -298,15 +308,17 @@ function ProviderAuthRow({
   busy,
   onRefresh,
   onDelete,
+  onToggleEnabled,
 }: ProviderAuthRowProps): JSX.Element {
   const identifier = formatIdentifier(row.accountId, row.projectId);
   const isExpired = row.lastErrorCode === 'auth_expired';
+  const isDisabled = !row.enabled;
 
-  // Auth-expired rows are NOT refreshable — Monitor v1 does not embed
-  // a third-party OAuth client, so the only way to recover is to
-  // re-import a fresh auth file from CPA (Requirement 2.3).
-  // Concurrent refresh is also blocked by `busy`.
-  const refreshDisabled = busy || isExpired;
+  // Refresh is blocked when:
+  //   - a sibling IPC is in flight (`busy`),
+  //   - the credential expired (re-import is the only fix), or
+  //   - the user paused the account (toggle it back on first).
+  const refreshDisabled = busy || isExpired || isDisabled;
 
   // Non-`official` capability rows replace the would-be percentage
   // strip with the standard zh-CN explainer copy. Per Requirement
@@ -317,11 +329,17 @@ function ProviderAuthRow({
 
   return (
     <li
-      className="provider-auth-list__row"
+      className={
+        isDisabled
+          ? 'provider-auth-list__row provider-auth-list__row--disabled'
+          : 'provider-auth-list__row'
+      }
       data-testid={`provider-auth-list-row-${row.id}`}
       data-provider={row.provider}
       data-capability={row.quotaCapability}
       data-error-code={row.lastErrorCode ?? ''}
+      data-source={row.source}
+      data-enabled={row.enabled ? 'true' : 'false'}
     >
       {/* ── Header: provider chip + label + identifier tail ─── */}
       <header className="provider-auth-list__row-head">
@@ -347,6 +365,8 @@ function ProviderAuthRow({
             {identifier}
           </span>
         )}
+
+        <SourceBadge source={row.source} />
       </header>
 
       {/* ── Meta row: capability + timestamps + status badge ── */}
@@ -383,7 +403,7 @@ function ProviderAuthRow({
           </span>
         </span>
 
-        <StatusBadge errorCode={row.lastErrorCode} />
+        <StatusBadge errorCode={row.lastErrorCode} disabled={isDisabled} />
       </div>
 
       {/* ── Capability hint: replaces the percentage strip for
@@ -423,8 +443,37 @@ function ProviderAuthRow({
         </p>
       )}
 
-      {/* ── Actions: refresh + delete ─────────────────────── */}
+      {/* ── Actions: enable toggle + refresh + delete ──── */}
       <div className="provider-auth-list__actions">
+        {onToggleEnabled !== undefined && (
+          <label
+            className="provider-auth-list__toggle"
+            data-testid={`provider-auth-list-row-${row.id}-toggle`}
+          >
+            <input
+              type="checkbox"
+              className="provider-auth-list__toggle-input"
+              checked={row.enabled}
+              disabled={busy}
+              onChange={(e) => onToggleEnabled(row.id, e.target.checked)}
+              aria-label={`${row.enabled ? '停用' : '启用'} ${PROVIDER_LABELS[row.provider]} ${row.label}`}
+            />
+            <span
+              className={
+                row.enabled
+                  ? 'provider-auth-list__toggle-track provider-auth-list__toggle-track--on'
+                  : 'provider-auth-list__toggle-track'
+              }
+              aria-hidden="true"
+            >
+              <span className="provider-auth-list__toggle-thumb" />
+            </span>
+            <span className="provider-auth-list__toggle-label">
+              {row.enabled ? '已启用' : '已停用'}
+            </span>
+          </label>
+        )}
+
         <button
           type="button"
           className="provider-auth-list__btn provider-auth-list__btn--refresh"
@@ -485,9 +534,24 @@ function CapabilityChip({
 
 function StatusBadge({
   errorCode,
+  disabled,
 }: {
   readonly errorCode: ProviderAuthErrorCode | null;
+  readonly disabled: boolean;
 }): JSX.Element {
+  if (disabled) {
+    // Disabled rows take precedence over error codes — the user
+    // explicitly paused the account, so there is no need to nag
+    // them about a stale lastError.
+    return (
+      <span
+        className="provider-auth-list__status provider-auth-list__status--muted"
+        data-status="disabled"
+      >
+        已停用
+      </span>
+    );
+  }
   if (errorCode === null) {
     return (
       <span
@@ -520,6 +584,27 @@ function StatusBadge({
       data-error-code={errorCode}
     >
       {PROVIDER_AUTH_ERROR_LABELS[errorCode]}
+    </span>
+  );
+}
+
+/**
+ * Small chip describing where the row originated. Mirrors the
+ * `ProviderAuthMetadata.source` union.
+ */
+function SourceBadge({
+  source,
+}: {
+  readonly source: ProviderAuthMetadata['source'];
+}): JSX.Element {
+  const label = source === 'cpa-auth-file' ? 'CPA 文件' : '手动 API Key';
+  return (
+    <span
+      className="provider-auth-list__source"
+      data-source={source}
+      title={label}
+    >
+      {label}
     </span>
   );
 }

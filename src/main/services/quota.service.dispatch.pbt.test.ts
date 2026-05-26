@@ -130,6 +130,7 @@ function buildRow(id: string, provider: ProviderId): ProviderAuthRow {
     lastQuotaAt: null,
     lastErrorCode: null,
     lastErrorMessage: null,
+    enabled: true,
     secretKey: `cpaAuth.providerAuth.${id}`,
   };
 }

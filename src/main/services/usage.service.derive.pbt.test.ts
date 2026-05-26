@@ -1,31 +1,18 @@
-// Feature: cpa-quota-import, Property 6
+// Feature: AI accounts unification + cpa-quota-import Property 6
 //
-// Property 6: Derived providers cover collectors + auth + baseline,
-// with no duplicates.
+// `deriveKnownProviders(providerAuthRows)` is the runtime replacement
+// for the previously hardcoded `KNOWN_PROVIDERS` constant in
+// `usage.service.ts`. After the AI Accounts unification the
+// derivation has a single input: the `provider_auth` rows whose
+// `enabled === true`. Disabled rows and the legacy
+// `settings.collectors` map no longer participate.
 //
-// Validates: Requirement 14.1.
-//
-// `deriveKnownProviders(collectors, providerAuthRows)` is the runtime
-// replacement for the previously hardcoded `KNOWN_PROVIDERS` constant
-// in `usage.service.ts`. Per `cpa-quota-import/design.md §Dynamic
-// KNOWN_PROVIDERS` and `cpa-quota-import/requirements.md
-// Requirement 14.1`, the derivation MUST produce a set that is the
-// union of three sources:
-//
-//   1. The shipped baseline (`codex`, `gemini`, `antigravity`,
-//      `opencode`, `deepseek`) — present even with empty inputs so
-//      historical aggregates do not silently disappear.
-//   2. Every key in `collectors` whose `enabled === true`.
-//   3. Every `row.provider` value from `provider_auth`.
-//
-// The returned array MUST be sorted ascending and deduplicated.
+// The returned array MUST be sorted ascending and deduplicated, and
+// MUST be a subset of the enabled providers in the input.
 //
 // References:
-//   - .kiro/specs/cpa-quota-import/requirements.md Requirement 14.1
-//     (KNOWN_PROVIDERS derivation: baseline + enabled collectors + provider_auth)
-//   - .kiro/specs/cpa-quota-import/design.md §Dynamic KNOWN_PROVIDERS
-//   - src/main/services/usage.service.ts (`deriveKnownProviders`,
-//     `BASELINE_PROVIDERS`)
+//   - planning doc "统一 AI 账号来源、凭据输入与启用开关"
+//   - src/main/services/usage.service.ts (`deriveKnownProviders`)
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
@@ -33,89 +20,81 @@ import fc from 'fast-check';
 import { deriveKnownProviders } from './usage.service';
 
 // ---------------------------------------------------------------------------
-// Mirror of the baseline from `usage.service.ts`. Kept inline so the
-// property test depends only on the exported function, not on private
-// module state. If the production baseline ever changes this constant
-// must be updated to match.
-// ---------------------------------------------------------------------------
-
-const BASELINE_PROVIDERS = [
-  'codex',
-  'gemini',
-  'antigravity',
-  'opencode',
-  'deepseek',
-] as const;
-
-// ---------------------------------------------------------------------------
 // Arbitraries
 // ---------------------------------------------------------------------------
 
 // Provider keys are short non-empty strings drawn from a small alphabet
-// so collisions with the baseline (and between collectors / auth rows)
-// happen frequently enough that the deduplication path is exercised.
-// ASCII-only keys keep the sort comparison deterministic across platforms.
+// so collisions across rows happen frequently enough that the
+// deduplication path is exercised. ASCII-only keys keep the sort
+// comparison deterministic across platforms.
 const PROVIDER_KEY_ARB: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 12 })
   .filter((s) => s.length > 0);
 
-// `Record<string, { enabled: boolean }>` — `fc.dictionary` returns a
-// plain object suitable for `Object.entries` in the production code.
-const COLLECTORS_ARB: fc.Arbitrary<Record<string, { enabled: boolean }>> = fc.dictionary(
-  PROVIDER_KEY_ARB,
-  fc.record({ enabled: fc.boolean() }),
-  { maxKeys: 8 },
-);
-
-// `provider_auth` rows — only the `provider` column is relevant to
-// `deriveKnownProviders`. Length is capped to keep generation cheap.
-const PROVIDER_AUTH_ROWS_ARB: fc.Arbitrary<ReadonlyArray<{ provider: string }>> = fc.array(
-  fc.record({ provider: PROVIDER_KEY_ARB }),
-  { maxLength: 8 },
+// `provider_auth`-shaped row — `deriveKnownProviders` only reads
+// `provider` and `enabled`. Length is capped to keep generation cheap.
+const PROVIDER_AUTH_ROWS_ARB: fc.Arbitrary<
+  ReadonlyArray<{ provider: string; enabled: boolean }>
+> = fc.array(
+  fc.record({
+    provider: PROVIDER_KEY_ARB,
+    enabled: fc.boolean(),
+  }),
+  { maxLength: 12 },
 );
 
 // ---------------------------------------------------------------------------
 // Property
 // ---------------------------------------------------------------------------
 
-describe('usage.service — Property 6 (cpa-quota-import)', () => {
+describe('usage.service — deriveKnownProviders (AI accounts unification)', () => {
   it(
-    'deriveKnownProviders is a sorted, deduplicated superset of baseline ∪ enabled collectors ∪ auth rows',
+    'is a sorted, deduplicated set of providers whose enabled rows are present',
     () => {
       fc.assert(
-        fc.property(COLLECTORS_ARB, PROVIDER_AUTH_ROWS_ARB, (collectors, rows) => {
-          const result = deriveKnownProviders(collectors, rows);
+        fc.property(PROVIDER_AUTH_ROWS_ARB, (rows) => {
+          const result = deriveKnownProviders(rows);
 
-          // (a) Sorted ascending.
+          // (a) Sorted ascending (strictly-increasing — uniqueness
+          //     is folded into the same check).
           for (let i = 1; i < result.length; i += 1) {
-            expect(result[i - 1] < result[i]).toBe(true);
+            expect(result[i - 1]! < result[i]!).toBe(true);
           }
 
-          // (b) Deduplicated (a strictly-increasing sort already
-          //     implies uniqueness; the explicit Set check guards
-          //     against accidental tie-equality bugs in the assertion
-          //     above and matches the property statement directly).
+          // (b) Deduplicated.
           expect(new Set(result).size).toBe(result.length);
 
-          // (c) Every baseline value appears.
-          for (const baseline of BASELINE_PROVIDERS) {
-            expect(result).toContain(baseline);
-          }
-
-          // (d) Every collector with `enabled === true` appears.
-          for (const [key, value] of Object.entries(collectors)) {
-            if (value.enabled === true) {
-              expect(result).toContain(key);
+          // (c) Every enabled row's provider appears.
+          for (const row of rows) {
+            if (row.enabled) {
+              expect(result).toContain(row.provider);
             }
           }
 
-          // (e) Every `provider_auth.provider` value appears.
-          for (const row of rows) {
-            expect(result).toContain(row.provider);
+          // (d) Every result entry is the `provider` of at least one
+          //     enabled row — no spurious values leak through.
+          const enabledProviders = new Set(
+            rows.filter((r) => r.enabled).map((r) => r.provider),
+          );
+          for (const value of result) {
+            expect(enabledProviders.has(value)).toBe(true);
           }
         }),
         { numRuns: 100 },
       );
     },
   );
+
+  it('returns an empty array when every row is disabled', () => {
+    expect(
+      deriveKnownProviders([
+        { provider: 'codex', enabled: false },
+        { provider: 'gemini-api', enabled: false },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('returns an empty array when no rows are passed', () => {
+    expect(deriveKnownProviders([])).toEqual([]);
+  });
 });

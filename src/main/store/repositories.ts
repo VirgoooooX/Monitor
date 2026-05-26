@@ -1256,6 +1256,7 @@ export type ProviderAuthUpdatePatch = Partial<
     | 'lastQuotaAt'
     | 'lastErrorCode'
     | 'lastErrorMessage'
+    | 'enabled'
   >
 >;
 
@@ -1304,6 +1305,7 @@ interface ProviderAuthRawRow {
   last_error_code: string | null;
   last_error_message: string | null;
   secret_key: string;
+  enabled: number;
 }
 
 const mapProviderAuthRow = (row: ProviderAuthRawRow): ProviderAuthRow => ({
@@ -1329,6 +1331,10 @@ const mapProviderAuthRow = (row: ProviderAuthRawRow): ProviderAuthRow => ({
       ? null
       : (row.last_error_code as ProviderAuthErrorCode),
   lastErrorMessage: row.last_error_message,
+  // SQLite has no native boolean; the column is stored as INTEGER
+  // 0/1 with default 1 so legacy rows from pre-v4 schemas surface
+  // as `enabled: true` after the migration backfills the column.
+  enabled: row.enabled !== 0,
   secretKey: row.secret_key,
 });
 
@@ -1341,7 +1347,7 @@ export function createProviderAuthRepository(
     `SELECT id, provider, label, source, account_id, project_id,
             quota_capability, imported_at, updated_at,
             last_validated_at, last_quota_at,
-            last_error_code, last_error_message, secret_key
+            last_error_code, last_error_message, secret_key, enabled
        FROM provider_auth
       ORDER BY imported_at ASC, id ASC`,
   );
@@ -1349,7 +1355,7 @@ export function createProviderAuthRepository(
     `SELECT id, provider, label, source, account_id, project_id,
             quota_capability, imported_at, updated_at,
             last_validated_at, last_quota_at,
-            last_error_code, last_error_message, secret_key
+            last_error_code, last_error_message, secret_key, enabled
        FROM provider_auth
       WHERE provider = ?
       ORDER BY imported_at ASC, id ASC`,
@@ -1358,7 +1364,7 @@ export function createProviderAuthRepository(
     `SELECT id, provider, label, source, account_id, project_id,
             quota_capability, imported_at, updated_at,
             last_validated_at, last_quota_at,
-            last_error_code, last_error_message, secret_key
+            last_error_code, last_error_message, secret_key, enabled
        FROM provider_auth
       WHERE id = ?`,
   );
@@ -1378,14 +1384,15 @@ export function createProviderAuthRepository(
       ProviderAuthErrorCode | null,
       string | null,
       string,
+      number,
     ]
   >(
     `INSERT INTO provider_auth
        (id, provider, label, source, account_id, project_id,
         quota_capability, imported_at, updated_at,
         last_validated_at, last_quota_at,
-        last_error_code, last_error_message, secret_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        last_error_code, last_error_message, secret_key, enabled)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const removeStmt = db.prepare<[string]>(
     'DELETE FROM provider_auth WHERE id = ?',
@@ -1408,6 +1415,7 @@ export function createProviderAuthRepository(
     lastQuotaAt: 'last_quota_at',
     lastErrorCode: 'last_error_code',
     lastErrorMessage: 'last_error_message',
+    enabled: 'enabled',
   };
 
   return {
@@ -1437,6 +1445,7 @@ export function createProviderAuthRepository(
         row.lastErrorCode,
         row.lastErrorMessage,
         row.secretKey,
+        row.enabled ? 1 : 0,
       );
     },
     update(id, patch) {
@@ -1454,10 +1463,14 @@ export function createProviderAuthRepository(
       const assignments = entries
         .map((key) => `${COLUMN_BY_KEY[key]} = ?`)
         .join(', ');
-      const values = entries.map((key) => patch[key] as
-        | string
-        | number
-        | null);
+      const values = entries.map((key) => {
+        const v = patch[key];
+        // `enabled` is the only boolean column; the SQLite layer
+        // stores INTEGER 0/1 to keep the column comparable with the
+        // `DEFAULT 1` migration backfill.
+        if (key === 'enabled') return (v as boolean) ? 1 : 0;
+        return v as string | number | null;
+      });
       // Prepared statements are cached internally by better-sqlite3,
       // so the per-call `prepare` cost is negligible; the only thing
       // that varies is which columns are present in `assignments`.

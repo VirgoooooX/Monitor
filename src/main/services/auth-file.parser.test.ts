@@ -442,3 +442,57 @@ describe('parseAuthFile — error handling', () => {
     ).toThrow(ProviderAuthError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Native CLI on-disk formats — exercised by the auto-discovery flow.
+// ---------------------------------------------------------------------------
+//
+// The CLIs ship their own auth-file shapes that predate the CPA
+// wrapper; we picked them up after observing that
+// `~/.codex/auth.json` and `~/.claude/.credentials.json` were
+// silently failing the auto-discovery scan because the v1 priority
+// table had no path that matched `tokens.access_token` /
+// `claudeAiOauth.accessToken`. The fixtures below mirror the on-disk
+// shapes the official CLIs emit today.
+
+describe('parseAuthFile — Codex CLI native format (~/.codex/auth.json)', () => {
+  it('extracts access + refresh tokens from the `tokens` sub-object', () => {
+    const fixture = {
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: 'id-jwt-codex',
+        access_token: 'sk-codex-AAAA',
+        refresh_token: 'rt-codex-BBBB',
+        account_id: 'codex-account-1',
+      },
+      last_refresh: '2025-01-01T00:00:00.000Z',
+    };
+    const result = parse('codex', fixture);
+
+    expect(result.payload.accessToken).toBe('sk-codex-AAAA');
+    expect(result.payload.refreshToken).toBe('rt-codex-BBBB');
+    expect(result.accountId).toBe('codex-account-1');
+    expect(result.payload.apiKey).toBeUndefined();
+    assertPayloadShape(result.payload);
+  });
+});
+
+describe('parseAuthFile — Claude Code native format (~/.claude/.credentials.json)', () => {
+  it('extracts access + refresh tokens from the `claudeAiOauth` sub-object', () => {
+    const fixture = {
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-AAAA',
+        refreshToken: 'sk-ant-ort01-BBBB',
+        expiresAt: 1_900_000_000_000,
+        scopes: ['user:inference'],
+      },
+    };
+    const result = parse('claude-code', fixture);
+
+    expect(result.payload.accessToken).toBe('sk-ant-oat01-AAAA');
+    expect(result.payload.refreshToken).toBe('sk-ant-ort01-BBBB');
+    expect(result.payload.expiresAt).toBe(1_900_000_000_000);
+    expect(result.payload.apiKey).toBeUndefined();
+    assertPayloadShape(result.payload);
+  });
+});

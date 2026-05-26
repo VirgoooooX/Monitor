@@ -1704,6 +1704,114 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
   );
 
   // -------------------------------------------------------------------------
+  // createProviderAuthApiKey   (AI 账号 unification)
+  // -------------------------------------------------------------------------
+  //
+  // Manual API-key entry path. Symmetric to `importProviderAuthFile`
+  // but skips the OS file dialog: the renderer collects the
+  // `apiKey` (+ optional `baseUrl`) and the service shapes them
+  // into a {@link ProviderAuthSecretPayload} before encrypting.
+  //
+  // Validation is split between the schema (`provider`,
+  // `apiKey` non-empty, `baseUrl` is http(s)://) and the service
+  // (`baseUrl` required for `'openai-compatible'`); in both layers
+  // a violation surfaces as `{ code: 'validation' }` so the
+  // renderer can switch on it without parsing the message.
+  //
+  // The success envelope carries the redacted
+  // `ProviderAuthMetadata` for the new row — never the API key.
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.createProviderAuthApiKey,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata>> => {
+      const parsed =
+        desktopApiSchemas.createProviderAuthApiKey.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'createProviderAuthApiKey',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const input: import('../types').CreateProviderAuthApiKeyInput = {
+          provider: parsed.data.provider,
+          apiKey: parsed.data.apiKey,
+        };
+        if (parsed.data.label !== undefined) input.label = parsed.data.label;
+        if (parsed.data.baseUrl !== undefined) input.baseUrl = parsed.data.baseUrl;
+        const value = service.createApiKey(input);
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // setProviderAuthEnabled   (AI 账号 unification)
+  // -------------------------------------------------------------------------
+  //
+  // Toggle the per-account `enabled` flag. Returns the updated
+  // metadata, or `null` when the id does not exist (idempotent —
+  // matches `deleteProviderAuth`'s no-op-on-missing contract).
+  //
+  // Disabling clears the account's quota cache so the renderer
+  // does not surface stale snapshots for a paused account; the
+  // cache eviction lives inside `quotaService.refresh({ id })`,
+  // which is invoked here so the side-effect is on the same code
+  // path that owns the cache. The refresh result is intentionally
+  // dropped — the IPC return value is the post-toggle metadata,
+  // not a quota envelope.
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.setProviderAuthEnabled,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata | null>> => {
+      const parsed =
+        desktopApiSchemas.setProviderAuthEnabled.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'setProviderAuthEnabled',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const value = service.setEnabled(parsed.data);
+        // When disabling, kick the quota service so its cache for
+        // this id is dropped. We swallow rejections — failing to
+        // refresh must not turn a successful row update into a
+        // failure envelope, and the next scheduled refresh will
+        // reconcile the cache anyway.
+        if (
+          value !== null &&
+          parsed.data.enabled === false &&
+          deps.quotaService !== undefined
+        ) {
+          try {
+            await deps.quotaService.refresh({ id: parsed.data.id });
+          } catch {
+            // best-effort
+          }
+        }
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // getDiagnostics  (TODO: wired by task 9.3)
   // -------------------------------------------------------------------------
   ipcMain.handle(
