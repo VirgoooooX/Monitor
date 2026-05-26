@@ -6,8 +6,10 @@
 //
 // Design notes:
 //   - Only the five sample/event tables are pruned. `settings`,
-//     `secrets`, and `collector_health` are explicitly NOT touched —
-//     this is half of the §Property 9 contract.
+//     `secrets`, `collector_health`, and `provider_auth` are
+//     explicitly NOT touched — this is half of the §Property 9
+//     contract. `provider_auth` is user-managed; deletion only via
+//     deleteProviderAuth IPC.
 //   - All five `DELETE` statements run inside a single transaction so
 //     a crash or an exception leaves the DB in either the pre- or
 //     post-cleanup state, never half-pruned.
@@ -78,8 +80,9 @@ function resolveRetentionDays(value: number | undefined): number {
  *   - No surviving row in `network_samples`, `openclash_snapshots`,
  *     `node_samples`, `usage_events`, or `openclash_config_changes`
  *     has `timestamp < cutoff`.
- *   - Rows in `settings`, `secrets`, and `collector_health` are
- *     unchanged.
+ *   - Rows in `settings`, `secrets`, `collector_health`, and
+ *     `provider_auth` are unchanged. (`provider_auth` is user-managed;
+ *     deletion only via deleteProviderAuth IPC.)
  *   - The WAL file has been checkpointed and truncated.
  *
  * @param db        Open application database (read-write).
@@ -114,8 +117,13 @@ export function cleanup(
   );
 
   // Single transaction — all five deletes commit or roll back together.
-  // The three tables that must remain untouched (settings, secrets,
-  // collector_health) are simply absent from this block.
+  // Tables NOT subject to retention cleanup (must remain untouched and
+  // are deliberately absent from this block):
+  //   - settings
+  //   - secrets
+  //   - collector_health
+  //   - provider_auth   ← user-managed; deletion only via
+  //                       deleteProviderAuth IPC
   const removed: RetentionRemovedCounts = {
     networkSamples: 0,
     openclashSnapshots: 0,

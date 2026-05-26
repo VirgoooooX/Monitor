@@ -1,0 +1,272 @@
+/*
+ * Compact widget base layout and shared compact primitives.
+ */
+
+/* Compact widget shell ---------------------------------------------------- */
+/*
+ * The compact (floating) window is transparent and frameless. Each
+ * `data-compact-theme` preset paints its own surface inside the
+ * `.widget-shell`, never on `<body>` — bleeding through is what makes
+ * the rounded corners look correct over the desktop wallpaper.
+ *
+ * Layered architecture:
+ *   1. `.widget-shell`            — base: size, padding, layout, tokens
+ *   2. `.widget-shell__fx`        — animated decoration (aurora ring,
+ *                                   scanning grid, pulse, ...)
+ *   3. `.widget-shell__chrome`    — static decoration (border highlight,
+ *                                   inner glow, corner accents)
+ *   4. `.widget-shell__content`   — the actual UI tree, lifted above
+ *                                   decoration via `z-index`
+ *
+ * Decoration layers are absolutely positioned and `pointer-events:
+ * none` so they cannot intercept the click that opens the expanded
+ * window.
+ */
+
+.widget-shell {
+  /* ── Base tokens (overridden by `[data-compact-theme]` rules below)
+        Keep them grouped at the top so each theme block stays small and
+        focused on what actually changes. */
+  --widget-bg:
+    linear-gradient(145deg, #18181c, #101012);
+  --widget-border: rgba(255, 255, 255, 0.06);
+  /*
+   * No outer drop shadow.
+   *
+   * With the widget filling the BrowserWindow edge-to-edge, any
+   * outer shadow would paint past the window bounds and be
+   * clipped by the OS — wasting paint cycles for an effect the
+   * user can never see. Visual lift comes from the inset highlight
+   * painted by `.widget-shell__chrome` instead.
+   */
+  --widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --widget-text: var(--color-text-primary);
+  --widget-text-muted: var(--color-text-muted);
+  --widget-accent: rgba(165, 180, 252, 0.95);
+  --widget-glow: rgba(165, 180, 252, 0.28);
+  --widget-divider: rgba(255, 255, 255, 0.04);
+
+  /* Status-driven accent — drives `signal-pulse` and the badge
+     dots; defaults to neutral so unknown states fall back gracefully. */
+  --widget-status: var(--color-ok);
+
+  box-sizing: border-box;
+  /*
+   * Fill the BrowserWindow edge-to-edge.
+   *
+   * The compact window is `transparent: true`, so anything painted
+   * in a margin ring around the widget falls onto the desktop
+   * wallpaper as a visible halo — drop shadows, corner
+   * anti-aliasing leaks, OS DWM artifacts. Removing the margin
+   * means the widget bounds match the BrowserWindow bounds; the
+   * four rectangular corners outside the rounded shape stay fully
+   * transparent (the border-radius mask and the transparent
+   * BrowserWindow agree), and any clipped drop shadow has no
+   * margin to leak into.
+   *
+   * The window itself is sized 360 × 240; the widget therefore
+   * occupies that exact rectangle minus the rounded corners.
+   */
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+
+  background: var(--widget-bg);
+  color: var(--widget-text);
+  border-radius: 12px;
+  /* No outer border. The visible rim is owned by the
+     `.widget-shell__chrome` inset highlight; an additional outer
+     `border: 1px solid` reads as a hard grey hairline against the
+     transparent BrowserWindow chrome and double-stacks with the
+     chrome layer. Themes that want a different rim treatment do it
+     in their own `__chrome` block (see `aurora-ring`, `holo-grid`). */
+  border: 0;
+  box-shadow: var(--widget-shadow);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  -webkit-app-region: no-drag;
+  /*
+   * No `backdrop-filter`.
+   *
+   * On Windows, `backdrop-filter: blur(...)` on a transparent
+   * frameless BrowserWindow leaks past the `border-radius` mask:
+   * Chromium computes the blur in the element's rectangular
+   * bounding box and the rounded clip is applied imperfectly at
+   * the corners, leaving a faint rectangular halo of blurred
+   * wallpaper in the 6 px margin around the widget — most visible
+   * over saturated/translucent wallpapers (e.g. the mint-green
+   * capture in the bug report).
+   *
+   * Each theme paints its own surface gradient + transparency
+   * directly in `--widget-bg`, which already reads as "frosted"
+   * without the OS-level blur. If a future theme wants real
+   * backdrop blur it should be opted in locally, after isolating
+   * the rounded shape on its own compositor layer (e.g. via
+   * `clip-path` rather than `border-radius`).
+   */
+  backdrop-filter: none;
+}
+
+.widget-shell:focus-visible {
+  /* Accent ring only. No outer drop shadow — the widget fills the
+     BrowserWindow so the OS would clip it anyway. */
+  box-shadow:
+    inset 0 0 0 2px rgba(99, 102, 241, 0.6);
+}
+
+/* Status → status colour token. The widget shell mirrors `state.status`
+   onto `[data-status]`; theme-fx layers (notably `signal-pulse`) read
+   the status colour to drive their motion. */
+.widget-shell[data-status='healthy'],
+.widget-shell[data-status='node_slow'] {
+  --widget-status: var(--color-ok);
+}
+.widget-shell[data-status='partial_outage'] {
+  --widget-status: var(--color-warn);
+}
+.widget-shell[data-status='openclash_unreachable'],
+.widget-shell[data-status='node_down'],
+.widget-shell[data-status='home_down'] {
+  --widget-status: var(--color-bad);
+}
+
+/* Decoration + content layering ------------------------------------------- */
+
+.widget-shell__fx,
+.widget-shell__chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+}
+
+.widget-shell__chrome {
+  z-index: 1;
+}
+
+.widget-shell__content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Network section (top: two text rows + right-side trend) */
+.widget-shell__network {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  align-items: center;
+  column-gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--widget-divider);
+  -webkit-app-region: no-drag;
+}
+
+.widget-shell__network-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* AI section (bottom half) */
+.widget-shell__ai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  flex: 1;
+  min-height: 0;
+  -webkit-app-region: no-drag;
+}
+
+/* The node name (in line 2) */
+.widget-shell__node {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--widget-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.widget-shell__node-group {
+  flex: 0 1 auto;
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--widget-text-muted);
+  font-size: 10px;
+}
+
+.widget-shell__node-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
+}
+
+.sparkline {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* `currentColor` lets the polyline + gradient pick up the surrounding
+     text colour. The compact widget owns its own dark surface so a calm
+     near-white reads well; the expanded window's light-mode override
+     swaps to a cool indigo so the line stays visible against the light
+     surface. */
+  color: rgba(245, 245, 247, 0.7);
+}
+
+[data-color-mode='light'] .ex .sparkline,
+[data-color-mode='light'].ex .sparkline {
+  color: rgba(79, 70, 229, 0.62);
+}
+
+.widget-shell__sparkline {
+  width: 92px;
+  height: 34px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  -webkit-app-region: no-drag;
+}
+
+.widget-shell__usage {
+  font-size: 11px;
+  color: var(--widget-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-top: 2px;
+  border-top: 1px solid var(--widget-divider);
+  -webkit-app-region: no-drag;
+}
+
+.widget-shell__usage-prefix {
+  color: var(--widget-text-muted);
+  margin-right: 4px;
+}

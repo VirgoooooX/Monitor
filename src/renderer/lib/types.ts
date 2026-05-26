@@ -56,6 +56,19 @@ export type {
   QuotaWindow,
   QuotaSnapshot,
   QuotaStatus,
+  QuotaSource,
+  QuotaKind,
+  QuotaStatus2,
+
+  // CPA Quota Import / Provider Auth (Foundation Phase)
+  // NOTE: `ProviderAuthSecretPayload` is intentionally NOT re-exported
+  // here — the renderer must never see secret material, and omitting
+  // it from the mirror enforces that at compile time (design.md
+  // §Layered Trust Model, requirements.md §1.4).
+  ProviderId,
+  QuotaCapability,
+  ProviderAuthMetadata,
+  ProviderAuthErrorCode,
 
   // Settings
   RouterHealthSettings,
@@ -63,12 +76,16 @@ export type {
   CollectorToggle,
   CliProxySettings,
   AppSettings,
+  AppearanceSettings,
+  ColorMode,
+  CompactTheme,
   ManagementInterfaceSettings,
   ManagementConfigFileEntry,
 
   // Diagnostics
   CollectorHealthRow,
   DiagnosticsReport,
+  ProviderAuthDiagnosticsEntry,
 
   // IPC contract
   DesktopApi,

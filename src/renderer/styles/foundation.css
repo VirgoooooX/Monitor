@@ -1,0 +1,147 @@
+/*
+ * Foundation: global renderer root, body modes, and boot placeholders.
+ */
+
+/*
+ * Global renderer styles.
+ *
+ * The compact window is 360x240, frameless, transparent, and
+ * always-on-top (see `windows.ts#createCompactWindow`). For the
+ * transparency to actually take effect, the renderer's `<body>`
+ * must not paint an opaque background; we keep `body` transparent
+ * and let the inner `.widget-shell` paint its own dark surface.
+ *
+ * The expanded window is 760x560 with a normal frame; it gets an
+ * opaque white background via `body.mode-expanded`.
+ *
+ * Font sizes are locked (no viewport-relative units) per
+ * PLAN.md §UI Implementation Guide and design.md §Window Strategy.
+ */
+
+:root {
+  /* Font stack — order matters on Windows.
+     - 'Inter Variable' / 'Inter' if installed by the user.
+     - 'Segoe UI Variable Text' / 'Segoe UI' for Latin glyphs.
+     - 'Microsoft YaHei UI' (the UI-tuned variant shipped with
+       Windows 10+) reads cleanly at 12px; the plain
+       'Microsoft YaHei' it replaced has soft strokes at small
+       sizes which is the root cause of the "字体不清晰" complaint
+       in light mode.
+     - 'PingFang SC' for macOS users running the app.
+     - Generic fallbacks last. */
+  --ui-font-family: 'Inter Variable', 'Inter', 'Segoe UI Variable Text',
+    'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Source Han Sans SC', system-ui, sans-serif;
+  font-family: var(--ui-font-family);
+
+  /* Typography scale — every renderer surface reads these tokens.
+     `--ui-font-scale` is persisted in Settings and applied by App.tsx. */
+  --type-micro: calc(var(--ui-font-scale, 1) * 11px);
+  --type-xs: calc(var(--ui-font-scale, 1) * 12px);
+  --type-sm: calc(var(--ui-font-scale, 1) * 13px);
+  --type-base: calc(var(--ui-font-scale, 1) * 14px);
+  --type-md: calc(var(--ui-font-scale, 1) * 15px);
+  --type-lg: calc(var(--ui-font-scale, 1) * 17px);
+  --type-xl: calc(var(--ui-font-scale, 1) * 20px);
+  --type-title: calc(var(--ui-font-scale, 1) * 23px);
+  --control-sm: calc(var(--ui-font-scale, 1) * 34px);
+  --control-md: calc(var(--ui-font-scale, 1) * 38px);
+  /* Sub-pixel + grayscale antialiasing so Chinese glyphs hold their
+     stroke contrast on light backgrounds where the dark-mode
+     auto-smoothing was hiding the wear. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /*
+   * NOTE: Do NOT set `color-scheme` on `:root`.
+   *
+   * The compact widget runs in a `transparent: true` BrowserWindow
+   * and relies on `html`/`body`/`#root` carrying NO opaque paint so
+   * the rounded `.widget-shell` shows through over the desktop
+   * wallpaper. `color-scheme` triggers Chromium to paint the
+   * "user agent canvas" with the OS theme's default background
+   * (white in light mode, near-black in dark mode) BEHIND the
+   * transparent body — which on Windows shows up as a faint
+   * rectangular halo in the 6 px margin around the rounded shell.
+   *
+   * Form controls that need OS-themed scrollbars / native widgets
+   * can opt in locally via `.ex { color-scheme: light dark }` on
+   * the expanded window only (it has `transparent: false` so the
+   * canvas paint is harmless there).
+   */
+
+  /* Status palette — one source of truth shared by the hero, the
+     connectivity dots, and any future widget surface. */
+  --color-ok: #22c55e;        /* green */
+  --color-warn: #f59e0b;      /* orange */
+  --color-bad: #ef4444;       /* red */
+  --color-unknown: #6b7280;   /* gray */
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: rgba(245, 245, 247, 0.72);
+  --color-text-muted: rgba(245, 245, 247, 0.55);
+  --color-shell-bg: rgba(20, 20, 22, 0.88);
+  --color-shell-bg-dim: rgba(20, 20, 22, 0.94);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: transparent;
+}
+
+body.mode-expanded {
+  /* Background owned by the .ex shell below. Body just provides
+     the deepest base layer so the corners are not white during
+     window resize. */
+  background: #0c0d11;
+  color: #f5f5f7;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Boot placeholders ------------------------------------------------------- */
+
+.boot {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 16px;
+}
+
+.boot--compact {
+  background: var(--color-shell-bg);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  font-size: var(--type-sm, 13px);
+  margin: 8px;
+  -webkit-app-region: drag;
+}
+
+.boot--expanded {
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--type-lg, 17px);
+  color: #1f2328;
+}
+
+.boot--expanded h1 {
+  margin: 0;
+  font-size: var(--type-xl, 20px);
+  font-weight: 600;
+}
+
+.boot__hint {
+  font-size: var(--type-xs, 12px);
+  color: #6a737d;
+}

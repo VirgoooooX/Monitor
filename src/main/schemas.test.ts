@@ -60,6 +60,17 @@ function validBase(): AppSettings {
       requestTimeoutMs: 10_000,
       configFileWhitelist: [],
     },
+    cliproxy: {
+      enabled: false,
+      managementUrl: '',
+      authDir: '',
+      usageQueueBatchSize: 25,
+    },
+    appearance: {
+      colorMode: 'dark',
+      compactTheme: 'obsidian-glass',
+      fontScale: 1,
+    },
   };
 }
 
@@ -336,5 +347,113 @@ describe('appSettingsSchema (Property 11)', () => {
       }),
       { numRuns: NUM_RUNS },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Appearance / theme schema (theme system feature)
+// ---------------------------------------------------------------------------
+//
+// The theme system adds an `appearance` block to `AppSettings` with a
+// closed-set `colorMode` (dark | light), `compactTheme` (one of five
+// presets), and bounded `fontScale`. The schema must:
+//   - accept every default colorMode / compactTheme combination
+//   - reject any unknown literal in either field
+//   - reject extra keys (the appearance schema is `.strict()`)
+//   - accept partial patches via `appSettingsPatchSchema`
+
+describe('appSettingsSchema appearance (theme system)', () => {
+  const VALID_COLOR_MODES = ['dark', 'light'] as const;
+  const VALID_COMPACT_THEMES = [
+    'obsidian-glass',
+    'aurora-ring',
+    'holo-grid',
+    'liquid-metal',
+    'signal-pulse',
+  ] as const;
+
+  it('accepts every valid (colorMode, compactTheme) pair', () => {
+    for (const colorMode of VALID_COLOR_MODES) {
+      for (const compactTheme of VALID_COMPACT_THEMES) {
+        const base = validBase();
+        const settings: AppSettings = {
+          ...base,
+          appearance: { colorMode, compactTheme, fontScale: 1 },
+        };
+        const result = appSettingsSchema.safeParse(settings);
+        expect(result.success).toBe(true);
+      }
+    }
+  });
+
+  it('rejects unknown colorMode', () => {
+    const base = validBase();
+    const settings = {
+      ...base,
+      appearance: {
+        colorMode: 'sepia',
+        compactTheme: 'obsidian-glass',
+        fontScale: 1,
+      },
+    };
+    const result = appSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unknown compactTheme', () => {
+    const base = validBase();
+    const settings = {
+      ...base,
+      appearance: {
+        colorMode: 'dark',
+        compactTheme: 'rainbow-explosion',
+        fontScale: 1,
+      },
+    };
+    const result = appSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects extra keys inside appearance', () => {
+    const base = validBase();
+    const settings = {
+      ...base,
+      appearance: {
+        colorMode: 'dark',
+        compactTheme: 'obsidian-glass',
+        fontScale: 1,
+        accent: '#ff0000',
+      },
+    };
+    const result = appSettingsSchema.safeParse(settings);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts the bounded font scale range', () => {
+    for (const fontScale of [0.9, 1, 1.2]) {
+      const settings: AppSettings = {
+        ...validBase(),
+        appearance: {
+          colorMode: 'dark',
+          compactTheme: 'obsidian-glass',
+          fontScale,
+        },
+      };
+      expect(appSettingsSchema.safeParse(settings).success).toBe(true);
+    }
+  });
+
+  it('rejects font scale outside the supported range', () => {
+    for (const fontScale of [0.89, 1.21]) {
+      const settings: AppSettings = {
+        ...validBase(),
+        appearance: {
+          colorMode: 'dark',
+          compactTheme: 'obsidian-glass',
+          fontScale,
+        },
+      };
+      expect(appSettingsSchema.safeParse(settings).success).toBe(false);
+    }
   });
 });

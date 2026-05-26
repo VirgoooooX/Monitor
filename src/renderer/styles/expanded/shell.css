@@ -1,0 +1,1195 @@
+/*
+ * Expanded window shell, color-mode tokens, topbar, cards, panels, and base light-mode fixes.
+ */
+
+/* ===========================================================================
+   Expanded window — refreshed editorial layout
+   ===========================================================================
+   The expanded window mirrors the compact widget's two-section rhythm:
+   the network glance lives on the network tab, AI quota lives on the
+   usage tab. See App.tsx#ExpandedRoot for the structural contract.
+
+   The compact widget (.widget-shell) is intentionally untouched; its
+   StatusHero / Sparkline primitives are reused here so the two windows
+   feel like one product.
+   =========================================================================== */
+
+/* Local scale & accents — namespaced under .ex so the compact widget
+   keeps its own surface treatment.
+
+   Color mode: the expanded window honours `data-color-mode` (set on
+   the document root and on the `.ex` element by `App.tsx`). Dark mode
+   keeps the original token set; light mode swaps to a cool/grey
+   palette intentionally — no warm beige — so the visual identity
+   stays close to the brand. */
+.ex {
+  /* Shared content-column cap. Network stack, usage panel, and
+     settings panel all line up against this width so the three
+     tabs feel like the same page underneath. Wide enough to keep
+     the editorial 2-column forms in settings legible (matches the
+     880-track previously hard-coded inside settings-view.css with
+     room for the rail) and narrow enough that the network card
+     stays balanced inside the default 760×560 window. */
+  --ex-content-max: 1040px;
+
+  --ex-bg: #0c0d11;
+  --ex-bg-radial-a: rgba(99, 102, 241, 0.12);
+  --ex-bg-radial-b: rgba(16, 185, 129, 0.06);
+  --ex-surface: rgba(255, 255, 255, 0.025);
+  --ex-surface-strong: rgba(255, 255, 255, 0.045);
+  --ex-border: rgba(255, 255, 255, 0.07);
+  --ex-border-strong: rgba(255, 255, 255, 0.12);
+  --ex-text: #f5f5f7;
+  --ex-text-mute: rgba(245, 245, 247, 0.62);
+  --ex-text-faint: rgba(245, 245, 247, 0.42);
+  --ex-accent: #a5b4fc;
+  --ex-accent-strong: #818cf8;
+  --ex-topbar-bg: rgba(12, 13, 17, 0.65);
+
+  --ex-ui-font: var(--ui-font-family, 'Segoe UI Variable Text', 'Segoe UI',
+    'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif);
+  --ex-display-font: var(--ex-ui-font);
+
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background:
+    radial-gradient(120% 80% at 0% 0%, var(--ex-bg-radial-a), transparent 55%),
+    radial-gradient(90% 60% at 100% 0%, var(--ex-bg-radial-b), transparent 60%),
+    var(--ex-bg);
+  color: var(--ex-text);
+  font-family: var(--ex-ui-font);
+  font-size: var(--type-base);
+  font-feature-settings: 'cv11', 'ss01';
+  overflow: hidden;
+  /* Local color-scheme — the global declaration was removed from
+     `:root` because it leaked an opaque UA canvas behind the
+     transparent compact widget. The expanded window has
+     `transparent: false`, so painting the canvas is harmless and
+     it lets native scrollbars / form controls match the active
+     theme. */
+  color-scheme: dark;
+}
+
+.ex[data-color-mode='light'],
+[data-color-mode='light'] .ex {
+  color-scheme: light;
+}
+
+/* Light mode — cool whites + grey-blues. We override tokens, not
+   layout, so positioning/sizing stays untouched.
+
+   Contrast strategy: light surfaces are unforgiving. Transparency-
+   based mute tokens that look "soft and quiet" on a near-black
+   background turn into illegible grey-on-grey on a near-white one
+   because a gradient backdrop subtracts contrast at every pixel.
+   The light-mode tokens use SOLID ink colours. We intentionally keep
+   even "faint" text dark because many labels are tiny uppercase
+   English; on Windows those get fuzzy fast when rendered in pale
+   slate. No alpha for text. */
+.ex[data-color-mode='light'],
+[data-color-mode='light'] .ex {
+  --ex-bg: #f5f7fb;
+  --ex-bg-radial-a: rgba(34, 197, 94, 0.10);
+  --ex-bg-radial-b: rgba(99, 102, 241, 0.08);
+  --ex-surface: #ffffff;
+  --ex-surface-strong: #ffffff;
+  --ex-border: rgba(15, 23, 42, 0.16);
+  --ex-border-strong: rgba(15, 23, 42, 0.28);
+  --ex-text: #020617;
+  --ex-text-mute: #1f2937;
+  --ex-text-faint: #374151;
+  --ex-accent: #047857;
+  --ex-accent-strong: #065f46;
+  --ex-topbar-bg: rgba(245, 247, 251, 0.92);
+
+  --ex-ui-font: var(--ui-font-family, 'Segoe UI Variable Text', 'Segoe UI',
+    'Microsoft YaHei UI', 'PingFang SC', system-ui, sans-serif);
+  --ex-display-font: var(--ex-ui-font);
+}
+
+/* Body backdrop — keep the chrome behind the .ex shell aligned with
+   the active color mode so a window resize never flashes the wrong
+   colour at the corners. */
+body.mode-expanded[data-color-mode='light'] {
+  background: #f5f7fb;
+  color: #020617;
+}
+
+/* ── Light-mode adjustments for legacy ex/* selectors that hardcode
+   white-on-dark literals. Most of `.ex` already reads from
+   `--ex-*` tokens (which the light block above retunes), but a
+   handful of older rules paint with bare `rgba(255,255,255,X)` /
+   `rgba(0,0,0,X)` literals so they need explicit overrides here.
+
+   Scoped under `[data-color-mode='light']` so the dark path stays
+   bit-for-bit identical and tests asserting dark-mode pixel
+   parity keep passing. */
+[data-color-mode='light'] .ex .ex__tab:hover,
+[data-color-mode='light'].ex .ex__tab:hover {
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__tab--active,
+[data-color-mode='light'].ex .ex__tab--active {
+  background: rgba(4, 120, 87, 0.10);
+  color: var(--ex-text);
+}
+
+/* Card surface — use the lighter token instead of the inline white
+   wash that reads as "almost transparent" on a light backdrop. */
+[data-color-mode='light'] .ex .ex__card {
+  background: var(--ex-surface);
+  border-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .ex__card::before {
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.05),
+    rgba(15, 23, 42, 0.0)
+  );
+}
+
+[data-color-mode='light'] .ex .ex__brand-name,
+[data-color-mode='light'] .ex .ex__brand-tag,
+[data-color-mode='light'] .ex .ex__tab,
+[data-color-mode='light'] .ex .ex__card-eyebrow,
+[data-color-mode='light'] .ex .ex__card-title,
+[data-color-mode='light'] .ex .ex__node-group,
+[data-color-mode='light'] .ex .ex__panel-count,
+[data-color-mode='light'] .ex .ex__panel-meta,
+[data-color-mode='light'] .ex .node-table__card-name,
+[data-color-mode='light'] .ex .node-table__card-source,
+[data-color-mode='light'] .ex .usage-panel-v2__title,
+[data-color-mode='light'] .ex .quota-overview__title,
+[data-color-mode='light'] .ex .quota-bar__provider,
+[data-color-mode='light'] .ex .usage-totals__label,
+[data-color-mode='light'] .ex .provider-card__name,
+[data-color-mode='light'] .ex .provider-card__badge,
+[data-color-mode='light'] .ex .token-row__label,
+[data-color-mode='light'] .ex .provider-card__stat-label,
+[data-color-mode='light'] .ex .settings-view__eyebrow,
+[data-color-mode='light'] .ex .settings-view__section-title,
+[data-color-mode='light'] .ex .settings-view__collector-label {
+  font-family: var(--ex-display-font);
+  font-weight: 700;
+  text-shadow: none;
+}
+
+[data-color-mode='light'] .ex .ex__card-eyebrow,
+[data-color-mode='light'] .ex .usage-panel-v2__title,
+[data-color-mode='light'] .ex .quota-overview__title,
+[data-color-mode='light'] .ex .usage-totals__label,
+[data-color-mode='light'] .ex .provider-card__badge,
+[data-color-mode='light'] .ex .token-row__label,
+[data-color-mode='light'] .ex .provider-card__stat-label,
+[data-color-mode='light'] .ex .settings-view__eyebrow {
+  letter-spacing: 0.08em;
+}
+
+[data-color-mode='light'] .ex .ex__card-title,
+[data-color-mode='light'] .ex .ex__node-name {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__node-line {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .status-hero__label {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .status-hero__latency {
+  color: var(--ex-text-mute);
+}
+
+/* Badges — the dark-mode chips are a translucent white wash over a
+   black surface; mirror them with a translucent ink wash on white. */
+[data-color-mode='light'] .ex .ex__badge {
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid var(--ex-border);
+  color: var(--ex-text-mute);
+  font-weight: 650;
+}
+
+[data-color-mode='light'] .ex .ex__badge-value {
+  color: var(--ex-text);
+}
+
+/* Node table — switching button. Card-level light-mode skin lives
+   below in the new node-card overrides. */
+
+[data-color-mode='light']
+  .ex
+  .ex__panel--network
+  .node-table__switch-btn {
+  color: var(--ex-accent);
+  background: var(--ex-surface);
+  border-color: var(--ex-border-strong);
+}
+
+[data-color-mode='light']
+  .ex
+  .ex__panel--network
+  .node-table__switch-btn:hover:not(:disabled) {
+  background: rgba(4, 120, 87, 0.08);
+  border-color: rgba(4, 120, 87, 0.34);
+}
+
+/* Settings page — input bg/affix were tuned for the dark window. */
+[data-color-mode='light'] .ex .settings-view {
+  --sv-input-bg: #ffffff;
+  --sv-input-bg-hover: #ffffff;
+  --sv-text: var(--ex-text);
+  --sv-text-mute: var(--ex-text-mute);
+  --sv-text-faint: var(--ex-text-faint);
+  --sv-border: var(--ex-border);
+  --sv-border-strong: var(--ex-border-strong);
+}
+
+[data-color-mode='light'] .ex .settings-view__hint,
+[data-color-mode='light'] .ex .settings-view__rail-hint,
+[data-color-mode='light'] .ex .settings-view__section-hint,
+[data-color-mode='light'] .ex .settings-view__subtitle {
+  color: var(--ex-text-mute);
+  font-weight: 500;
+}
+
+[data-color-mode='light'] .ex .settings-view__input,
+[data-color-mode='light'] .ex .settings-view__input-affix {
+  background: #ffffff;
+  border-color: var(--ex-border-strong);
+  color: var(--ex-text);
+  font-weight: 520;
+}
+
+[data-color-mode='light'] .ex .settings-view__input::placeholder {
+  color: #64748b;
+}
+
+[data-color-mode='light'] .ex .settings-view__input-suffix {
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--ex-text-mute);
+  font-weight: 700;
+}
+
+[data-color-mode='light'] .ex .settings-view__input-action:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+[data-color-mode='light'] .ex .settings-view__btn-secondary:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.07);
+}
+
+[data-color-mode='light'] .ex .settings-view__btn-primary {
+  background: linear-gradient(180deg, #059669, #047857);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+}
+
+[data-color-mode='light'] .ex .settings-view__btn-primary:disabled {
+  background: rgba(15, 23, 42, 0.10);
+  color: var(--ex-text-mute);
+  border-color: var(--sv-border);
+}
+
+[data-color-mode='light'] .ex .settings-view__rail-item:hover {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+/* Hint / eyebrow / subtitle text uses the faint token; with the new
+   solid slate-500 token they read clearly without per-rule overrides.
+   Keep an explicit selector list here only for the few labels that
+   were previously tied to dark-only colours (rail-label, section
+   title) so they are guaranteed to land on the full-contrast token. */
+[data-color-mode='light'] .ex .settings-view__rail-label,
+[data-color-mode='light'] .ex .settings-view__section-title,
+[data-color-mode='light'] .ex .settings-view__label {
+  color: var(--ex-text);
+}
+
+/* Toggle switches — the track and thumb were white-on-dark. */
+[data-color-mode='light'] .ex .settings-view__switch-track {
+  background: rgba(15, 23, 42, 0.16);
+}
+
+/* Save bar — frosted dark glass becomes frosted light glass. */
+[data-color-mode='light'] .ex .settings-view__savebar {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--ex-border-strong);
+  color: var(--ex-text);
+  box-shadow: 0 12px 32px rgba(20, 32, 44, 0.12);
+}
+
+/* Quota / usage panels — ALL read white-on-dark literals. Re-tune
+   per-token here so light mode shows the same hierarchy with
+   inverted contrast. */
+[data-color-mode='light'] .ex .quota-strip__track {
+  background: rgba(15, 23, 42, 0.10);
+}
+
+[data-color-mode='light'] .ex .usage-panel-v2 {
+  --usage-card-bg: #ffffff;
+  --usage-card-border: var(--ex-border);
+  --usage-card-border-strong: var(--ex-border-strong);
+  --usage-text: var(--ex-text);
+  --usage-text-mute: var(--ex-text-mute);
+  --usage-text-faint: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .usage-panel-v2__tab--active {
+  background: rgba(4, 120, 87, 0.10);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .usage-panel-v2__tab,
+[data-color-mode='light'] .ex .quota-bar__window-name,
+[data-color-mode='light'] .ex .quota-bar__footer,
+[data-color-mode='light'] .ex .usage-totals__mini,
+[data-color-mode='light'] .ex .token-row__value,
+[data-color-mode='light'] .ex .provider-card__reason,
+[data-color-mode='light'] .ex .provider-card__hint {
+  color: var(--ex-text-mute);
+  font-weight: 600;
+}
+
+[data-color-mode='light'] .ex .provider-card__badge--ok {
+  background: rgba(34, 197, 94, 0.14);
+  color: #047857;
+}
+
+[data-color-mode='light'] .ex .provider-card__badge--degraded {
+  background: rgba(245, 158, 11, 0.18);
+  color: #92400e;
+}
+
+[data-color-mode='light'] .ex .provider-card__badge--unavailable,
+[data-color-mode='light'] .ex .provider-card__badge--disabled {
+  background: rgba(107, 114, 128, 0.14);
+  color: #4b5563;
+}
+
+/* Scrollbar — the white-on-dark thumb reads as ghost on light. */
+[data-color-mode='light'] .ex .ex__main {
+  scrollbar-color: rgba(15, 23, 42, 0.22) transparent;
+}
+
+[data-color-mode='light'] .ex .ex__main::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.22);
+}
+
+[data-color-mode='light'] .ex .ex__main::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.32);
+}
+
+/* QuickActionsPanel — chip backgrounds were dark-only. */
+[data-color-mode='light'] .ex .ex__brand-tag {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel--degraded {
+  background: linear-gradient(
+    180deg,
+    rgba(245, 158, 11, 0.12),
+    rgba(255, 255, 255, 0.78)
+  );
+  border-color: rgba(180, 83, 9, 0.30);
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel--bridge-missing {
+  background: rgba(254, 242, 242, 0.86);
+  border-color: rgba(185, 28, 28, 0.26);
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__hint,
+[data-color-mode='light'] .ex .quick-actions-panel__error {
+  color: #991b1b;
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__banner--critical {
+  background: rgba(254, 226, 226, 0.9);
+  border-color: rgba(185, 28, 28, 0.32);
+  color: #991b1b;
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__banner--warn {
+  background: rgba(254, 243, 199, 0.92);
+  border-color: rgba(180, 83, 9, 0.32);
+  color: #92400e;
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__banner--notice {
+  background: rgba(224, 231, 255, 0.92);
+  border-color: rgba(67, 56, 202, 0.28);
+  color: #3730a3;
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__error {
+  background: rgba(254, 226, 226, 0.9);
+  border-color: rgba(185, 28, 28, 0.32);
+}
+
+[data-color-mode='light'] .ex .quick-actions-panel__skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.05) 0%,
+    rgba(15, 23, 42, 0.12) 50%,
+    rgba(15, 23, 42, 0.05) 100%
+  );
+  background-size: 200% 100%;
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__backdrop {
+  background: rgba(20, 32, 44, 0.30);
+}
+
+[data-color-mode='light'] .ex .confirm-dialog {
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ex-text);
+  border-color: var(--ex-border-strong);
+  box-shadow: 0 20px 60px rgba(20, 32, 44, 0.22);
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__title,
+[data-color-mode='light'] .ex .confirm-dialog__path-value {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__path-label {
+  color: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__warning {
+  background: rgba(254, 243, 199, 0.92);
+  border-color: rgba(180, 83, 9, 0.32);
+  color: #92400e;
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__btn--cancel {
+  border-color: var(--ex-border-strong);
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .confirm-dialog__btn--cancel:hover {
+  background: rgba(20, 32, 44, 0.06);
+  color: var(--ex-text);
+}
+
+/* ── Topbar ──────────────────────────────────────────────────────────── */
+
+.ex__topbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--ex-border);
+  background: var(--ex-topbar-bg);
+  backdrop-filter: blur(16px);
+  -webkit-app-region: drag;
+}
+
+.ex__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.ex__brand-mark {
+  color: var(--ex-accent);
+  font-size: var(--type-md);
+  text-shadow: 0 0 12px rgba(165, 180, 252, 0.55);
+}
+
+.ex__brand-name {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-md);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.ex__brand-tag {
+  font-size: var(--type-xs);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+  font-weight: 500;
+}
+
+.ex__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ex-surface);
+  border: 1px solid var(--ex-border);
+  border-radius: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.ex__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ex-text-mute);
+  font-size: var(--type-base);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 160ms ease-out, color 160ms ease-out;
+}
+
+.ex__tab:hover {
+  color: var(--ex-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ex__tab--active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ex-text);
+  box-shadow: inset 0 0 0 1px var(--ex-border-strong);
+}
+
+.ex__tab-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ex__tab-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.ex__tab:focus-visible {
+  outline: 2px solid var(--ex-accent);
+  outline-offset: 2px;
+}
+
+.ex__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border: 1px solid var(--ex-border);
+  border-radius: 8px;
+  background: var(--ex-surface);
+  color: var(--ex-text-mute);
+  cursor: pointer;
+  transition: background 160ms ease-out, color 160ms ease-out;
+  -webkit-app-region: no-drag;
+}
+
+.ex__refresh svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ex__refresh:hover:not(:disabled) {
+  background: var(--ex-surface-strong);
+  color: var(--ex-text);
+}
+
+.ex__refresh:focus-visible {
+  outline: 2px solid var(--ex-accent);
+  outline-offset: 2px;
+}
+
+.ex__refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ex__refresh--spin svg {
+  animation: ex-spin 700ms ease-in-out;
+}
+
+@keyframes ex-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Tab content stack ──────────────────────────────────────────────── */
+
+.ex__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Cards (network glance) ─────────────────────────────────────────── */
+
+.ex__card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  gap: 10px;
+  padding: 16px 18px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.015)
+  );
+  border: 1px solid var(--ex-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ex__card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.18),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.ex__card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ex__card-eyebrow {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+}
+
+.ex__card-title {
+  font-size: var(--type-base);
+  font-weight: 600;
+  color: var(--ex-text-mute);
+  letter-spacing: 0.02em;
+}
+
+.ex__card--network .status-hero {
+  -webkit-app-region: no-drag;
+  gap: 10px;
+  align-items: center;
+}
+
+.ex__card--network .status-hero__label {
+  font-size: var(--type-title, 23px);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  line-height: 1.15;
+}
+
+.ex__card--network .status-hero__latency {
+  font-family: var(--ex-ui-font);
+  font-size: var(--type-base);
+  color: var(--ex-text-mute);
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.ex__card--network .status-hero__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.ex__node-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--type-sm);
+  color: var(--ex-text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ex__node-group {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  border: 1px solid var(--ex-border);
+  flex: 0 0 auto;
+}
+
+.ex__node-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--ex-text);
+  letter-spacing: 0.005em;
+}
+
+.ex__trend {
+  margin: 2px -2px 0;
+  height: 72px;
+}
+
+.ex__trend .sparkline {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ex__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ex__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--type-xs);
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  border: 1px solid var(--ex-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ex-text-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex__badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-unknown);
+}
+
+.ex__badge--ok .ex__badge-dot {
+  background: var(--color-ok);
+  box-shadow: 0 0 6px var(--color-ok);
+}
+
+.ex__badge--warn .ex__badge-dot {
+  background: var(--color-warn);
+  box-shadow: 0 0 6px var(--color-warn);
+}
+
+.ex__badge--bad .ex__badge-dot {
+  background: var(--color-bad);
+  box-shadow: 0 0 6px var(--color-bad);
+}
+
+.ex__badge--metric {
+  font-family: var(--ex-ui-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex__badge-value {
+  color: var(--ex-text);
+  font-weight: 500;
+}
+
+.ex__placeholder {
+  font-size: var(--type-sm);
+  color: var(--ex-text-faint);
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* ── Main panel area ─────────────────────────────────────────────────── */
+
+.ex__main {
+  position: relative;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+.ex__main::-webkit-scrollbar {
+  width: 10px;
+}
+
+.ex__main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ex__main::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.ex__main::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+.ex__error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.32);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: var(--type-sm);
+}
+
+.ex__error-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  font-weight: 700;
+  font-size: var(--type-xs);
+  font-family: var(--ex-display-font);
+}
+
+.ex__panel {
+  background: var(--ex-surface);
+  border: 1px solid var(--ex-border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.ex__panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ex-border);
+}
+
+.ex__panel-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--type-lg);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.ex__panel-count {
+  font-family: var(--ex-ui-font);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  color: var(--ex-text-faint);
+  padding: 1px 7px;
+  background: var(--ex-surface-strong);
+  border: 1px solid var(--ex-border);
+  border-radius: 999px;
+  letter-spacing: 0;
+}
+
+.ex__panel-meta {
+  font-size: var(--type-sm);
+  color: var(--ex-text-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex__panel-meta strong {
+  font-family: var(--ex-display-font);
+  font-weight: 600;
+  color: var(--ex-text);
+  letter-spacing: 0.05em;
+  margin-left: 4px;
+}
+
+.ex__panel--usage,
+.ex__panel--settings {
+  /* These panels' inner components own their own padding/typography
+     to keep the existing component contracts intact, so the wrapping
+     ex__panel is reduced to a thin shell. */
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+/* ── Unified content width across tabs ───────────────────────────────────
+   The expanded window has three tabs (network, usage, settings) which
+   all live inside the same `.ex__main` container. Without an explicit
+   cap the network stack stretches edge-to-edge while Settings used to
+   pin itself to 880px, making page transitions feel inconsistent. Cap
+   every direct content child to `--ex-content-max` and centre it. The
+   tab content itself can still grow to 100% inside narrower windows. */
+
+.ex__main > .ex__stack,
+.ex__main > .ex__panel--usage,
+.ex__main > .ex__panel--settings,
+.ex__main > .ex__error {
+  width: min(100%, var(--ex-content-max));
+  max-width: var(--ex-content-max);
+  margin-inline: auto;
+}
+
+/* ── Network card — re-laid as a two-column grid ──────────────────────
+   Mirrors the compact widget layout: hero/node info in the left
+   column, sparkline trend on the right, badges spanning the full
+   width below. The sparkline now stretches across both info rows
+   instead of being squeezed underneath them, matching the reference
+   floating widget. The DOM order in App.tsx (hero → node-line →
+   trend → badges) is preserved; we just remap regions via
+   grid-template-areas. */
+
+.ex__card--network {
+  display: grid;
+  /* Right column tightened (was minmax(220px, 38%)) so the
+     sparkline sits closer to the hero text — the 4 status pills
+     that justified extra breathing room have moved into the
+     network glance card itself, not the gutter beside it. */
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 46%);
+  grid-template-areas:
+    'head head'
+    'hero trend'
+    'node trend';
+  column-gap: 10px;
+  row-gap: 6px;
+  align-items: start;
+}
+
+.ex__card--network .ex__card-head {
+  grid-area: head;
+}
+
+.ex__card--network .ex__hero {
+  grid-area: hero;
+  min-width: 0;
+}
+
+.ex__card--network .ex__node-line {
+  grid-area: node;
+  min-width: 0;
+}
+
+.ex__card--network .ex__trend {
+  grid-area: trend;
+  align-self: stretch;
+  height: auto;
+  min-height: 72px;
+  margin: 0;
+}
+
+.ex__card--network .ex__trend .sparkline {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Narrow expanded window — collapse to a single column so the
+   sparkline stays readable instead of being squeezed into a
+   tiny rail. Matches the existing `(max-width: 760px)` block at
+   the bottom of integrations.css for the rest of the shell. */
+@media (max-width: 760px) {
+  .ex__card--network {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'head'
+      'hero'
+      'node'
+      'trend';
+  }
+
+  .ex__card--network .ex__trend {
+    min-height: 56px;
+  }
+}
+
+/* ── Light-mode overrides for the new quick-action / config /
+   node-card surfaces. These selectors paint the white-mode skin
+   for cards that were dark-mode-first; without them the chips
+   and badges wash out against the light backdrop. */
+
+[data-color-mode='light'] .ex .quick-node-card,
+[data-color-mode='light'] .ex .config-switch-card {
+  background: #ffffff;
+  border-color: var(--ex-border);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__eyebrow,
+[data-color-mode='light'] .ex .config-switch-card__eyebrow {
+  color: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__group,
+[data-color-mode='light'] .ex .quick-node-card__current-name,
+[data-color-mode='light'] .ex .config-switch-card__label {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__current-label,
+[data-color-mode='light'] .ex .config-switch-card__active-hint,
+[data-color-mode='light'] .ex .config-switch-card__hint,
+[data-color-mode='light'] .ex .config-switch-card__guidance {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__btn {
+  background: #ffffff;
+  border-color: var(--ex-border-strong);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__btn:hover:not(:disabled) {
+  background: rgba(4, 120, 87, 0.08);
+  border-color: rgba(4, 120, 87, 0.34);
+  color: var(--ex-accent);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__btn-latency {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .quick-node-card__error,
+[data-color-mode='light'] .ex .config-switch-card__hint--error {
+  background: rgba(254, 226, 226, 0.9);
+  border-color: rgba(185, 28, 28, 0.32);
+  color: #991b1b;
+}
+
+[data-color-mode='light'] .ex .quick-node-card__empty {
+  color: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__row {
+  border-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__row--active {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__badge {
+  background: rgba(34, 197, 94, 0.16);
+  color: #047857;
+}
+
+[data-color-mode='light'] .ex .config-switch-card__btn {
+  background: #ffffff;
+  border-color: var(--ex-border-strong);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__btn:hover:not(:disabled) {
+  background: rgba(4, 120, 87, 0.08);
+  border-color: rgba(4, 120, 87, 0.34);
+  color: var(--ex-accent);
+}
+
+/* Node card grid — light-mode skin. Mirrors the table-row treatment
+   that already exists for `.ex__panel--network .node-table__row` so
+   the new card layout reads with the same hierarchy on white. */
+
+[data-color-mode='light'] .ex .node-table__card {
+  background: #ffffff;
+  border-color: var(--ex-border);
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .node-table__card:hover {
+  border-color: var(--ex-border-strong);
+  background: rgba(15, 23, 42, 0.02);
+}
+
+[data-color-mode='light'] .ex .node-table__card--active {
+  background: linear-gradient(
+    180deg,
+    rgba(34, 197, 94, 0.12),
+    rgba(34, 197, 94, 0.02)
+  );
+  border-color: rgba(4, 120, 87, 0.32);
+}
+
+[data-color-mode='light'] .ex .node-table__card-name {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .node-table__card-source {
+  color: var(--ex-text-faint);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+[data-color-mode='light'] .ex .node-table__card-metric {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .node-table__card-metric-sep {
+  color: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .node-table__card-active-pill {
+  background: rgba(34, 197, 94, 0.16);
+  color: #047857;
+}
+
+[data-color-mode='light'] .ex .node-table__section-title {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .node-table__section-count {
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--ex-text-mute);
+  border-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .node-table__card-status {
+  /* Light backdrops need the inner ring darker, otherwise the dot
+     loses its halo against the white surface. */
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.10);
+}
+
+[data-color-mode='light'] .ex .node-table__card-status--ok {
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.12),
+    0 0 6px rgba(34, 197, 94, 0.65);
+}
+
+[data-color-mode='light'] .ex .node-table__card-status--warn {
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.12),
+    0 0 6px rgba(245, 158, 11, 0.65);
+}
+
+[data-color-mode='light'] .ex .node-table__card-status--bad {
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.12),
+    0 0 6px rgba(239, 68, 68, 0.7);
+}

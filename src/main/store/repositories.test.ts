@@ -304,3 +304,299 @@ describe.skipIf(!canRun)('openclash_config_changes retention contract', () => {
     expect(repo.recent(10).length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider Auth repository (cpa-quota-import task 2.4)
+// ---------------------------------------------------------------------------
+//
+// References:
+//   - cpa-quota-import/design.md §`provider_auth` (new table)
+//   - cpa-quota-import/design.md §`ProviderAuthRepository`
+//   - cpa-quota-import/requirements.md Requirements 3.1, 3.2, 9.2
+//
+// Covers (task 2.4):
+//   - Round-trip insert / get / list / update / remove against an
+//     in-memory DB with the migration applied.
+//   - `list()` orders by `imported_at ASC` (with `id ASC` as the
+//     tiebreaker), and `listByProvider` filters to one provider while
+//     preserving the same ordering.
+//   - `secret_key` UNIQUE constraint: a second insert with the same
+//     `secretKey` throws (better-sqlite3 surfaces it as `SqliteError`
+//     with `code === 'SQLITE_CONSTRAINT_UNIQUE'`).
+//   - `update` only mutates the columns listed in the patch — others
+//     (especially the immutable `provider`, `source`, `importedAt`,
+//     `secretKey` columns and the `_at` columns not in the patch)
+//     remain unchanged.
+//   - `remove` is idempotent: removing a non-existent id does not
+//     throw and does not affect surviving rows.
+
+const { createProviderAuthRepository: createProviderAuthRepo } = await import(
+  './repositories'
+);
+type ProviderAuthRowT = import('./repositories').ProviderAuthRow;
+
+function makeRow(overrides: Partial<ProviderAuthRowT> = {}): ProviderAuthRowT {
+  const id = overrides.id ?? '11111111-1111-4111-8111-111111111111';
+  return {
+    id,
+    provider: 'codex',
+    label: 'codex:test',
+    source: 'cpa-auth-file',
+    accountId: 'acct-1',
+    projectId: null,
+    quotaCapability: 'official',
+    importedAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    lastValidatedAt: null,
+    lastQuotaAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    secretKey: `cpaAuth.providerAuth.${id}`,
+    ...overrides,
+  };
+}
+
+describe.skipIf(!canRun)('ProviderAuthRepository', () => {
+  let db: InstanceType<typeof Database>;
+
+  beforeEach(() => {
+    db = openInMemoryDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('round-trips insert / get with all _at columns and last_error_* preserved', () => {
+    const repo = createProviderAuthRepo(db);
+
+    const row = makeRow({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider: 'gemini-cli',
+      label: 'gemini-cli:project-x',
+      accountId: 'user@example.com',
+      projectId: 'project-x',
+      quotaCapability: 'official',
+      importedAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_001_000,
+      lastValidatedAt: 1_700_000_002_000,
+      lastQuotaAt: 1_700_000_003_000,
+      lastErrorCode: 'project_missing',
+      lastErrorMessage: 'project_id absent from CPA payload',
+    });
+
+    repo.insert(row);
+
+    const fetched = repo.get(row.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched).toEqual(row);
+  });
+
+  it('get returns null for an unknown id', () => {
+    const repo = createProviderAuthRepo(db);
+    expect(repo.get('not-a-real-id')).toBeNull();
+  });
+
+  it('list returns rows ordered by imported_at ASC', () => {
+    const repo = createProviderAuthRepo(db);
+
+    // Insert in non-ascending order to prove the ORDER BY is what
+    // produces the asc result, not insertion order.
+    const middle = makeRow({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      provider: 'codex',
+      label: 'codex:b',
+      importedAt: 1_700_000_002_000,
+      secretKey: 'cpaAuth.providerAuth.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    const oldest = makeRow({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider: 'codex',
+      label: 'codex:a',
+      importedAt: 1_700_000_001_000,
+      secretKey: 'cpaAuth.providerAuth.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    const newest = makeRow({
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      provider: 'codex',
+      label: 'codex:c',
+      importedAt: 1_700_000_003_000,
+      secretKey: 'cpaAuth.providerAuth.cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    });
+
+    repo.insert(middle);
+    repo.insert(oldest);
+    repo.insert(newest);
+
+    const rows = repo.list();
+    expect(rows.map((r) => r.id)).toEqual([oldest.id, middle.id, newest.id]);
+    expect(rows.map((r) => r.importedAt)).toEqual([
+      1_700_000_001_000,
+      1_700_000_002_000,
+      1_700_000_003_000,
+    ]);
+  });
+
+  it('listByProvider filters to a single provider and preserves imported_at ordering', () => {
+    const repo = createProviderAuthRepo(db);
+
+    repo.insert(
+      makeRow({
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        provider: 'codex',
+        label: 'codex:1',
+        importedAt: 1_700_000_001_000,
+        secretKey: 'cpaAuth.providerAuth.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      }),
+    );
+    repo.insert(
+      makeRow({
+        id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        provider: 'gemini-cli',
+        label: 'gemini-cli:1',
+        importedAt: 1_700_000_002_000,
+        secretKey: 'cpaAuth.providerAuth.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      }),
+    );
+    repo.insert(
+      makeRow({
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        provider: 'codex',
+        label: 'codex:2',
+        importedAt: 1_700_000_003_000,
+        secretKey: 'cpaAuth.providerAuth.cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      }),
+    );
+
+    const codexRows = repo.listByProvider('codex');
+    expect(codexRows.map((r) => r.id)).toEqual([
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    ]);
+    expect(codexRows.every((r) => r.provider === 'codex')).toBe(true);
+
+    const geminiRows = repo.listByProvider('gemini-cli');
+    expect(geminiRows.map((r) => r.id)).toEqual([
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    ]);
+
+    // A provider with zero rows produces an empty array (not undefined).
+    expect(repo.listByProvider('antigravity')).toEqual([]);
+  });
+
+  it('update mutates only the columns in the patch and leaves others untouched', () => {
+    const repo = createProviderAuthRepo(db);
+
+    const original = makeRow({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      provider: 'codex',
+      label: 'codex:original',
+      accountId: 'acct-original',
+      projectId: null,
+      quotaCapability: 'official',
+      importedAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      secretKey: 'cpaAuth.providerAuth.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    repo.insert(original);
+
+    repo.update(original.id, {
+      label: 'codex:renamed',
+      lastQuotaAt: 1_700_000_500_000,
+      updatedAt: 1_700_000_500_000,
+    });
+
+    const fetched = repo.get(original.id);
+    expect(fetched).not.toBeNull();
+    expect(fetched).toEqual({
+      ...original,
+      label: 'codex:renamed',
+      updatedAt: 1_700_000_500_000,
+      lastQuotaAt: 1_700_000_500_000,
+    });
+
+    // Patches that explicitly set null should write null (not skip).
+    repo.update(original.id, {
+      lastErrorCode: 'auth_expired',
+      lastErrorMessage: 'token expired',
+    });
+    const afterError = repo.get(original.id);
+    expect(afterError?.lastErrorCode).toBe('auth_expired');
+    expect(afterError?.lastErrorMessage).toBe('token expired');
+
+    repo.update(original.id, {
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    });
+    const cleared = repo.get(original.id);
+    expect(cleared?.lastErrorCode).toBeNull();
+    expect(cleared?.lastErrorMessage).toBeNull();
+    // Immutable columns and other state unaffected by the clear.
+    expect(cleared?.provider).toBe('codex');
+    expect(cleared?.source).toBe('cpa-auth-file');
+    expect(cleared?.importedAt).toBe(1_700_000_000_000);
+    expect(cleared?.secretKey).toBe(
+      'cpaAuth.providerAuth.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+    expect(cleared?.lastQuotaAt).toBe(1_700_000_500_000);
+  });
+
+  it('update with an empty patch is a silent no-op', () => {
+    const repo = createProviderAuthRepo(db);
+    const row = makeRow();
+    repo.insert(row);
+
+    expect(() => repo.update(row.id, {})).not.toThrow();
+    expect(repo.get(row.id)).toEqual(row);
+  });
+
+  it('secret_key UNIQUE constraint rejects duplicate values', () => {
+    const repo = createProviderAuthRepo(db);
+
+    const first = makeRow({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      secretKey: 'cpaAuth.providerAuth.shared',
+    });
+    const second = makeRow({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      secretKey: 'cpaAuth.providerAuth.shared',
+    });
+
+    repo.insert(first);
+
+    // better-sqlite3 throws SqliteError with this exact code on UNIQUE
+    // violations; we assert on the code rather than the message text
+    // (which embeds the column name and is less stable).
+    expect(() => repo.insert(second)).toThrow(
+      expect.objectContaining({ code: 'SQLITE_CONSTRAINT_UNIQUE' }),
+    );
+
+    // The first row survives the failed second insert.
+    expect(repo.list().map((r) => r.id)).toEqual([first.id]);
+  });
+
+  it('remove of a non-existent id is idempotent (no throw, no side effects)', () => {
+    const repo = createProviderAuthRepo(db);
+
+    const row = makeRow();
+    repo.insert(row);
+
+    expect(() => repo.remove('does-not-exist')).not.toThrow();
+    // Calling twice is also safe.
+    expect(() => repo.remove('does-not-exist')).not.toThrow();
+
+    // The real row is untouched.
+    expect(repo.get(row.id)).toEqual(row);
+
+    // Removing the real row drops it; removing it again is still
+    // idempotent.
+    repo.remove(row.id);
+    expect(repo.get(row.id)).toBeNull();
+    expect(() => repo.remove(row.id)).not.toThrow();
+    expect(repo.list()).toEqual([]);
+  });
+});

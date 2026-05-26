@@ -1,0 +1,250 @@
+/*
+ * Expanded-window overrides for embedded component surfaces and expanded responsive rules.
+ */
+
+/* ── NodeTable in the expanded shell ─────────────────────────────────
+   The legacy `<table>` markup was replaced with a card grid; the
+   selectors that styled `.node-table__table / __cell / __th / __row`
+   no longer match anything in the rendered DOM. The card grid carries
+   its own component-level styling in `components/node-table.css`,
+   inheriting the same `--ex-*` tokens we already use elsewhere.
+   The narrow-viewport responsive collapse is handled by the
+   `node-table__grid` rule under `@media (max-width: 760px)` in that
+   same component stylesheet. */
+
+.ex__panel--network .node-table {
+  font-size: var(--type-base);
+}
+
+.ex__panel--network .node-table__toast {
+  background: var(--color-bad);
+  color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
+}
+
+.ex__panel--network .node-table__empty {
+  padding: 32px 12px;
+  text-align: center;
+  color: var(--ex-text-faint);
+  font-size: var(--type-sm);
+}
+
+/* ── UsagePanel inside the expanded shell ────────────────────────────── */
+
+.ex .usage-panel-v2 {
+  padding: 0;
+  max-width: none;
+}
+
+.ex .usage-panel-v2__header {
+  margin-bottom: 14px;
+}
+
+.ex .usage-panel-v2__title {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ex-text-mute);
+}
+
+.ex .usage-panel-v2__tabs {
+  background: var(--ex-surface);
+  padding: 3px;
+  border: 1px solid var(--ex-border);
+  border-radius: 8px;
+  gap: 2px;
+}
+
+.ex .usage-panel-v2__tab {
+  border: none;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: var(--type-xs);
+  letter-spacing: 0.04em;
+}
+
+.ex .usage-panel-v2__tab--active {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px var(--ex-border-strong);
+  border-color: transparent;
+}
+
+.ex .quota-overview {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--ex-border);
+}
+
+.ex .quota-overview__title {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ex-text-mute);
+  margin-bottom: 12px;
+}
+
+.ex .quota-bar {
+  background: var(--ex-surface);
+  border: 1px solid var(--ex-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.ex .quota-bar__provider {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.ex .quota-bar__window-name {
+  font-size: var(--type-xs);
+  color: var(--ex-text-mute);
+}
+
+.ex .usage-totals {
+  background: var(--ex-surface);
+  border: 1px solid var(--ex-border);
+  border-radius: 10px;
+}
+
+.ex .usage-totals__value {
+  font-family: var(--ex-ui-font);
+  font-size: var(--type-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ex .usage-totals__label {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+}
+
+.ex .usage-totals__mini {
+  font-family: var(--ex-ui-font);
+  color: var(--ex-text-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex .usage-panel-v2__grid {
+  margin-top: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.ex .provider-card {
+  background: var(--ex-surface);
+  border: 1px solid var(--ex-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.ex .provider-card:hover {
+  border-color: var(--ex-border-strong);
+}
+
+.ex .provider-card__name {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ex-text);
+}
+
+.ex .provider-card__badge {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.ex .token-row__label {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.18em;
+}
+
+.ex .token-row__value,
+.ex .provider-card__stat-value {
+  font-family: var(--ex-ui-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex .provider-card__stat-label {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+}
+
+/* ── Responsive (narrow expanded window) ─────────────────────────────── */
+
+@media (max-width: 760px) {
+  .ex__topbar {
+    padding: 10px 16px;
+    gap: 10px;
+  }
+
+  .ex__brand-tag {
+    display: none;
+  }
+
+  .ex__tab-label {
+    display: none;
+  }
+
+  .ex__tab {
+    padding: 6px 10px;
+  }
+
+  .ex__main {
+    padding: 16px;
+  }
+
+  .ex__stack {
+    gap: 12px;
+  }
+
+  .ex__panel {
+    padding: 14px 14px 16px;
+  }
+
+  .ex__card {
+    padding: 14px 14px 16px;
+  }
+
+  .ex__trend {
+    height: 56px;
+  }
+}
+
+@media (max-width: 540px) {
+  .ex__badges {
+    gap: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ex__refresh--spin svg {
+    animation: none;
+  }
+
+  .ex__panel--network .node-table__row,
+  .ex__tab,
+  .ex__refresh,
+  .ex__panel--network .node-table__switch-btn {
+    transition: none;
+  }
+}

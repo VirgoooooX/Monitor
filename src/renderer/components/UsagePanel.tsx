@@ -16,6 +16,7 @@ import { formatTokens } from '../lib/format';
 import type {
   CollectorStatus,
   QuotaSnapshot,
+  QuotaSource,
   QuotaStatus,
   QuotaWindow,
   UsageProviderSummary,
@@ -240,7 +241,7 @@ function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Eleme
 interface QuotaBarProps {
   provider: string;
   window: QuotaWindow;
-  source: 'local_log' | 'remote_api';
+  source: QuotaSource;
   capturedAt: number;
 }
 

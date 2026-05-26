@@ -62,7 +62,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConfigSwitchCard } from './ConfigSwitchCard';
 import { ConfirmDialog } from './ConfirmDialog';
-import { QuickNodeCard } from './QuickNodeCard';
 import { formatManagementError } from '../lib/format';
 import type {
   HealthStatus,
@@ -305,11 +304,6 @@ export function QuickActionsPanel({
           </div>
         )}
         <div
-          className="quick-actions-panel__skeleton quick-actions-panel__skeleton--node"
-          data-testid="quick-actions-panel-skeleton-node"
-          aria-hidden="true"
-        />
-        <div
           className="quick-actions-panel__skeleton quick-actions-panel__skeleton--config"
           data-testid="quick-actions-panel-skeleton-config"
           aria-hidden="true"
@@ -358,12 +352,11 @@ export function QuickActionsPanel({
         </div>
       )}
 
-      {/* QuickNodeCard sits strictly above ConfigSwitchCard (Requirement 2.3). */}
-      <QuickNodeCard
-        primaryGroup={data.primaryGroup}
-        switchInProgress={data.switchInProgress}
-        onSwitchComplete={() => void refresh()}
-      />
+      {/* QuickNodeCard removed — node switching is handled by the
+          NodeTable section below the panel, which already lists every
+          node with status indicators. Keeping the duplicate
+          quick-switch chip on top wasted vertical space and gave
+          users two click paths for the same operation. */}
 
       <ConfigSwitchCard
         configFiles={data.configFiles}

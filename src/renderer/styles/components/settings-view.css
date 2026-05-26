@@ -1,0 +1,1247 @@
+/*
+ * Settings view form, navigation rail, appearance controls, and responsive rules.
+ */
+
+/* Settings view ----------------------------------------------------------- */
+/* Two-column form, dark-mode-first. Tokens come from the .ex namespace
+   when nested under the expanded shell, but include sensible fallbacks
+   so the component can render outside it (tests, light contexts).      */
+
+.settings-view {
+  --sv-text: var(--ex-text, #1f2328);
+  --sv-text-mute: var(--ex-text-mute, rgba(31, 35, 40, 0.7));
+  --sv-text-faint: var(--ex-text-faint, rgba(31, 35, 40, 0.5));
+  --sv-surface: var(--ex-surface, #f6f8fa);
+  --sv-surface-strong: var(--ex-surface-strong, #ffffff);
+  --sv-border: var(--ex-border, #e1e4e8);
+  --sv-border-strong: var(--ex-border-strong, #d0d7de);
+  --sv-accent: var(--ex-accent, #6366f1);
+  --sv-danger: #f87171;
+  --sv-success: #6ee7b7;
+  --sv-input-bg: rgba(0, 0, 0, 0.2);
+  --sv-input-bg-hover: rgba(0, 0, 0, 0.28);
+  /* Single source of truth for control heights — every <input>,
+     affix wrapper, list-index chip, icon button, and toggle row
+     resolves to this so columns line up vertically. */
+  --sv-control-h: var(--control-md, 38px);
+
+  position: relative;
+  /* The expanded shell now caps content width at the .ex level
+     (--ex-content-max), so the settings page no longer pins its
+     own narrower 880px column — that produced an inconsistent
+     gutter compared to the network and usage tabs. Stretch to
+     the parent's width and let the shell's max-width take over. */
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--type-base, 14px);
+  color: var(--sv-text);
+}
+
+.settings-view,
+.settings-view * {
+  box-sizing: border-box;
+}
+
+.settings-view__loading,
+.settings-view__error {
+  color: var(--sv-text-mute);
+  font-size: var(--type-sm, 13px);
+  padding: 24px 8px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.settings-view__header {
+  margin-bottom: 24px;
+}
+
+.settings-view__eyebrow {
+  display: block;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--sv-text-faint);
+  margin-bottom: 4px;
+}
+
+.settings-view__title {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-title, 23px);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: 0 0 6px;
+  color: var(--sv-text);
+}
+
+.settings-view__subtitle {
+  font-size: var(--type-base, 14px);
+  color: var(--sv-text-mute);
+  margin: 0;
+  line-height: 1.55;
+  /* Allow normal wrapping. Pinning to nowrap was fine when the
+     pane was forced to 880px wide, but with the unified content
+     cap a long zh-CN subtitle could overflow the gutter. */
+  white-space: normal;
+}
+
+/* ── Two-pane layout ─────────────────────────────────────────────────── */
+
+.settings-view__layout {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.settings-view__rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  padding: 4px 0;
+}
+
+.settings-view__rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 1px solid var(--sv-border);
+}
+
+.settings-view__rail-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: none;
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  padding: 8px 12px;
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--sv-text-mute);
+  transition: color 140ms ease-out, background 140ms ease-out, border-color 140ms ease-out;
+}
+
+.settings-view__rail-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--sv-text);
+  border-left-color: var(--sv-border-strong);
+}
+
+.settings-view__rail-item:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__rail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sv-text-faint);
+}
+
+.settings-view__rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.settings-view__rail-label {
+  font-size: var(--type-sm, 13px);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: inherit;
+}
+
+.settings-view__rail-hint {
+  font-size: var(--type-xs, 12px);
+  color: var(--sv-text-faint);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Form / sections ─────────────────────────────────────────────────── */
+
+.settings-view__form {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-width: 0;
+}
+
+.settings-view__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-margin-top: 8px;
+}
+
+.settings-view__section-head {
+  display: grid;
+  grid-template-columns: calc(var(--control-sm, 34px) - 4px) 1fr;
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--sv-border);
+}
+
+.settings-view__section-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--control-sm, 34px) - 4px);
+  height: calc(var(--control-sm, 34px) - 4px);
+  border-radius: 7px;
+  background: var(--sv-surface);
+  border: 1px solid var(--sv-border);
+  color: var(--sv-accent);
+}
+
+.settings-view__rail-icon svg,
+.settings-view__section-icon svg,
+.settings-view__input-action svg,
+.settings-view__btn-icon svg,
+.settings-view__btn-add svg,
+.settings-view__management-cleared svg,
+.settings-view__theme-check {
+  width: calc(var(--type-base, 14px) + 2px);
+  height: calc(var(--type-base, 14px) + 2px);
+}
+
+.settings-view__section-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  /* Defensive: pin to the 1fr track so a missing icon span (auto-placed
+     into col 1, 30px wide) never collapses the title and forces the
+     heading to wrap one character per line. See settings-view section
+     regression where Provider_Auth omitted `icon`. */
+  grid-column: 2;
+}
+
+.settings-view__section-title {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-base, 14px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sv-text);
+  margin: 0;
+}
+
+.settings-view__section-hint {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-faint);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.settings-view__section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 38px;
+}
+
+/* ── Fields ──────────────────────────────────────────────────────────── */
+
+/* Every row in the form lays out as two equal columns, so paired
+   fields share the same column width regardless of the data they
+   hold. The "grid" variant is just a row that wraps over multiple
+   visual rows (refresh intervals, etc.) but uses the same column
+   tracks so suffixes line up. */
+.settings-view__row,
+.settings-view__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  align-items: start;
+}
+
+.settings-view__grid {
+  /* Refresh intervals: same 2-column track but with a tighter
+     vertical rhythm because the rows are dense. */
+  gap: 14px 20px;
+}
+
+/* Router host/port previously used 2fr/1fr; lock it to the same
+   1fr/1fr as everything else so the input widths stay uniform. */
+.settings-view__row--router {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-view__field--toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  /* Match the affix wrapper height so toggle rows align with adjacent
+     input rows in the same grid. */
+  min-height: var(--sv-control-h);
+  padding: 0 14px;
+  background: var(--sv-surface);
+  border: 1px solid var(--sv-border);
+  border-radius: 8px;
+}
+
+/* The toggle label is a Field-shaped <label>, which pushes its
+   field-head section into the row alongside the switch. The hint
+   should not steal space from a long label. */
+.settings-view__field--toggle .settings-view__field-head {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-view__field-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-view__label {
+  font-size: var(--type-base, 14px);
+  font-weight: 500;
+  color: var(--sv-text);
+  letter-spacing: 0.01em;
+}
+
+.settings-view__hint {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-faint);
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+}
+
+/* ── Inputs ──────────────────────────────────────────────────────────── */
+
+.settings-view__input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: var(--sv-control-h);
+  padding: 0 11px;
+  background: var(--sv-input-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: 7px;
+  color: var(--sv-text);
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-base, 14px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.005em;
+  transition: border-color 140ms ease-out, background 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+.settings-view__input::placeholder {
+  color: var(--sv-text-faint);
+  opacity: 0.7;
+}
+
+.settings-view__input:hover {
+  background: var(--sv-input-bg-hover);
+}
+
+.settings-view__input:focus {
+  outline: none;
+  border-color: var(--sv-accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+  background: var(--sv-input-bg-hover);
+}
+
+.settings-view__input[aria-invalid='true'] {
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.settings-view__input[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.settings-view__input--num {
+  text-align: right;
+}
+
+/* Affix wrapper — composes a fake "input" surface from a flex row so
+   the inner <input> never overlaps adornments (suffix unit, eye toggle).
+   The real <input> drops its border / background / radius and lets
+   the wrapper paint them. Focus/invalid styling is forwarded via
+   :focus-within. */
+.settings-view__input-affix {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: var(--sv-control-h);
+  background: var(--sv-input-bg);
+  border: 1px solid var(--sv-border);
+  border-radius: 7px;
+  overflow: hidden;
+  transition: border-color 140ms ease-out, background 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+.settings-view__input-affix:hover {
+  background: var(--sv-input-bg-hover);
+}
+
+.settings-view__input-affix:focus-within {
+  border-color: var(--sv-accent);
+  background: var(--sv-input-bg-hover);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+}
+
+.settings-view__input-affix:has(.settings-view__input[aria-invalid='true']) {
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.settings-view__input-affix:has(.settings-view__input[aria-invalid='true']):focus-within {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+/* The bare input inside an affix wrapper inherits the surface from
+   the parent. */
+.settings-view__input-affix .settings-view__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0 12px;
+}
+
+.settings-view__input-affix .settings-view__input:hover,
+.settings-view__input-affix .settings-view__input:focus {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.settings-view__input-suffix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sv-text-faint);
+  border-left: 1px solid var(--sv-border);
+  background: rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.settings-view__input-action {
+  flex: 0 0 auto;
+  width: var(--sv-control-h);
+  border: none;
+  border-left: 1px solid var(--sv-border);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sv-text-faint);
+  cursor: pointer;
+  transition: background 140ms ease-out, color 140ms ease-out;
+}
+
+.settings-view__input-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--sv-text);
+}
+
+.settings-view__input-action:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: -2px;
+}
+
+.settings-view__input--num::-webkit-outer-spin-button,
+.settings-view__input--num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.settings-view__input--num {
+  -moz-appearance: textfield;
+}
+
+.settings-view__error-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--type-xs, 12px);
+  color: var(--sv-danger);
+  letter-spacing: 0.02em;
+}
+
+/* ── List rows (probe URLs / primary groups) ─────────────────────────── */
+
+.settings-view__list {
+  /* Same 2-column grid as the rest of the form so URL / group rows
+     line up with paired fields above (Controller URL ↔ Secret etc.). */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 20px;
+}
+
+.settings-view__list--single {
+  grid-template-columns: 1fr;
+}
+
+.settings-view__list-row {
+  display: grid;
+  grid-template-columns: var(--sv-control-h) minmax(0, 1fr) var(--sv-control-h);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* The "+ add" button gets a row of its own and is anchored to the
+   start of the grid so it does not stretch across both columns. */
+.settings-view__list .settings-view__btn-add {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.settings-view__list .settings-view__empty {
+  grid-column: 1 / -1;
+}
+
+.settings-view__list-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--sv-control-h);
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--sv-text-faint);
+  background: var(--sv-surface);
+  border: 1px solid var(--sv-border);
+  border-radius: 6px;
+}
+
+.settings-view__empty {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-faint);
+  font-style: italic;
+  margin: 0 0 4px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+
+.settings-view__btn-icon {
+  width: var(--sv-control-h);
+  height: var(--sv-control-h);
+  border: 1px solid var(--sv-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sv-text-faint);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
+}
+
+.settings-view__btn-icon:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: var(--sv-danger);
+}
+
+.settings-view__btn-icon:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__btn-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px dashed var(--sv-border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sv-text-mute);
+  font-size: var(--type-sm, 13px);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, color 140ms ease-out, background 140ms ease-out;
+}
+
+.settings-view__btn-add:hover {
+  border-color: var(--sv-accent);
+  color: var(--sv-accent);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.settings-view__btn-add:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__btn-secondary {
+  background: transparent;
+  border: 1px solid var(--sv-border);
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-size: var(--type-base, 14px);
+  font-weight: 500;
+  color: var(--sv-text-mute);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: background 140ms ease-out, color 140ms ease-out;
+}
+
+.settings-view__btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--sv-text);
+}
+
+.settings-view__btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-view__btn-primary {
+  background: linear-gradient(180deg, #818cf8, #6366f1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #0c0d11;
+  border-radius: 7px;
+  padding: 7px 18px;
+  font-size: var(--type-base, 14px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.25);
+  transition: filter 140ms ease-out, transform 140ms ease-out;
+}
+
+.settings-view__btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.settings-view__btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.settings-view__btn-primary:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sv-text-faint);
+  cursor: default;
+  border-color: var(--sv-border);
+  box-shadow: none;
+}
+
+/* ── Toggle switch ──────────────────────────────────────────────────── */
+
+.settings-view__switch {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.settings-view__switch-input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.settings-view__switch-track {
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--sv-border);
+  transition: background 160ms ease-out, border-color 160ms ease-out;
+  position: relative;
+}
+
+.settings-view__switch-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(245, 245, 247, 0.85);
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0.32, 1.16),
+    background 180ms ease-out;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.settings-view__switch--on .settings-view__switch-track {
+  background: linear-gradient(180deg, #818cf8, #6366f1);
+  border-color: transparent;
+}
+
+.settings-view__switch--on .settings-view__switch-thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.settings-view__switch-input:focus-visible + .settings-view__switch-track {
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+}
+
+/* ── Collector card ─────────────────────────────────────────────────── */
+
+.settings-view__collectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-view__collector {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--sv-surface);
+  border: 1px solid var(--sv-border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, background 140ms ease-out;
+}
+
+.settings-view__collector:hover {
+  border-color: var(--sv-border-strong);
+  background: var(--sv-surface-strong);
+}
+
+.settings-view__collector--on {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.settings-view__collector-input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.settings-view__collector:has(.settings-view__collector-input:focus-visible) {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__collector-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-view__collector-label {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-xs, 12px);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sv-text);
+}
+
+.settings-view__collector-hint {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-faint);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Sticky save bar ────────────────────────────────────────────────── */
+
+.settings-view__form-pad {
+  height: 24px;
+}
+
+.settings-view__savebar {
+  position: sticky;
+  bottom: -8px;
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(20, 20, 24, 0.78);
+  border: 1px solid var(--sv-border);
+  border-radius: 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+  z-index: 5;
+}
+
+.settings-view__savebar--show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.settings-view__savebar-msg {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-mute);
+  letter-spacing: 0.02em;
+  min-width: 0;
+}
+
+.settings-view__savebar-msg span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-view__savebar-dirty {
+  color: var(--sv-text);
+}
+
+.settings-view__savebar-ok {
+  color: var(--sv-success);
+}
+
+.settings-view__savebar-err {
+  color: var(--sv-danger);
+}
+
+.settings-view__savebar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Appearance section (theme system) ──────────────────────────────── */
+
+.settings-view__segmented {
+  display: inline-flex;
+  border: 1px solid var(--sv-border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--sv-surface);
+  gap: 2px;
+}
+
+.settings-view__segmented-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--sv-text-mute);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: var(--type-base, 14px);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.settings-view__segmented-btn:hover {
+  color: var(--sv-text);
+}
+
+.settings-view__segmented-btn--active {
+  background: var(--sv-surface-strong);
+  color: var(--sv-text);
+  box-shadow: inset 0 0 0 1px var(--sv-border-strong);
+}
+
+.settings-view__segmented-btn:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__range-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  gap: 12px;
+  align-items: center;
+  min-height: var(--sv-control-h);
+}
+
+.settings-view__range {
+  width: 100%;
+  accent-color: var(--sv-accent);
+}
+
+.settings-view__range-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--sv-control-h);
+  border: 1px solid var(--sv-border);
+  border-radius: 7px;
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-sm, 13px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Theme cards — small previews painted with the same `[data-compact-theme]`
+   hooks the live widget uses, so changing one preset's CSS updates the
+   preview automatically. The grid is two columns above 480px and one
+   column at narrower widths so the section stays usable in tight layouts. */
+.settings-view__theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (max-width: 520px) {
+  .settings-view__theme-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-view__theme-card {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--sv-border);
+  border-radius: 10px;
+  background: var(--sv-surface);
+  color: var(--sv-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.settings-view__theme-card:hover {
+  border-color: var(--sv-border-strong);
+  background: var(--sv-surface-strong);
+}
+
+.settings-view__theme-card:focus-visible {
+  outline: 2px solid var(--sv-accent);
+  outline-offset: 2px;
+}
+
+.settings-view__theme-card--active {
+  border-color: var(--sv-accent);
+  box-shadow: 0 0 0 1px var(--sv-accent) inset;
+}
+
+.settings-view__theme-preview {
+  position: relative;
+  display: block;
+  height: 60px;
+  border-radius: 8px;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(145deg,
+    rgba(24, 24, 28, 0.94),
+    rgba(16, 16, 18, 0.96));
+}
+
+.settings-view__theme-preview-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.settings-view__theme-preview-bar {
+  position: absolute;
+  left: 10px;
+  bottom: 14px;
+  right: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.45);
+  z-index: 2;
+}
+
+.settings-view__theme-preview-bar--short {
+  bottom: 24px;
+  right: 28px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Per-preset preview decoration — re-uses the same backgrounds the
+   live shells paint, scaled down. Keeping these colocated with the
+   widget themes above means a single source of truth for the look. */
+.settings-view__theme-preview[data-compact-theme='obsidian-glass']
+  .settings-view__theme-preview-fx {
+  background:
+    radial-gradient(120% 80% at 0% 0%,
+      rgba(99, 102, 241, 0.16),
+      transparent 55%),
+    radial-gradient(110% 70% at 100% 100%,
+      rgba(255, 255, 255, 0.05),
+      transparent 55%);
+}
+
+.settings-view__theme-preview[data-compact-theme='aurora-ring'] {
+  background: rgba(10, 10, 14, 0.95);
+}
+
+.settings-view__theme-preview[data-compact-theme='aurora-ring']
+  .settings-view__theme-preview-fx {
+  background: conic-gradient(
+    from 0deg,
+    rgba(99, 102, 241, 0.6) 0deg,
+    rgba(34, 197, 94, 0.45) 90deg,
+    rgba(56, 189, 248, 0.55) 180deg,
+    rgba(244, 114, 182, 0.5) 270deg,
+    rgba(99, 102, 241, 0.6) 360deg
+  );
+  filter: blur(10px);
+  opacity: 0.7;
+}
+
+.settings-view__theme-preview[data-compact-theme='holo-grid'] {
+  background: linear-gradient(180deg,
+    rgba(8, 14, 18, 0.96),
+    rgba(6, 10, 14, 0.97));
+}
+
+.settings-view__theme-preview[data-compact-theme='holo-grid']
+  .settings-view__theme-preview-fx {
+  background:
+    linear-gradient(rgba(56, 189, 248, 0.16) 1px, transparent 1px) 0 0 / 100% 10px,
+    linear-gradient(90deg, rgba(56, 189, 248, 0.16) 1px, transparent 1px) 0 0 / 10px 100%;
+}
+
+.settings-view__theme-preview[data-compact-theme='liquid-metal'] {
+  background: linear-gradient(150deg,
+    #1c1f26 0%,
+    #11141a 45%,
+    #0c0f14 100%);
+}
+
+.settings-view__theme-preview[data-compact-theme='liquid-metal']
+  .settings-view__theme-preview-fx {
+  background:
+    linear-gradient(110deg,
+      transparent 35%,
+      rgba(255, 255, 255, 0.10) 48%,
+      rgba(186, 230, 253, 0.30) 50%,
+      rgba(255, 255, 255, 0.10) 52%,
+      transparent 65%);
+  mix-blend-mode: screen;
+}
+
+.settings-view__theme-preview[data-compact-theme='signal-pulse'] {
+  background: linear-gradient(160deg,
+    rgba(16, 18, 22, 0.96),
+    rgba(10, 12, 16, 0.97));
+}
+
+.settings-view__theme-preview[data-compact-theme='signal-pulse']
+  .settings-view__theme-preview-fx {
+  background:
+    radial-gradient(180px 80px at 0% 0%,
+      rgba(34, 197, 94, 0.30),
+      transparent 60%);
+}
+
+.settings-view__theme-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-view__theme-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-base, 14px);
+  font-weight: 500;
+  color: var(--sv-text);
+}
+
+.settings-view__theme-check {
+  color: var(--sv-accent);
+}
+
+.settings-view__theme-desc {
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-mute);
+  line-height: 1.45;
+}
+
+/* ── Management interface (network-quick-actions task 16.1) ─────────── */
+
+.settings-view__management-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-view__management-cleared {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-xs, 12px);
+  color: var(--sv-success);
+  letter-spacing: 0.02em;
+}
+
+.settings-view__whitelist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-view__whitelist-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+/* Two text columns + delete button, matching the list-row rhythm
+   used by probe URLs / primary groups. The first column carries
+   the alias and is half the width of the path column to keep long
+   paths fully visible. */
+.settings-view__whitelist-row {
+  display: grid;
+  grid-template-columns: var(--sv-control-h) minmax(0, 1fr) minmax(0, 2fr) var(--sv-control-h);
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .settings-view__layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .settings-view__rail {
+    position: relative;
+    overflow-x: auto;
+    margin-bottom: 4px;
+  }
+
+  .settings-view__rail-list {
+    flex-direction: row;
+    border-left: none;
+    border-bottom: 1px solid var(--sv-border);
+    gap: 0;
+  }
+
+  .settings-view__rail-item {
+    grid-template-columns: 18px auto;
+    border-left: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 8px 12px;
+    flex: 0 0 auto;
+  }
+
+  .settings-view__rail-hint {
+    display: none;
+  }
+
+  .settings-view__row,
+  .settings-view__row--router,
+  .settings-view__grid,
+  .settings-view__collectors {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-view__whitelist-row {
+    grid-template-columns: var(--sv-control-h) minmax(0, 1fr) var(--sv-control-h);
+  }
+
+  .settings-view__whitelist-row > input:nth-of-type(2) {
+    grid-column: 1 / -1;
+  }
+
+  .settings-view__section-body {
+    padding-left: 0;
+  }
+
+  .settings-view__savebar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .settings-view__savebar-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-view__switch-thumb,
+  .settings-view__switch-track,
+  .settings-view__savebar,
+  .settings-view__input,
+  .settings-view__btn-primary,
+  .settings-view__rail-item,
+  .settings-view__collector,
+  .settings-view__btn-icon,
+  .settings-view__btn-add,
+  .settings-view__btn-secondary,
+  .settings-view__theme-card,
+  .settings-view__segmented-btn {
+    transition: none;
+  }
+}
+
+/* Screen-reader only (accessibility) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

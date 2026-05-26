@@ -1,0 +1,323 @@
+/*
+ * NodeTable — region-grouped 4-column card grid.
+ *
+ * Sections (HK / TW / JP / US / 其他) are stacked vertically, each
+ * with a small section header and a 4-column grid of compact cards.
+ * Each card carries a status dot (green / yellow / red / unknown)
+ * derived from the node's last-probe outcome.
+ *
+ * Tokens come from the .ex namespace when nested under the expanded
+ * shell, with sensible fallbacks so the component still renders
+ * outside it (tests, light contexts).
+ */
+
+.node-table {
+  --nt-text: var(--ex-text, #1f2328);
+  --nt-text-mute: var(--ex-text-mute, rgba(31, 35, 40, 0.7));
+  --nt-text-faint: var(--ex-text-faint, rgba(31, 35, 40, 0.5));
+  --nt-surface: var(--ex-surface, #f6f8fa);
+  --nt-surface-strong: var(--ex-surface-strong, #ffffff);
+  --nt-border: var(--ex-border, #e1e4e8);
+  --nt-border-strong: var(--ex-border-strong, #d0d7de);
+  --nt-accent: var(--ex-accent, #6366f1);
+
+  position: relative;
+  width: 100%;
+  font-size: var(--type-sm, 13px);
+}
+
+/* ── Toast ───────────────────────────────────────────────────────── */
+
+.node-table__toast {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bad);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: var(--type-xs, 12px);
+  white-space: nowrap;
+  z-index: 10;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* ── Section stack & header ──────────────────────────────────────── */
+
+.node-table__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.node-table__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.node-table__section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.node-table__section-title {
+  margin: 0;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-xs, 12px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--nt-text-mute);
+}
+
+.node-table__section-count {
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  font-weight: 500;
+  color: var(--nt-text-faint);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  background: var(--nt-surface-strong);
+  border: 1px solid var(--nt-border);
+  border-radius: 999px;
+}
+
+/* ── Card grid ───────────────────────────────────────────────────── */
+
+.node-table__grid {
+  display: grid;
+  /* 4 columns at the default expanded width (1040 - gutters). The
+     columns are minmax(0, 1fr) so long node names truncate instead
+     of stretching the column. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.node-table__card {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--nt-surface);
+  border: 1px solid var(--nt-border);
+  border-radius: 8px;
+  transition:
+    background 140ms ease-out,
+    border-color 140ms ease-out,
+    opacity 140ms ease-out;
+  min-width: 0;
+}
+
+.node-table__card:hover {
+  border-color: var(--nt-border-strong);
+}
+
+.node-table__card--active {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: linear-gradient(
+    180deg,
+    rgba(34, 197, 94, 0.10),
+    rgba(34, 197, 94, 0.02)
+  );
+}
+
+.node-table__card--switching {
+  opacity: 0.6;
+}
+
+/* ── Card head ──────────────────────────────────────────────────── */
+
+.node-table__card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Status dot — colour + halo derived from `data-tone` on the card.
+   Sized in line with the 12 px card text so the dot reads as a
+   peer of the source chip rather than a decoration. */
+.node-table__card-status {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-unknown, #9ca3af);
+  /* 1 px white inner ring lifts the dot off coloured surfaces and
+     mirrors the StatusHero treatment. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: background 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+.node-table__card-status--ok {
+  background: var(--color-ok, #22c55e);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 6px var(--color-ok, #22c55e);
+}
+
+.node-table__card-status--warn {
+  background: var(--color-warn, #f59e0b);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 6px var(--color-warn, #f59e0b);
+}
+
+.node-table__card-status--bad {
+  background: var(--color-bad, #ef4444);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 6px var(--color-bad, #ef4444);
+}
+
+.node-table__card-status--unknown {
+  background: var(--color-unknown, #9ca3af);
+  opacity: 0.55;
+}
+
+.node-table__card-source {
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--nt-text-faint);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--nt-surface-strong);
+  border: 1px solid var(--nt-border);
+  /* Source chips are short codes (HK / JP / US…). Cap so a malformed
+     long source doesn't push the name out of the row. */
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.node-table__card-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-sm, 13px);
+  font-weight: 500;
+  color: var(--nt-text);
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-table__card-active-pill {
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.18);
+  color: #6ee7b7;
+  line-height: 1.4;
+}
+
+/* ── Card foot (inline metrics + switch button) ─────────────────── */
+
+.node-table__card-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.node-table__card-metric {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-xs, 12px);
+  font-variant-numeric: tabular-nums;
+  color: var(--nt-text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+}
+
+.node-table__card-metric-sep {
+  flex: 0 0 auto;
+  color: var(--nt-text-faint);
+  font-size: var(--type-xs, 12px);
+}
+
+.node-table__switch-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid var(--nt-border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--nt-text-mute);
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.5;
+  transition:
+    background 140ms ease-out,
+    color 140ms ease-out,
+    border-color 140ms ease-out;
+}
+
+.node-table__switch-btn:hover:not(:disabled) {
+  background: rgba(165, 180, 252, 0.12);
+  border-color: rgba(165, 180, 252, 0.4);
+  color: var(--nt-accent);
+}
+
+.node-table__switch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+
+.node-table__empty {
+  text-align: center;
+  color: var(--nt-text-faint);
+  padding: 24px 12px;
+  font-size: var(--type-sm, 13px);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+/* Below the unified content cap (~1040 px) drop to 3 columns so
+   each card retains room for the source chip + a 6-char name. */
+@media (max-width: 1040px) {
+  .node-table__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Default expanded window (760 × 560) — 2 columns is the sweet spot:
+   3 columns at 760 squeezes the 切换 button against the metric. */
+@media (max-width: 880px) {
+  .node-table__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Narrow shells — single column. */
+@media (max-width: 560px) {
+  .node-table__grid {
+    grid-template-columns: 1fr;
+  }
+}

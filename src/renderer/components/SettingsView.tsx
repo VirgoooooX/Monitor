@@ -26,19 +26,31 @@ import {
   ArrowLeftRight,
   Sparkles,
   Network,
+  Palette,
   Plus,
   Trash2,
   Eye,
   EyeOff,
   Check,
   AlertCircle,
+  KeyRound,
 } from 'lucide-react';
 
 import type {
+  AppearanceSettings,
   AppSettings,
+  ColorMode,
+  CompactTheme,
   ManagementConfigFileEntry,
+  ProviderAuthMetadata,
+  ProviderId,
   RefreshIntervalSettings,
 } from '../lib/types';
+import {
+  PROVIDER_LABELS,
+  PROVIDER_AUTH_ERROR_LABELS,
+  ProviderAuthList,
+} from './ProviderAuthList';
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -55,6 +67,53 @@ interface ValidationErrors {
   configSwitchVerifyWindowMs?: string;
   configFileWhitelist?: string;
 }
+
+/**
+ * Renderer-side fallback applied when settings predate the theme
+ * system. The strict zod schema rejects rows missing `appearance`, so
+ * the main process normalises on boot, but the renderer also tolerates
+ * the legacy shape locally so the form can still render while the
+ * normalize-and-rebroadcast flow completes.
+ */
+const DEFAULT_APPEARANCE: AppearanceSettings = {
+  colorMode: 'dark',
+  compactTheme: 'obsidian-glass',
+  fontScale: 1,
+};
+
+interface CompactThemeOption {
+  readonly id: CompactTheme;
+  readonly label: string;
+  readonly description: string;
+}
+
+const COMPACT_THEME_OPTIONS: readonly CompactThemeOption[] = [
+  {
+    id: 'obsidian-glass',
+    label: '黑曜玻璃',
+    description: '深色磨砂质感，桌面常驻不抢眼。',
+  },
+  {
+    id: 'aurora-ring',
+    label: '极光环',
+    description: '边缘极光缓慢流动，状态色感强。',
+  },
+  {
+    id: 'holo-grid',
+    label: '全息网格',
+    description: 'HUD 风格网格 + 慢扫描线。',
+  },
+  {
+    id: 'liquid-metal',
+    label: '液态金属',
+    description: '石墨与冷光泽，适合深色桌面。',
+  },
+  {
+    id: 'signal-pulse',
+    label: '信号脉冲',
+    description: '随状态色脉动的同心圆。',
+  },
+];
 
 const HTTP_URL_RE = /^https?:\/\//;
 // Mirror of `CONFIG_PATH_RE` in `src/main/schemas.ts`. Keeping the
@@ -187,6 +246,12 @@ interface SectionDef {
 
 const SECTIONS: readonly SectionDef[] = [
   {
+    id: 'appearance',
+    label: '外观',
+    hint: '深浅色与悬浮窗风格',
+    icon: <Palette size={14} strokeWidth={1.75} />,
+  },
+  {
     id: 'controller',
     label: '控制器',
     hint: 'OpenClash 主控连接',
@@ -234,6 +299,12 @@ const SECTIONS: readonly SectionDef[] = [
     hint: 'AI 用量来源',
     icon: <Sparkles size={14} strokeWidth={1.75} />,
   },
+  {
+    id: 'provider-auth',
+    label: 'AI 账号 / Quota',
+    hint: '导入 CPA 认证文件',
+    icon: <KeyRound size={14} strokeWidth={1.75} />,
+  },
 ];
 
 // Friendly labels + hints for refresh interval keys.
@@ -255,6 +326,85 @@ const COLLECTOR_META: Record<string, { label: string; hint: string }> = {
 };
 
 const COLLECTOR_IDS = ['codex', 'gemini', 'antigravity', 'opencode', 'deepseek'] as const;
+
+// ---------------------------------------------------------------------------
+// Provider Auth section metadata
+// ---------------------------------------------------------------------------
+
+/**
+ * Picker order for the Provider_Auth section. Mirrors the closed
+ * `ProviderId` union from `src/main/types.ts`. The order here drives
+ * the dropdown order in the Section UI; it is intentionally the same
+ * as the order in `PROVIDER_LABELS` and the parser/repo enums, so
+ * adding a new `ProviderId` only requires updating the union and the
+ * label map.
+ */
+const PROVIDER_PICKER_ORDER: readonly ProviderId[] = [
+  'claude-code',
+  'codex',
+  'gemini-cli',
+  'antigravity',
+  'gemini-api',
+  'deepseek',
+  'xiaomi',
+  'openai-compatible',
+];
+
+/**
+ * Unwrap the renderer-side `IpcEnvelopeError` shape (see
+ * `src/preload/index.ts`) into the `{ code, message }` triple the
+ * Provider_Auth section displays. The preload throws an
+ * `IpcEnvelopeError` (a plain `Error` subclass with a public `code`
+ * field) whenever main returns `{ ok: false, error: { code, message } }`.
+ * We can't `instanceof` it here because the class is private to the
+ * preload bundle, so we duck-type on the public `code` field
+ * instead.
+ *
+ * For everything else (renderer crash, unexpected `throw`), we fall
+ * back to a generic `'unknown'` envelope so the UI still renders a
+ * non-empty error string. Per cpa-quota-import requirements §1.4
+ * the message length is already bounded to 80 characters by the
+ * IPC schema; we trim defensively anyway.
+ */
+function extractIpcError(err: unknown): { code: string; message: string } {
+  if (err !== null && typeof err === 'object') {
+    const code = (err as { code?: unknown }).code;
+    const message = (err as { message?: unknown }).message;
+    if (typeof code === 'string' && typeof message === 'string') {
+      return { code, message: message.slice(0, 200) };
+    }
+    if (typeof message === 'string') {
+      return { code: 'unknown', message: message.slice(0, 200) };
+    }
+  }
+  return { code: 'unknown', message: '未知错误' };
+}
+
+/**
+ * Render copy for a Provider_Auth IPC error envelope. Maps the
+ * closed `ProviderAuthErrorCode` set to the same zh-CN labels
+ * `ProviderAuthList` uses for status badges (single source of
+ * truth: `PROVIDER_AUTH_ERROR_LABELS`); falls back to the raw
+ * envelope message for codes outside the closed set (`'protocol'`,
+ * `'unknown'`, IPC validation failures from outside the Provider_Auth
+ * code list, etc.).
+ */
+function formatProviderAuthError(envelope: {
+  code: string;
+  message: string;
+}): string {
+  const known = (PROVIDER_AUTH_ERROR_LABELS as Record<string, string>)[
+    envelope.code
+  ];
+  if (typeof known === 'string') {
+    return envelope.message.length > 0
+      ? `${known}：${envelope.message}`
+      : known;
+  }
+  return envelope.message.length > 0
+    ? envelope.message
+    : `导入失败 (${envelope.code})`;
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -279,6 +429,27 @@ export function SettingsView(): JSX.Element {
   const [credsCleared, setCredsCleared] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // ── Provider_Auth section local state ─────────────────────────────
+  // These mutations DO NOT flow through the existing `setSettings` /
+  // `dirty` machinery — Provider_Auth changes commit immediately on
+  // import / refresh / delete (mirrors the `clearManagementCredentials`
+  // precedent in the management section). Per cpa-quota-import
+  // requirements §8.1 and §12.7 the renderer never holds secret
+  // material; `rows` only carries the redacted `ProviderAuthMetadata`
+  // shape.
+  const [providerPick, setProviderPick] = useState<ProviderId>(
+    PROVIDER_PICKER_ORDER[0]!,
+  );
+  const [providerAuthRows, setProviderAuthRows] = useState<
+    ProviderAuthMetadata[]
+  >([]);
+  const [providerAuthBusyId, setProviderAuthBusyId] = useState<string | null>(
+    null,
+  );
+  const [providerAuthError, setProviderAuthError] = useState<
+    { code: string; message: string } | null
+  >(null);
+
   // Load initial settings
   useEffect(() => {
     const desktop = window.desktop;
@@ -297,6 +468,26 @@ export function SettingsView(): JSX.Element {
         // eslint-disable-next-line no-console
         console.error('[SettingsView] getSettings failed:', err);
         setLoading(false);
+      });
+  }, []);
+
+  // Load Provider_Auth rows on mount. This stays decoupled from the
+  // settings load above — `provider_auth` lives in its own SQLite
+  // table (cpa-quota-import requirements §3.1) and the renderer
+  // mirrors that separation so a settings-load failure does not
+  // hide imported accounts and vice versa.
+  useEffect(() => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    desktop
+      .listProviderAuths()
+      .then((rows) => {
+        setProviderAuthRows(rows);
+      })
+      .catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error('[SettingsView] listProviderAuths failed:', err);
+        setProviderAuthError(extractIpcError(err));
       });
   }, []);
 
@@ -323,6 +514,24 @@ export function SettingsView(): JSX.Element {
   const updateField = useCallback(
     <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
       setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
+      setSaveSuccess(false);
+    },
+    [],
+  );
+
+  /**
+   * Patch the appearance block. Mirrors the spread-and-merge pattern
+   * used by the other nested updaters; centralised here so the two
+   * appearance controls (color mode + compact theme) share the same
+   * dirty/save plumbing.
+   */
+  const updateAppearance = useCallback(
+    (patch: Partial<AppearanceSettings>) => {
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const current: AppearanceSettings = prev.appearance ?? DEFAULT_APPEARANCE;
+        return { ...prev, appearance: { ...current, ...patch } };
+      });
       setSaveSuccess(false);
     },
     [],
@@ -523,6 +732,97 @@ export function SettingsView(): JSX.Element {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Provider_Auth import / refresh / delete handlers
+  // ---------------------------------------------------------------------------
+  //
+  // These handlers follow the `clearManagementCredentials` precedent
+  // (cpa-quota-import requirements §12.7): mutations commit
+  // immediately on the main side and are NOT pumped through the
+  // settings `dirty` flag. Each handler:
+  //
+  //   1. Sets `providerAuthBusyId` to disable the row's buttons
+  //   2. Calls the relevant `desktop.*` IPC method
+  //   3. On success, updates `providerAuthRows` via the canonical
+  //      `desktop.listProviderAuths()` re-fetch (refresh / delete) or
+  //      appends the returned row (import). The re-fetch keeps the
+  //      list authoritative — main updates `lastQuotaAt`,
+  //      `lastErrorCode`, etc. as a side-effect of `refreshProviderQuota`,
+  //      and the renderer mirrors that without trying to derive it
+  //      from the `QuotaStatus` envelope.
+  //   4. On failure, parks the redacted error code + message in
+  //      `providerAuthError` for display (≤80 chars per main-side
+  //      schema, requirements §10.4) and leaves the existing rows
+  //      intact.
+  //   5. Always clears `providerAuthBusyId` in `finally`.
+
+  const handleProviderAuthImport = useCallback(async () => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    setProviderAuthBusyId('__import__');
+    setProviderAuthError(null);
+    try {
+      const row = await desktop.importProviderAuthFile({
+        provider: providerPick,
+      });
+      setProviderAuthRows((prev) => {
+        // Replace if main returned a row whose id collides with an
+        // existing one (re-import overwrites; design.md §Storage
+        // Layout); otherwise append.
+        const idx = prev.findIndex((r) => r.id === row.id);
+        if (idx === -1) return [...prev, row];
+        const next = prev.slice();
+        next[idx] = row;
+        return next;
+      });
+    } catch (err: unknown) {
+      const envelope = extractIpcError(err);
+      // `cancelled` is a normal user gesture (Requirement 8.3) —
+      // do not surface it as an error.
+      if (envelope.code !== 'cancelled') {
+        setProviderAuthError(envelope);
+      }
+    } finally {
+      setProviderAuthBusyId(null);
+    }
+  }, [providerPick]);
+
+  const handleProviderAuthRefresh = useCallback(async (id: string) => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    setProviderAuthBusyId(id);
+    setProviderAuthError(null);
+    try {
+      await desktop.refreshProviderQuota({ id });
+      // Re-fetch the metadata list — main has updated
+      // `lastQuotaAt` / `lastErrorCode` / `lastErrorMessage` on the
+      // row as a side-effect of the refresh. The `QuotaStatus`
+      // envelope itself only carries `QuotaSnapshot[]`, not the
+      // metadata projection the list renders from.
+      const rows = await desktop.listProviderAuths();
+      setProviderAuthRows(rows);
+    } catch (err: unknown) {
+      setProviderAuthError(extractIpcError(err));
+    } finally {
+      setProviderAuthBusyId(null);
+    }
+  }, []);
+
+  const handleProviderAuthDelete = useCallback(async (id: string) => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    setProviderAuthBusyId(id);
+    setProviderAuthError(null);
+    try {
+      await desktop.deleteProviderAuth({ id });
+      setProviderAuthRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (err: unknown) {
+      setProviderAuthError(extractIpcError(err));
+    } finally {
+      setProviderAuthBusyId(null);
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // Save / discard handlers
   // ---------------------------------------------------------------------------
 
@@ -672,10 +972,100 @@ export function SettingsView(): JSX.Element {
           }}
           noValidate
         >
+          {/* ── Appearance ───────────────────────────────────── */}
+          <Section id="appearance" section={SECTIONS[0]!}>
+            <Field
+              label="色彩模式"
+              hint="仅影响展开窗；悬浮窗使用下方主题。"
+            >
+              <SegmentedControl<ColorMode>
+                value={(settings.appearance ?? DEFAULT_APPEARANCE).colorMode}
+                options={[
+                  { value: 'dark', label: '深色' },
+                  { value: 'light', label: '浅色' },
+                ]}
+                onChange={(v) => updateAppearance({ colorMode: v })}
+                ariaLabel="色彩模式"
+              />
+            </Field>
+
+            <Field
+              label="界面字号"
+              hint="统一调整展开窗的标题、正文、按钮、表格和输入框字号。"
+            >
+              <div className="settings-view__range-control">
+                <input
+                  className="settings-view__range"
+                  type="range"
+                  min={0.9}
+                  max={1.2}
+                  step={0.05}
+                  value={(settings.appearance ?? DEFAULT_APPEARANCE).fontScale}
+                  onChange={(e) =>
+                    updateAppearance({ fontScale: Number(e.target.value) })
+                  }
+                  aria-label="界面字号比例"
+                />
+                <span className="settings-view__range-value">
+                  {Math.round(
+                    (settings.appearance ?? DEFAULT_APPEARANCE).fontScale *
+                      100,
+                  )}
+                  %
+                </span>
+              </div>
+            </Field>
+
+            <div className="settings-view__theme-grid">
+              {COMPACT_THEME_OPTIONS.map((opt) => {
+                const active =
+                  (settings.appearance ?? DEFAULT_APPEARANCE).compactTheme ===
+                  opt.id;
+                return (
+                  <button
+                    type="button"
+                    key={opt.id}
+                    className={`settings-view__theme-card${
+                      active ? ' settings-view__theme-card--active' : ''
+                    }`}
+                    onClick={() => updateAppearance({ compactTheme: opt.id })}
+                    aria-pressed={active}
+                    aria-label={`悬浮窗主题：${opt.label}`}
+                  >
+                    <span
+                      className="settings-view__theme-preview"
+                      data-compact-theme={opt.id}
+                      aria-hidden="true"
+                    >
+                      <span className="settings-view__theme-preview-fx" />
+                      <span className="settings-view__theme-preview-bar" />
+                      <span className="settings-view__theme-preview-bar settings-view__theme-preview-bar--short" />
+                    </span>
+                    <span className="settings-view__theme-meta">
+                      <span className="settings-view__theme-name">
+                        {opt.label}
+                        {active && (
+                          <Check
+                            size={12}
+                            strokeWidth={2.4}
+                            className="settings-view__theme-check"
+                          />
+                        )}
+                      </span>
+                      <span className="settings-view__theme-desc">
+                        {opt.description}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
           {/* ── Controller ───────────────────────────────────── */}
           <Section
             id="controller"
-            section={SECTIONS[0]!}
+            section={SECTIONS[1]!}
           >
             <div className="settings-view__row">
               <Field
@@ -720,7 +1110,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Probe URLs ───────────────────────────────────── */}
-          <Section id="probes" section={SECTIONS[1]!}>
+          <Section id="probes" section={SECTIONS[2]!}>
             <ListField
               items={settings.probeUrls}
               placeholder="https://example.com"
@@ -740,7 +1130,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Primary Groups ───────────────────────────────── */}
-          <Section id="groups" section={SECTIONS[2]!}>
+          <Section id="groups" section={SECTIONS[3]!}>
             <ListField
               items={settings.primaryGroups}
               placeholder="group name"
@@ -754,7 +1144,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Router Health ────────────────────────────────── */}
-          <Section id="router" section={SECTIONS[3]!}>
+          <Section id="router" section={SECTIONS[4]!}>
             <div className="settings-view__row settings-view__row--router">
               <Field label="Host" hint="路由器内网地址">
                 <input
@@ -794,7 +1184,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Refresh intervals ────────────────────────────── */}
-          <Section id="intervals" section={SECTIONS[4]!}>
+          <Section id="intervals" section={SECTIONS[5]!}>
             <div className="settings-view__grid">
               {(Object.entries(settings.refreshIntervals) as [
                 keyof RefreshIntervalSettings,
@@ -826,7 +1216,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Switch settings ──────────────────────────────── */}
-          <Section id="switching" section={SECTIONS[5]!}>
+          <Section id="switching" section={SECTIONS[6]!}>
             <div className="settings-view__row">
               <Field
                 label="验证延迟"
@@ -860,7 +1250,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── OpenClash 管理接口 ───────────────────────────── */}
-          <Section id="management" section={SECTIONS[6]!}>
+          <Section id="management" section={SECTIONS[7]!}>
             <div className="settings-view__row">
               <Field
                 label="LuCI URL"
@@ -1063,7 +1453,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Collectors ───────────────────────────────────── */}
-          <Section id="collectors" section={SECTIONS[7]!}>
+          <Section id="collectors" section={SECTIONS[8]!}>
             <div className="settings-view__collectors">
               {COLLECTOR_IDS.map((id) => {
                 const toggle = settings.collectors[id];
@@ -1081,6 +1471,74 @@ export function SettingsView(): JSX.Element {
                 );
               })}
             </div>
+          </Section>
+
+          {/* ── Provider Auth (CPA imports) ──────────────────── */}
+          <Section
+            id="settings-section-provider-auth"
+            title="AI 账号 / Quota"
+            hint="导入 CPA 认证文件以启用多账号 quota 聚合"
+            icon={<KeyRound size={14} strokeWidth={1.75} />}
+          >
+            <div className="settings-view__row">
+              <Field
+                label="Provider"
+                hint="选择待导入的 AI 服务商"
+              >
+                <select
+                  className="settings-view__input"
+                  value={providerPick}
+                  onChange={(e) =>
+                    setProviderPick(e.target.value as ProviderId)
+                  }
+                  aria-label="Provider"
+                  disabled={providerAuthBusyId === '__import__'}
+                >
+                  {PROVIDER_PICKER_ORDER.map((id) => (
+                    <option key={id} value={id}>
+                      {PROVIDER_LABELS[id]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label="导入"
+                hint="主进程打开文件选择器，渲染进程不接触 token / API key"
+              >
+                <button
+                  type="button"
+                  className="settings-view__btn-secondary"
+                  onClick={() => void handleProviderAuthImport()}
+                  disabled={providerAuthBusyId === '__import__'}
+                  data-testid="provider-auth-import"
+                >
+                  <Plus size={13} strokeWidth={2} aria-hidden="true" />
+                  {providerAuthBusyId === '__import__'
+                    ? '导入中…'
+                    : '导入 CPA 认证文件'}
+                </button>
+              </Field>
+            </div>
+
+            {providerAuthError !== null && (
+              <p
+                className="settings-view__error-msg"
+                role="alert"
+                data-testid="provider-auth-error"
+              >
+                <AlertCircle size={12} strokeWidth={2} aria-hidden="true" />
+                {' '}
+                {formatProviderAuthError(providerAuthError)}
+              </p>
+            )}
+
+            <ProviderAuthList
+              rows={providerAuthRows}
+              onRefresh={(id) => void handleProviderAuthRefresh(id)}
+              onDelete={(id) => void handleProviderAuthDelete(id)}
+              busyId={providerAuthBusyId}
+            />
           </Section>
 
           {/* Padding so sticky save bar doesn't overlap last section */}
@@ -1144,29 +1602,54 @@ export function SettingsView(): JSX.Element {
 
 interface SectionProps {
   readonly id: string;
-  readonly section: SectionDef;
-  readonly children: React.ReactNode;
+  readonly section?: SectionDef;
+  readonly title?: string;
+  readonly hint?: string;
+  readonly icon?: JSX.Element;
+  readonly children?: React.ReactNode;
 }
 
-function Section({ id, section, children }: SectionProps): JSX.Element {
+function Section({
+  id,
+  section,
+  title,
+  hint,
+  icon,
+  children,
+}: SectionProps): JSX.Element {
+  // Accept either the short id form (e.g. "collectors") used by the
+  // existing eight call sites or the already-prefixed form
+  // ("settings-section-provider-auth") used by newer scaffolds. We
+  // normalise to a single short id internally so the DOM id and the
+  // `aria-labelledby` heading id stay in sync.
+  const shortId = id.startsWith('settings-section-')
+    ? id.slice('settings-section-'.length)
+    : id;
+  const sectionId = `settings-section-${shortId}`;
+  const headingId = `settings-heading-${shortId}`;
+  const resolvedTitle = title ?? section?.label ?? '';
+  const resolvedHint = hint ?? section?.hint ?? '';
+  const resolvedIcon = icon ?? section?.icon ?? null;
   return (
     <section
-      id={`settings-section-${id}`}
+      id={sectionId}
       className="settings-view__section"
-      aria-labelledby={`settings-heading-${id}`}
+      aria-labelledby={headingId}
     >
       <header className="settings-view__section-head">
-        <span className="settings-view__section-icon" aria-hidden="true">
-          {section.icon}
-        </span>
+        {resolvedIcon && (
+          <span className="settings-view__section-icon" aria-hidden="true">
+            {resolvedIcon}
+          </span>
+        )}
         <div className="settings-view__section-titles">
           <h3
-            id={`settings-heading-${id}`}
+            id={headingId}
             className="settings-view__section-title"
           >
-            {section.label}
+            {resolvedTitle}
           </h3>
-          <p className="settings-view__section-hint">{section.hint}</p>
+          <p className="settings-view__section-hint">{resolvedHint}</p>
         </div>
       </header>
       <div className="settings-view__section-body">{children}</div>
@@ -1329,5 +1812,56 @@ function CollectorToggle({
         </span>
       </span>
     </label>
+  );
+}
+
+interface SegmentedControlOption<T extends string> {
+  readonly value: T;
+  readonly label: string;
+}
+
+interface SegmentedControlProps<T extends string> {
+  readonly value: T;
+  readonly options: readonly SegmentedControlOption<T>[];
+  readonly onChange: (next: T) => void;
+  readonly ariaLabel: string;
+}
+
+/**
+ * Two- or three-button segmented selector. We intentionally stay
+ * keyboard-first: each button is a `role="radio"` inside a
+ * `role="radiogroup"` so tab order stays simple, and `aria-checked`
+ * tracks the active value.
+ */
+function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange,
+  ariaLabel,
+}: SegmentedControlProps<T>): JSX.Element {
+  return (
+    <div
+      className="settings-view__segmented"
+      role="radiogroup"
+      aria-label={ariaLabel}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            className={`settings-view__segmented-btn${
+              active ? ' settings-view__segmented-btn--active' : ''
+            }`}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }

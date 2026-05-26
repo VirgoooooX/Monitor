@@ -1,0 +1,278 @@
+/*
+ * Compact widget theme presets and compact-only motion rules.
+ */
+
+/* ── Compact themes ──────────────────────────────────────────────────────
+   Each preset overrides the tokens defined on `.widget-shell` and paints
+   the two decoration layers (`__fx`, `__chrome`). Animations are gated
+   behind `prefers-reduced-motion` at the bottom of this file so the
+   widget stops spinning / pulsing for users who request reduced motion.
+*/
+
+/* obsidian-glass — default, calm dark glass with a cool rim. */
+.widget-shell[data-compact-theme='obsidian-glass'] {
+  --widget-bg:
+    linear-gradient(145deg, #18181c, #0e0e12);
+  --widget-border: rgba(255, 255, 255, 0.07);
+  /* No outer shadow — the widget fills the BrowserWindow so any
+     outer shadow would be clipped by the OS. Lift comes from the
+     inset highlight on `.widget-shell__chrome`. */
+  --widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --widget-accent: rgba(165, 180, 252, 0.95);
+  --widget-glow: rgba(165, 180, 252, 0.22);
+}
+
+.widget-shell[data-compact-theme='obsidian-glass'] .widget-shell__fx {
+  background:
+    radial-gradient(120% 80% at 0% 0%,
+      rgba(99, 102, 241, 0.10),
+      transparent 55%),
+    radial-gradient(110% 70% at 100% 100%,
+      rgba(255, 255, 255, 0.04),
+      transparent 55%);
+}
+
+.widget-shell[data-compact-theme='obsidian-glass'] .widget-shell__chrome {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.widget-shell[data-compact-theme='obsidian-glass']:focus-visible
+  .widget-shell__chrome,
+.widget-shell[data-compact-theme='obsidian-glass']:hover
+  .widget-shell__chrome {
+  box-shadow:
+    inset 0 0 0 1px rgba(165, 180, 252, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 24px var(--widget-glow);
+}
+
+/* aurora-ring — slow conic-gradient ring around the edge. The inner
+   surface is dimmed so foreground text always wins over the colour
+   wash; status colour mixes into the ring on bad / warn states. */
+.widget-shell[data-compact-theme='aurora-ring'] {
+  --widget-bg: #0a0a0e;
+  --widget-border: transparent;
+  /* No outer shadow / glow — clipped by the OS at the BrowserWindow
+     edge. The conic-gradient ring on `.widget-shell__fx` provides
+     the colour wash; lift comes from the inset chrome highlight. */
+  --widget-shadow: none;
+  --widget-glow: rgba(165, 180, 252, 0.35);
+}
+
+.widget-shell[data-compact-theme='aurora-ring'] .widget-shell__fx {
+  /* The ring lives in `__fx`; the inner darkening lives in `__chrome`
+     so the click target reads as a solid surface even mid-rotation. */
+  background:
+    conic-gradient(
+      from 0deg,
+      rgba(99, 102, 241, 0.6) 0deg,
+      rgba(34, 197, 94, 0.45) 90deg,
+      rgba(56, 189, 248, 0.55) 180deg,
+      rgba(244, 114, 182, 0.5) 270deg,
+      rgba(99, 102, 241, 0.6) 360deg
+    );
+  filter: blur(16px) saturate(1.05);
+  opacity: 0.55;
+  animation: widget-aurora-spin 22s linear infinite;
+}
+
+/* Status-driven palette swaps for aurora — surface a bad/warn state
+   without letting a green ring claim the user's attention. */
+.widget-shell[data-compact-theme='aurora-ring'][data-status='partial_outage']
+  .widget-shell__fx {
+  background:
+    conic-gradient(
+      from 0deg,
+      rgba(245, 158, 11, 0.55) 0deg,
+      rgba(245, 158, 11, 0.3) 120deg,
+      rgba(245, 158, 11, 0.55) 240deg,
+      rgba(245, 158, 11, 0.55) 360deg
+    );
+}
+
+.widget-shell[data-compact-theme='aurora-ring'][data-status='openclash_unreachable']
+  .widget-shell__fx,
+.widget-shell[data-compact-theme='aurora-ring'][data-status='node_down']
+  .widget-shell__fx,
+.widget-shell[data-compact-theme='aurora-ring'][data-status='home_down']
+  .widget-shell__fx {
+  background:
+    conic-gradient(
+      from 0deg,
+      rgba(239, 68, 68, 0.55) 0deg,
+      rgba(239, 68, 68, 0.3) 120deg,
+      rgba(239, 68, 68, 0.55) 240deg,
+      rgba(239, 68, 68, 0.55) 360deg
+    );
+}
+
+.widget-shell[data-compact-theme='aurora-ring'] .widget-shell__chrome {
+  /* Inset darkener — keeps text crisp despite the colour ring. */
+  inset: 1px;
+  background: linear-gradient(160deg, #0a0a0e, #08080c);
+  border-radius: 11px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@keyframes widget-aurora-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* holo-grid — HUD-style grid + slow scanning line. Decoration is built
+   from layered linear-gradients so we never hit the disk for assets. */
+.widget-shell[data-compact-theme='holo-grid'] {
+  --widget-bg: linear-gradient(180deg, #080e12, #060a0e);
+  --widget-border: rgba(56, 189, 248, 0.18);
+  /* No outer shadow — clipped by the OS. The cyan inner glow stays
+     because it's `inset` and so paints inside the rounded surface. */
+  --widget-shadow:
+    inset 0 0 24px rgba(56, 189, 248, 0.06);
+  --widget-accent: rgba(125, 211, 252, 0.95);
+  --widget-glow: rgba(56, 189, 248, 0.28);
+}
+
+.widget-shell[data-compact-theme='holo-grid'] .widget-shell__fx {
+  background:
+    linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px) 0 0 / 100% 16px,
+    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px) 0 0 / 16px 100%;
+  opacity: 0.8;
+}
+
+.widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome {
+  /* Scanning line as a thin gradient stripe + corner accents. */
+  background:
+    linear-gradient(180deg,
+      transparent 0%,
+      rgba(125, 211, 252, 0.16) 48%,
+      transparent 100%);
+  background-size: 100% 24%;
+  background-repeat: no-repeat;
+  animation: widget-holo-scan 6s linear infinite;
+  box-shadow:
+    inset 0 0 0 1px rgba(56, 189, 248, 0.14),
+    inset 8px 8px 0 -7px rgba(125, 211, 252, 0.5),
+    inset -8px 8px 0 -7px rgba(125, 211, 252, 0.5),
+    inset 8px -8px 0 -7px rgba(125, 211, 252, 0.5),
+    inset -8px -8px 0 -7px rgba(125, 211, 252, 0.5);
+}
+
+@keyframes widget-holo-scan {
+  0%   { background-position: 0% -25%; }
+  100% { background-position: 0% 125%; }
+}
+
+/* liquid-metal — graphite gradient with a slow specular sweep. The
+   sweep lives in `__fx` so it travels behind text. */
+.widget-shell[data-compact-theme='liquid-metal'] {
+  --widget-bg:
+    linear-gradient(150deg,
+      #1c1f26 0%,
+      #11141a 45%,
+      #0c0f14 100%);
+  --widget-border: rgba(220, 230, 240, 0.10);
+  /* No outer shadow — clipped by the OS. Specular highlight + dark
+     bevel come from the two `inset` shadows below. */
+  --widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+  --widget-accent: rgba(186, 230, 253, 0.92);
+  --widget-glow: rgba(186, 230, 253, 0.22);
+  --widget-divider: rgba(220, 230, 240, 0.07);
+}
+
+.widget-shell[data-compact-theme='liquid-metal'] .widget-shell__fx {
+  background:
+    linear-gradient(110deg,
+      transparent 35%,
+      rgba(255, 255, 255, 0.06) 48%,
+      rgba(186, 230, 253, 0.16) 50%,
+      rgba(255, 255, 255, 0.06) 52%,
+      transparent 65%);
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  animation: widget-metal-sweep 14s ease-in-out infinite;
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+
+.widget-shell[data-compact-theme='liquid-metal'] .widget-shell__chrome {
+  box-shadow:
+    inset 0 0 0 1px rgba(220, 230, 240, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+
+@keyframes widget-metal-sweep {
+  0%   { background-position: 100% 0; }
+  50%  { background-position: -10% 0; }
+  100% { background-position: 100% 0; }
+}
+
+/* signal-pulse — concentric pulse colored by the live status. The
+   pulse is centered on the status dot's left edge so it reads as
+   "this signal is alive". */
+.widget-shell[data-compact-theme='signal-pulse'] {
+  --widget-bg:
+    radial-gradient(120% 100% at 0% 0%,
+      rgba(34, 197, 94, 0.06),
+      transparent 55%),
+    linear-gradient(160deg, #101216, #0a0c10);
+  --widget-border: rgba(255, 255, 255, 0.06);
+  /* No outer shadow — clipped by the OS. The pulse ring comes from
+     the animated `.widget-shell__fx` layer. */
+  --widget-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
+  background:
+    radial-gradient(circle at 18px 22px,
+      var(--widget-status) 0%,
+      transparent 4%),
+    radial-gradient(circle at 18px 22px,
+      rgba(255, 255, 255, 0) 0%,
+      var(--widget-status) 6%,
+      transparent 10%);
+  opacity: 0;
+  animation: widget-pulse 2.8s ease-out infinite;
+}
+
+.widget-shell[data-compact-theme='signal-pulse'] .widget-shell__chrome {
+  background:
+    radial-gradient(220px 120px at 0% 0%,
+      color-mix(in srgb, var(--widget-status) 18%, transparent) 0%,
+      transparent 70%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 0 24px color-mix(in srgb, var(--widget-status) 12%, transparent);
+}
+
+@keyframes widget-pulse {
+  0%   { opacity: 0.55; transform: scale(0.95); }
+  60%  { opacity: 0;    transform: scale(1.6); }
+  100% { opacity: 0;    transform: scale(1.6); }
+}
+
+/* Reduced-motion fallback — every theme stops moving when the user
+   asks for less motion. We retain static glow / chrome so the preset
+   is still recognisable, just calm. */
+@media (prefers-reduced-motion: reduce) {
+  .widget-shell[data-compact-theme='aurora-ring'] .widget-shell__fx,
+  .widget-shell[data-compact-theme='liquid-metal'] .widget-shell__fx,
+  .widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome,
+  .widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
+    animation: none;
+  }
+  .widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome {
+    background: none;
+  }
+  .widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
+    opacity: 0.18;
+  }
+}

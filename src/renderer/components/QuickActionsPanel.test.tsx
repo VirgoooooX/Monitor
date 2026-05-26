@@ -177,22 +177,22 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Property 2 — DOM order is fixed (QuickNodeCard above ConfigSwitchCard)
+// Property 2 — Panel renders for every health state (no blank-screen failure)
 // ---------------------------------------------------------------------------
 //
-// For every `HealthStatus` value the panel must:
-//   1. mount the `quick-actions-panel` container (no blank-screen
-//      failure mode in any state — Requirement 10.1);
-//   2. render `quick-node-card` strictly above `config-switch-card`
-//      in the DOM (Requirement 2.3 — fixed sibling order so the
-//      operation target never drifts when state flips).
-// `compareDocumentPosition` is used for the order check because it
-// is robust against intervening banner / error nodes that the panel
-// may insert between the two cards in some health states.
+// For every `HealthStatus` value the panel must mount the
+// `quick-actions-panel` container and surface the ConfigSwitchCard so
+// users can always reach the controls (Requirement 10.1).
+//
+// The original Property 2 assertion that QuickNodeCard rendered
+// strictly above ConfigSwitchCard no longer applies — quick node
+// switching now lives in the NodeTable section of the network tab,
+// not the QuickActionsPanel. The single-card panel makes "fixed
+// sibling order" trivially total.
 
-describe('QuickActionsPanel — Property 2 (DOM order is fixed)', () => {
+describe('QuickActionsPanel — Property 2 (panel mounts in every health state)', () => {
   it.each(ALL_HEALTH_STATUSES)(
-    'renders QuickNodeCard before ConfigSwitchCard under healthStatus=%s',
+    'renders the ConfigSwitchCard under healthStatus=%s',
     async (healthStatus) => {
       stubDesktopBridge();
 
@@ -204,18 +204,9 @@ describe('QuickActionsPanel — Property 2 (DOM order is fixed)', () => {
       const panel = await screen.findByTestId('quick-actions-panel');
       expect(panel).toBeTruthy();
 
-      // Wait for the loaded view so both child cards are mounted.
-      const nodeCard = await screen.findByTestId('quick-node-card');
+      // After the data resolves, the ConfigSwitchCard must mount.
       const configCard = await screen.findByTestId('config-switch-card');
-
-      // `compareDocumentPosition` returns a bitmask. The
-      // `DOCUMENT_POSITION_FOLLOWING` (0x04) bit is set when the
-      // argument node FOLLOWS the receiver in document order, which
-      // is exactly what we want: nodeCard should be followed by
-      // configCard.
-      const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
-      const relation = nodeCard.compareDocumentPosition(configCard);
-      expect(relation & FOLLOWING).toBe(FOLLOWING);
+      expect(configCard).toBeTruthy();
     },
   );
 });
@@ -243,7 +234,7 @@ describe('QuickActionsPanel — Property 2 (banner presence/absence)', () => {
     render(<QuickActionsPanel healthStatus="healthy" />);
 
     // Wait for the data-loaded view so the banner state is settled.
-    await screen.findByTestId('quick-node-card');
+    await screen.findByTestId('config-switch-card');
 
     expect(screen.queryByTestId('quick-actions-panel-banner')).toBeNull();
   });
@@ -340,7 +331,7 @@ describe('QuickActionsPanel — Property 14 (persistent failure threshold)', () 
 
       // Wait for the data-loaded view so banner state is settled.
       await waitFor(() => {
-        expect(screen.queryByTestId('quick-node-card')).not.toBeNull();
+        expect(screen.queryByTestId('config-switch-card')).not.toBeNull();
       });
 
       const banner = screen.queryByTestId('quick-actions-panel-banner');

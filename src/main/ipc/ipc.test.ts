@@ -68,6 +68,26 @@ describe('appSettingsPatchSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('accepts an appearance-only patch (theme system)', () => {
+    const result = appSettingsPatchSchema.safeParse({
+      appearance: {
+        colorMode: 'light',
+        compactTheme: 'aurora-ring',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an appearance patch with unknown compactTheme', () => {
+    const result = appSettingsPatchSchema.safeParse({
+      appearance: {
+        colorMode: 'dark',
+        compactTheme: 'not-a-real-theme',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('updateSecretInputSchema', () => {

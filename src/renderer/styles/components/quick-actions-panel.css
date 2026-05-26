@@ -1,0 +1,458 @@
+/*
+ * Quick actions panel, banners, errors, skeletons, and motion rules.
+ */
+
+/* Quick Actions Panel (network-quick-actions task 15.2) ------------------ */
+
+.quick-actions-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  -webkit-app-region: no-drag;
+}
+
+.quick-actions-panel--degraded {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: linear-gradient(
+    180deg,
+    rgba(245, 158, 11, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+}
+
+.quick-actions-panel--bridge-missing {
+  align-items: flex-start;
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.quick-actions-panel__hint {
+  margin: 0;
+  font-size: var(--type-xs, 12px);
+  color: var(--color-bad);
+}
+
+/* Banner ---------------------------------------------------------------- */
+
+.quick-actions-panel__banner {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.quick-actions-panel__banner--critical {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fecaca;
+}
+
+.quick-actions-panel__banner--warn {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fde68a;
+}
+
+.quick-actions-panel__banner--notice {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #c7d2fe;
+}
+
+/* Inline switch error --------------------------------------------------- */
+
+.quick-actions-panel__error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+  cursor: pointer;
+}
+
+/* Skeleton placeholders shown during the first-paint window before the
+   IPC resolves. The two slots mirror the QuickNodeCard / ConfigSwitchCard
+   sibling order so the layout does not shift on hydration. */
+
+.quick-actions-panel__skeleton {
+  border-radius: 10px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: quick-actions-skeleton 1.4s ease-in-out infinite;
+}
+
+.quick-actions-panel__skeleton--node {
+  height: 96px;
+}
+
+.quick-actions-panel__skeleton--config {
+  height: 132px;
+}
+
+@keyframes quick-actions-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-actions-panel__skeleton {
+    animation: none;
+  }
+}
+
+/* =========================================================================
+ * QuickNodeCard — primary group quick-switch surface.
+ *
+ * Sits inside `.quick-actions-panel` (a stacked column at the top of the
+ * Network tab). Tokens come from the .ex namespace when nested under the
+ * expanded shell, with sensible fallbacks so the component still renders
+ * outside it (tests, light contexts).
+ * ========================================================================= */
+
+.quick-node-card {
+  --qnc-text: var(--ex-text, #1f2328);
+  --qnc-text-mute: var(--ex-text-mute, rgba(31, 35, 40, 0.7));
+  --qnc-text-faint: var(--ex-text-faint, rgba(31, 35, 40, 0.5));
+  --qnc-surface: var(--ex-surface, #f6f8fa);
+  --qnc-surface-strong: var(--ex-surface-strong, #ffffff);
+  --qnc-border: var(--ex-border, #e1e4e8);
+  --qnc-border-strong: var(--ex-border-strong, #d0d7de);
+  --qnc-accent: var(--ex-accent, #6366f1);
+
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--qnc-surface);
+  border: 1px solid var(--qnc-border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.quick-node-card[data-locked='true'] {
+  opacity: 0.78;
+}
+
+.quick-node-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.quick-node-card__eyebrow {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--qnc-text-faint);
+  flex: 0 0 auto;
+}
+
+.quick-node-card__group {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-base, 14px);
+  font-weight: 600;
+  color: var(--qnc-text);
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-node-card__current {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--type-sm, 13px);
+}
+
+.quick-node-card__current-label {
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--qnc-text-faint);
+}
+
+.quick-node-card__current-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--qnc-text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-node-card__error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+  cursor: pointer;
+}
+
+.quick-node-card__candidates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.quick-node-card__candidate {
+  min-width: 0;
+}
+
+.quick-node-card__btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--qnc-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--qnc-text-mute);
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 140ms ease-out,
+    color 140ms ease-out,
+    border-color 140ms ease-out,
+    opacity 140ms ease-out;
+  min-width: 0;
+  text-align: left;
+}
+
+.quick-node-card__btn:hover:not(:disabled) {
+  background: rgba(165, 180, 252, 0.12);
+  border-color: rgba(165, 180, 252, 0.4);
+  color: var(--qnc-accent);
+}
+
+.quick-node-card__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.quick-node-card__btn-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--qnc-text);
+  font-weight: 500;
+}
+
+.quick-node-card__btn:disabled .quick-node-card__btn-name {
+  color: var(--qnc-text-mute);
+}
+
+.quick-node-card__btn-sep {
+  flex: 0 0 auto;
+  color: var(--qnc-text-faint);
+}
+
+.quick-node-card__btn-latency {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--qnc-text-faint);
+  font-size: var(--type-micro, 11px);
+  letter-spacing: 0.04em;
+}
+
+.quick-node-card__empty {
+  font-size: var(--type-sm, 13px);
+  color: var(--qnc-text-faint);
+  font-style: italic;
+  padding: 10px 0 4px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .quick-node-card__candidates {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+ * ConfigSwitchCard — whitelist + active marker.
+ * ========================================================================= */
+
+.config-switch-card {
+  --csc-text: var(--ex-text, #1f2328);
+  --csc-text-mute: var(--ex-text-mute, rgba(31, 35, 40, 0.7));
+  --csc-text-faint: var(--ex-text-faint, rgba(31, 35, 40, 0.5));
+  --csc-surface: var(--ex-surface, #f6f8fa);
+  --csc-surface-strong: var(--ex-surface-strong, #ffffff);
+  --csc-border: var(--ex-border, #e1e4e8);
+  --csc-border-strong: var(--ex-border-strong, #d0d7de);
+  --csc-accent: var(--ex-accent, #6366f1);
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--csc-surface);
+  border: 1px solid var(--csc-border);
+  border-radius: 10px;
+}
+
+.config-switch-card__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.config-switch-card__eyebrow {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--csc-text-faint);
+  flex: 0 0 auto;
+}
+
+.config-switch-card__active-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-sm, 13px);
+  color: var(--csc-text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-switch-card__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-switch-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--csc-border);
+  border-radius: 8px;
+  background: transparent;
+  min-width: 0;
+}
+
+.config-switch-card__row--active {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.32);
+}
+
+.config-switch-card__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-base, 14px);
+  font-weight: 500;
+  color: var(--csc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-switch-card__badge {
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.18);
+  color: #6ee7b7;
+}
+
+.config-switch-card__btn {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--csc-border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--csc-text-mute);
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 140ms ease-out,
+    color 140ms ease-out,
+    border-color 140ms ease-out;
+}
+
+.config-switch-card__btn:hover:not(:disabled) {
+  background: rgba(165, 180, 252, 0.12);
+  border-color: rgba(165, 180, 252, 0.4);
+  color: var(--csc-accent);
+}
+
+.config-switch-card__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.config-switch-card__hint {
+  margin: 0;
+  font-size: var(--type-xs, 12px);
+  color: var(--csc-text-mute);
+  letter-spacing: 0.02em;
+}
+
+.config-switch-card__guidance {
+  margin: 0;
+  font-size: var(--type-sm, 13px);
+  color: var(--csc-text-mute);
+  line-height: 1.55;
+  letter-spacing: 0.005em;
+}
+
+.config-switch-card--empty {
+  /* Empty card has no list, just guidance. Tighten the inner gap so
+     the eyebrow sits flush with the hint paragraph. */
+  gap: 6px;
+}

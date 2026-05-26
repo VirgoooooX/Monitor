@@ -85,6 +85,12 @@ import type {
   NodeSampleRow,
   Repositories,
 } from '../store/repositories';
+import {
+  ProviderAuthError,
+  type ProviderAuthService,
+  type ProviderAuthValidationResult,
+} from '../services/provider_auth.service';
+import type { QuotaService } from '../services/quota.service';
 import type {
   AppSettings,
   ConfigsResponse,
@@ -95,8 +101,10 @@ import type {
   IpcResult,
   NodeView,
   OpenClashDetails,
+  ProviderAuthMetadata,
   ProxiesResponse,
   ProxyEntry,
+  QuotaStatus,
   SwitchNodeResult,
   UpdateSecretInput,
   UsageRange,
@@ -228,6 +236,29 @@ export interface IpcRegistryDeps {
   getUsageSummary?: (range: UsageRange) => Promise<UsageSummary> | UsageSummary;
   /** Quota service. When absent the IPC returns `not_implemented`. */
   getQuotaStatus?: () => Promise<import('../types').QuotaStatus>;
+  /**
+   * Provider Auth service (cpa-quota-import task 10.3). Owns the
+   * five `desktop:listProviderAuths` / `desktop:importProviderAuthFile` /
+   * `desktop:deleteProviderAuth` / `desktop:validateProviderAuth` /
+   * (delete + list + validate + import) handlers.
+   *
+   * Optional so the IPC registry can be constructed in unit tests
+   * that do not exercise the Provider_Auth surface; when absent the
+   * five matching handlers return `{ ok: false, error: { code:
+   * 'not_implemented', ... } }`.
+   */
+  providerAuthService?: ProviderAuthService;
+  /**
+   * Quota service (cpa-quota-import task 10.3). Backs the
+   * `desktop:refreshProviderQuota` handler. Distinct from
+   * `getQuotaStatus` (which only exposes the cache-hot read path);
+   * `quotaService.refresh()` is the per-account dispatch entry that
+   * applies the 5-minute throttle and persists the post-refresh
+   * cache.
+   *
+   * Optional for the same reason as `providerAuthService`.
+   */
+  quotaService?: QuotaService;
   /** Future service (task 9.3). When absent the IPC returns `not_implemented`. */
   getDiagnostics?: () => Promise<DiagnosticsReport> | DiagnosticsReport;
   /** Future trigger (task 5.x). When absent the IPC returns `not_implemented`. */
@@ -296,6 +327,81 @@ const INTERNAL_FAILURE = (err: unknown) =>
 
 const NOT_IMPLEMENTED_FAILURE = (method: string, hint: string) =>
   failure('not_implemented', `${method}: ${hint}`);
+
+/**
+ * Maximum length of an `IpcError.message` returned by the
+ * Provider_Auth handlers. Mirrors the pre-redaction bound applied
+ * inside `provider_auth.service` (`bound()` → 80 chars) and the
+ * `z.string().max(80)` constraint on
+ * `providerAuthMetadataSchema.lastErrorMessage`.
+ */
+const MAX_PROVIDER_AUTH_ERROR_MESSAGE_LEN = 80;
+
+function boundProviderAuthMessage(message: string): string {
+  return message.length <= MAX_PROVIDER_AUTH_ERROR_MESSAGE_LEN
+    ? message
+    : message.slice(0, MAX_PROVIDER_AUTH_ERROR_MESSAGE_LEN);
+}
+
+/**
+ * Map a thrown error from the Provider_Auth pipeline onto the
+ * renderer-facing `IpcResult` envelope.
+ *
+ * Mapping rules (cpa-quota-import design.md §IPC channels and
+ * schemas + Requirements 1.1, 1.4, 9.1–9.6, 10.4):
+ *
+ *   - `ProviderAuthError`           → `{ code: err.code, message }`
+ *     The closed `ProviderAuthErrorCode` union is preserved so the
+ *     renderer can switch on the code without parsing the message.
+ *   - `SecretsUnavailableError`     → `{ code: 'unavailable', message }`
+ *     Surfaced when `safeStorage.isEncryptionAvailable() === false`;
+ *     the renderer renders the "secret store unavailable" banner.
+ *   - `SecretsDecryptError`         → `{ code: 'auth_expired', message }`
+ *     Surfaced when DPAPI / kwallet rotated the master key under us;
+ *     the user re-imports from CPA to recover.
+ *   - Anything else                 → `INTERNAL_FAILURE(err)` (the
+ *     generic `code: 'internal'` envelope with a non-secret message).
+ *
+ * The renderer-blind contract is enforced two ways:
+ *   1. Messages are bounded to 80 chars (matching the
+ *      `lastErrorMessage` storage budget) so a stray token fragment
+ *      cannot escape via a long error message.
+ *   2. The file path of the import dialog never appears here — the
+ *      service-layer errors are pre-redacted and never carry the
+ *      path in their `message` field (`provider_auth.service`
+ *      docstring).
+ */
+function mapProviderAuthError(err: unknown): { ok: false; error: IpcError } {
+  if (err instanceof ProviderAuthError) {
+    return failure(err.code, boundProviderAuthMessage(err.message));
+  }
+  if (err instanceof Error) {
+    if (err.name === 'SecretsUnavailableError') {
+      return failure(
+        'unavailable',
+        boundProviderAuthMessage(
+          err.message.length > 0
+            ? err.message
+            : 'secret storage unavailable',
+        ),
+      );
+    }
+    if (err.name === 'SecretsDecryptError') {
+      // The `SecretsDecryptError` message includes the secret key
+      // name (e.g. `cpaAuth.providerAuth.<uuid>`) which is non-
+      // sensitive but also not useful to the renderer; we replace
+      // it with a fixed bounded string to keep the envelope
+      // deterministic and small.
+      return failure(
+        'auth_expired',
+        boundProviderAuthMessage(
+          'secret payload could not be decrypted',
+        ),
+      );
+    }
+  }
+  return INTERNAL_FAILURE(err);
+}
 
 // ---------------------------------------------------------------------------
 // OpenClash details composition
@@ -1370,6 +1476,229 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
         return { ok: true, value: undefined };
       } catch (err) {
         return INTERNAL_FAILURE(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // listProviderAuths   (cpa-quota-import task 10.3)
+  // -------------------------------------------------------------------------
+  //
+  // Returns every imported `provider_auth` row, projected through
+  // `redactRow` so the response carries only `ProviderAuthMetadata`
+  // fields — never a token / API key / file path / secretKey.
+  //
+  // No upstream calls; no secret decryption. The handler is the
+  // hot-path read for the Provider_Auth section in `SettingsView`.
+  //
+  // Validates: Requirements 1.1, 1.4, 9.1, 9.6, 17.1
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.listProviderAuths,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata[]>> => {
+      const parsed =
+        desktopApiSchemas.listProviderAuths.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'listProviderAuths',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const value = service.list();
+        return { ok: true, value };
+      } catch (err) {
+        return INTERNAL_FAILURE(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // importProviderAuthFile   (cpa-quota-import task 10.3)
+  // -------------------------------------------------------------------------
+  //
+  // Drives the full CPA auth-file import pipeline. The renderer
+  // sends only `{ provider }`; the service opens the OS file dialog
+  // in main, reads + parses the file, writes the secret + row inside
+  // a SQLite transaction, and runs the lightweight validate. The
+  // response is the freshly-created `ProviderAuthMetadata` (redacted).
+  //
+  // Error mapping (see `mapProviderAuthError`):
+  //   - `ProviderAuthError`         → `{ code: err.code, message }`
+  //     covers `cancelled` / `unsupported_file` / `parse_error` /
+  //     `auth_missing` and the future `project_missing` / etc.
+  //   - `SecretsUnavailableError`   → `{ code: 'unavailable', ... }`
+  //   - `SecretsDecryptError`       → `{ code: 'auth_expired', ... }`
+  //   - everything else             → `INTERNAL_FAILURE`.
+  //
+  // The renderer-blind contract is preserved two ways:
+  //   1. The response (success path) only carries `ProviderAuthMetadata`
+  //      — the projection has no field for tokens / API keys.
+  //   2. Errors carry only the bounded, pre-redacted message produced
+  //      by the service layer; the file path the user picked never
+  //      surfaces (Requirement 7.8 + design.md §Layered Trust Model).
+  //
+  // Validates: Requirements 1.1, 1.3, 1.4, 7.8, 8.1, 8.2, 8.5, 9.6
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.importProviderAuthFile,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata>> => {
+      const parsed =
+        desktopApiSchemas.importProviderAuthFile.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'importProviderAuthFile',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const value = await service.importFromFile(parsed.data);
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // deleteProviderAuth   (cpa-quota-import task 10.3)
+  // -------------------------------------------------------------------------
+  //
+  // Idempotent removal of a single `provider_auth` row + its
+  // `secrets` payload, atomically inside a single SQLite
+  // transaction (provided by the service). Removing an unknown id
+  // is a no-op so a double-click on the renderer's Delete button
+  // never produces an error envelope.
+  //
+  // Validates: Requirements 1.1, 1.4, 9.2, 9.6
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<void>> => {
+      const parsed =
+        desktopApiSchemas.deleteProviderAuth.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'deleteProviderAuth',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        service.remove(parsed.data.id);
+        return { ok: true, value: undefined };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // refreshProviderQuota   (cpa-quota-import task 10.3)
+  // -------------------------------------------------------------------------
+  //
+  // Trigger a per-account quota refresh through the
+  // {@link QuotaService}. The service applies the per-account
+  // 5-minute throttle, dispatches every account through
+  // `Promise.allSettled` so a single rejection cannot poison the
+  // others, and returns the post-refresh `QuotaStatus` envelope.
+  //
+  // Adapter-level errors are absorbed inside `quotaService.refresh`
+  // (the service translates them to a `stale` snapshot under the
+  // existing `lastErrorCode` / `lastErrorMessage`); the only
+  // exceptions that escape here are `SecretsUnavailableError` /
+  // `SecretsDecryptError` (the service catches per-account secret
+  // failures inside the dispatch loop, so this branch is reserved
+  // for a global secret-store outage that aborts the whole refresh).
+  //
+  // Validates: Requirements 1.1, 1.4, 9.3, 9.4, 9.6, 11.1, 11.3
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.refreshProviderQuota,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<QuotaStatus>> => {
+      const parsed =
+        desktopApiSchemas.refreshProviderQuota.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.quotaService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'refreshProviderQuota',
+          'awaiting quota.service wiring',
+        );
+      }
+      try {
+        // Reconstruct the input without explicit `undefined` values —
+        // `exactOptionalPropertyTypes: true` rejects assigning
+        // `string | undefined` into an optional `string` slot.
+        const input: { id?: string; provider?: import('../types').ProviderId } = {};
+        if (parsed.data.id !== undefined) input.id = parsed.data.id;
+        if (parsed.data.provider !== undefined) input.provider = parsed.data.provider;
+        const value = await service.refresh(input);
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // validateProviderAuth   (cpa-quota-import task 10.3)
+  // -------------------------------------------------------------------------
+  //
+  // Lightweight validation of an already-imported account. Does NOT
+  // call upstream — only inspects which fields the parser was able
+  // to extract from the stored Secret Payload. The result envelope
+  // (`{ ok, code, message }`) is the
+  // `providerAuthValidationResultSchema` shape returned directly to
+  // the renderer; "ok: false" outcomes are normal answers, not IPC
+  // errors, so they ride inside the `IpcResult` success branch with
+  // `code` widened to `'ok' | ProviderAuthErrorCode`.
+  //
+  // Validates: Requirements 1.4, 9.5, 9.6, 11.4
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.validateProviderAuth,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthValidationResult>> => {
+      const parsed =
+        desktopApiSchemas.validateProviderAuth.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'validateProviderAuth',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const value = service.validate(parsed.data.id);
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
       }
     },
   );

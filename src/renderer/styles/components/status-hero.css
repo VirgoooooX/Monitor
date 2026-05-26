@@ -1,0 +1,59 @@
+/*
+ * StatusHero component styles shared by compact and expanded views.
+ */
+
+/* Status hero ------------------------------------------------------------- */
+
+.status-hero {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  -webkit-app-region: drag;
+}
+
+.status-hero__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--color-unknown);
+}
+
+.status-hero[data-status='healthy'] .status-hero__dot {
+  background: var(--color-ok);
+  box-shadow: 0 0 6px var(--color-ok);
+}
+
+.status-hero[data-status='warn'] .status-hero__dot {
+  background: var(--color-warn);
+  box-shadow: 0 0 6px var(--color-warn);
+}
+
+.status-hero[data-status='bad'] .status-hero__dot,
+.status-hero[data-status='critical'] .status-hero__dot {
+  background: var(--color-bad);
+  box-shadow: 0 0 6px var(--color-bad);
+}
+
+.status-hero__label {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.status-hero__latency {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.status-hero__fails {
+  font-size: 10px;
+  color: var(--color-bad);
+  font-variant-numeric: tabular-nums;
+}

@@ -27,6 +27,10 @@ import type {
   AppSettings,
   CapabilityResult,
   CollectorHealthRow,
+  ProviderAuthErrorCode,
+  ProviderAuthMetadata,
+  ProviderId,
+  QuotaCapability,
   UsageProviderSummary,
   UsageRange,
 } from '../types';
@@ -1186,6 +1190,292 @@ export function createOpenClashConfigChangesRepository(
 }
 
 // ---------------------------------------------------------------------------
+// Provider auth (cpa-quota-import)
+// ---------------------------------------------------------------------------
+//
+// Stores per-account, non-secret metadata for CPA / CLIProxyAPI auth
+// files imported through `desktop:importProviderAuthFile`. The
+// matching encrypted Secret_Payload lives in the `secrets` table
+// under key `cpaAuth.providerAuth.<id>`; this repository never
+// touches it.
+//
+// References:
+//   - cpa-quota-import/design.md §`provider_auth` (new table)
+//   - cpa-quota-import/design.md §`ProviderAuthRepository`
+//   - cpa-quota-import/requirements.md Requirement 3.1, 3.2
+//   - cpa-quota-import/requirements.md Requirement 9.1, 9.2
+//
+// Invariants enforced here:
+//   - `list()` orders by `imported_at ASC` so the renderer's account
+//     list is stable across reloads (Requirement 9.1).
+//   - `secret_key` is UNIQUE at the SQL layer (see migration #3); the
+//     repository surfaces that constraint to callers as the native
+//     better-sqlite3 `SqliteError` so the service layer can map it to
+//     a redacted error code.
+//   - Neither `insert` nor `remove` opens its own transaction. The
+//     `Provider_Auth_Service` wraps a `secrets.set` + `repo.insert`
+//     pair (or `repo.remove` + `secrets.remove`) inside a single
+//     `db.transaction(...)` to guarantee no orphan rows survive a
+//     crash mid-flight (Requirement 3.4, 3.5).
+//   - Every column maps 1:1 to a `ProviderAuthRow` field; nothing
+//     decrypts the secret payload on this hot path. The renderer-
+//     facing redaction (`ProviderAuthMetadata`) is produced by
+//     `Provider_Auth_Service.redactRow()`, not here.
+
+/**
+ * Internal row shape returned by {@link ProviderAuthRepository}. Adds
+ * the `secretKey` column on top of the renderer-visible
+ * `ProviderAuthMetadata`. `secretKey` MUST NOT cross the IPC boundary
+ * — it identifies the row in the `secrets` table only.
+ */
+export interface ProviderAuthRow extends ProviderAuthMetadata {
+  /**
+   * Pointer into the `secrets` table for this account's encrypted
+   * Secret_Payload. Always `cpaAuth.providerAuth.<id>` in v1; UNIQUE
+   * at the SQL layer so a row maps to exactly one secret blob.
+   */
+  secretKey: string;
+}
+
+/**
+ * Subset of fields {@link ProviderAuthRepository.update} accepts.
+ * Pinned by `cpa-quota-import/design.md §ProviderAuthRepository` —
+ * `id`, `provider`, `source`, `secretKey`, and `importedAt` are
+ * immutable for the lifetime of the row (re-imports go through the
+ * delete + insert path, not through `update`).
+ */
+export type ProviderAuthUpdatePatch = Partial<
+  Pick<
+    ProviderAuthRow,
+    | 'label'
+    | 'accountId'
+    | 'projectId'
+    | 'quotaCapability'
+    | 'updatedAt'
+    | 'lastValidatedAt'
+    | 'lastQuotaAt'
+    | 'lastErrorCode'
+    | 'lastErrorMessage'
+  >
+>;
+
+export interface ProviderAuthRepository {
+  /** All rows, ordered by `imported_at ASC`. Stable for the UI list. */
+  list(): ProviderAuthRow[];
+  /** Rows for a single provider, ordered by `imported_at ASC`. */
+  listByProvider(provider: ProviderId): ProviderAuthRow[];
+  /** Single row by id, or `null` when missing. */
+  get(id: string): ProviderAuthRow | null;
+  /**
+   * Insert a brand-new row. Throws on `secret_key` UNIQUE collision
+   * or duplicate `id`. Does NOT open its own transaction — call
+   * inside `db.transaction(...)` so the matching `secrets.set`
+   * either both commits or both rolls back.
+   */
+  insert(row: ProviderAuthRow): void;
+  /**
+   * Patch a subset of mutable columns on an existing row. Unspecified
+   * keys are left untouched. No-op when the id does not exist
+   * (mirrors the idempotent `remove` contract; the service layer
+   * checks existence via `get` before calling `update`).
+   */
+  update(id: string, patch: ProviderAuthUpdatePatch): void;
+  /**
+   * Delete a row by id. Idempotent — deleting a missing id is a
+   * no-op. Does NOT open its own transaction; the service layer
+   * pairs this with `secrets.remove` inside a single
+   * `db.transaction(...)`.
+   */
+  remove(id: string): void;
+}
+
+interface ProviderAuthRawRow {
+  id: string;
+  provider: string;
+  label: string;
+  source: string;
+  account_id: string | null;
+  project_id: string | null;
+  quota_capability: string;
+  imported_at: number;
+  updated_at: number;
+  last_validated_at: number | null;
+  last_quota_at: number | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  secret_key: string;
+}
+
+const mapProviderAuthRow = (row: ProviderAuthRawRow): ProviderAuthRow => ({
+  id: row.id,
+  // The closed `ProviderId` / `QuotaCapability` / `ProviderAuthErrorCode`
+  // unions are validated upstream by the zod schemas before any row
+  // ever reaches `insert`; the SQL layer stores them as TEXT and we
+  // trust that contract on the way out. Casting here keeps the row
+  // mapper allocation-free (no per-column validation on the hot
+  // `getQuotaStatus` path).
+  provider: row.provider as ProviderId,
+  label: row.label,
+  source: row.source as ProviderAuthMetadata['source'],
+  accountId: row.account_id,
+  projectId: row.project_id,
+  quotaCapability: row.quota_capability as QuotaCapability,
+  importedAt: row.imported_at,
+  updatedAt: row.updated_at,
+  lastValidatedAt: row.last_validated_at,
+  lastQuotaAt: row.last_quota_at,
+  lastErrorCode:
+    row.last_error_code === null
+      ? null
+      : (row.last_error_code as ProviderAuthErrorCode),
+  lastErrorMessage: row.last_error_message,
+  secretKey: row.secret_key,
+});
+
+export function createProviderAuthRepository(
+  db: MonitorDatabase,
+): ProviderAuthRepository {
+  // Cached prepared statements — same "prepare-once, exec-many"
+  // pattern the surrounding repositories use.
+  const listStmt = db.prepare<[], ProviderAuthRawRow>(
+    `SELECT id, provider, label, source, account_id, project_id,
+            quota_capability, imported_at, updated_at,
+            last_validated_at, last_quota_at,
+            last_error_code, last_error_message, secret_key
+       FROM provider_auth
+      ORDER BY imported_at ASC, id ASC`,
+  );
+  const listByProviderStmt = db.prepare<[ProviderId], ProviderAuthRawRow>(
+    `SELECT id, provider, label, source, account_id, project_id,
+            quota_capability, imported_at, updated_at,
+            last_validated_at, last_quota_at,
+            last_error_code, last_error_message, secret_key
+       FROM provider_auth
+      WHERE provider = ?
+      ORDER BY imported_at ASC, id ASC`,
+  );
+  const getStmt = db.prepare<[string], ProviderAuthRawRow>(
+    `SELECT id, provider, label, source, account_id, project_id,
+            quota_capability, imported_at, updated_at,
+            last_validated_at, last_quota_at,
+            last_error_code, last_error_message, secret_key
+       FROM provider_auth
+      WHERE id = ?`,
+  );
+  const insertStmt = db.prepare<
+    [
+      string,
+      ProviderId,
+      string,
+      ProviderAuthMetadata['source'],
+      string | null,
+      string | null,
+      QuotaCapability,
+      number,
+      number,
+      number | null,
+      number | null,
+      ProviderAuthErrorCode | null,
+      string | null,
+      string,
+    ]
+  >(
+    `INSERT INTO provider_auth
+       (id, provider, label, source, account_id, project_id,
+        quota_capability, imported_at, updated_at,
+        last_validated_at, last_quota_at,
+        last_error_code, last_error_message, secret_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const removeStmt = db.prepare<[string]>(
+    'DELETE FROM provider_auth WHERE id = ?',
+  );
+
+  // `update` accepts a sparse patch, so each mutable column gets its
+  // own statement that uses `COALESCE(?, existing)` semantics: the
+  // service layer either passes the new value or `undefined`. We
+  // build the SET clause dynamically per call from the keys present
+  // in the patch — this stays parameterised (no SQL injection) and
+  // keeps unspecified columns untouched. The set of allowed columns
+  // is enumerated explicitly to keep the surface tight.
+  const COLUMN_BY_KEY: Record<keyof ProviderAuthUpdatePatch, string> = {
+    label: 'label',
+    accountId: 'account_id',
+    projectId: 'project_id',
+    quotaCapability: 'quota_capability',
+    updatedAt: 'updated_at',
+    lastValidatedAt: 'last_validated_at',
+    lastQuotaAt: 'last_quota_at',
+    lastErrorCode: 'last_error_code',
+    lastErrorMessage: 'last_error_message',
+  };
+
+  return {
+    list() {
+      return listStmt.all().map(mapProviderAuthRow);
+    },
+    listByProvider(provider) {
+      return listByProviderStmt.all(provider).map(mapProviderAuthRow);
+    },
+    get(id) {
+      const row = getStmt.get(id);
+      return row ? mapProviderAuthRow(row) : null;
+    },
+    insert(row) {
+      insertStmt.run(
+        row.id,
+        row.provider,
+        row.label,
+        row.source,
+        row.accountId,
+        row.projectId,
+        row.quotaCapability,
+        row.importedAt,
+        row.updatedAt,
+        row.lastValidatedAt,
+        row.lastQuotaAt,
+        row.lastErrorCode,
+        row.lastErrorMessage,
+        row.secretKey,
+      );
+    },
+    update(id, patch) {
+      // Filter to keys that are explicitly present (including
+      // `null`); `undefined` values are skipped so callers can pass a
+      // single `Partial` without spelling out which columns to leave
+      // alone. An empty patch is a silent no-op — the SQL layer
+      // would refuse `UPDATE ... SET WHERE` anyway.
+      const entries = (
+        Object.keys(patch) as Array<keyof ProviderAuthUpdatePatch>
+      ).filter((key) => patch[key] !== undefined);
+      if (entries.length === 0) {
+        return;
+      }
+      const assignments = entries
+        .map((key) => `${COLUMN_BY_KEY[key]} = ?`)
+        .join(', ');
+      const values = entries.map((key) => patch[key] as
+        | string
+        | number
+        | null);
+      // Prepared statements are cached internally by better-sqlite3,
+      // so the per-call `prepare` cost is negligible; the only thing
+      // that varies is which columns are present in `assignments`.
+      const stmt = db.prepare<Array<string | number | null>>(
+        `UPDATE provider_auth SET ${assignments} WHERE id = ?`,
+      );
+      stmt.run(...values, id);
+    },
+    remove(id) {
+      // `DELETE` is idempotent at the SQL layer — affecting zero rows
+      // is not an error, which matches the Requirement 9.2 contract
+      // ("delete is idempotent").
+      removeStmt.run(id);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Composite — convenience bundle for app.ts and IPC handlers
 // ---------------------------------------------------------------------------
 
@@ -1198,6 +1488,7 @@ export interface Repositories {
   usageEvents: UsageEventsRepository;
   collectorHealth: CollectorHealthRepository;
   openClashConfigChanges: OpenClashConfigChangesRepository;
+  providerAuth: ProviderAuthRepository;
 }
 
 /**
@@ -1215,6 +1506,7 @@ export function createRepositories(db: MonitorDatabase): Repositories {
     usageEvents: createUsageEventsRepository(db),
     collectorHealth: createCollectorHealthRepository(db),
     openClashConfigChanges: createOpenClashConfigChangesRepository(db),
+    providerAuth: createProviderAuthRepository(db),
   };
 }
 

@@ -122,8 +122,19 @@ function QuotaRowItem({ window: w }: { window: QuotaWindow }): JSX.Element {
   if (isCritical) barColorClass = 'quota-strip__fill--critical';
   else if (isWarn) barColorClass = 'quota-strip__fill--warn';
 
+  // Trailing decorations are conditional — when the IPC payload
+  // omits `resetAt` or the row is not critical, the corresponding
+  // span is NOT rendered. Reserving a fixed track for an empty
+  // span left ~32 px of dead air to the right of the bar, which
+  // pushed the percent column inward and made the row look
+  // unbalanced against the sparkline above it.
+  const resetText = formatResetCompact(w.resetAt);
+
   return (
-    <div className="quota-strip__row" data-urgency={isCritical ? 'critical' : isWarn ? 'warn' : 'ok'}>
+    <div
+      className="quota-strip__row"
+      data-urgency={isCritical ? 'critical' : isWarn ? 'warn' : 'ok'}
+    >
       <span className="quota-strip__window-label">{windowLabel(w.name)}</span>
       <div className="quota-strip__track">
         <div
@@ -134,7 +145,9 @@ function QuotaRowItem({ window: w }: { window: QuotaWindow }): JSX.Element {
       <span className="quota-strip__percent">
         {w.percentLeft !== null ? `${Math.round(w.percentLeft)}%` : '?'}
       </span>
-      <span className="quota-strip__reset">{formatResetCompact(w.resetAt)}</span>
+      {resetText !== '' && (
+        <span className="quota-strip__reset">{resetText}</span>
+      )}
       {isCritical && <span className="quota-strip__warn-icon">⚠</span>}
     </div>
   );

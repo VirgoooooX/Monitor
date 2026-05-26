@@ -1,0 +1,24 @@
+/*
+ * Renderer style entrypoint.
+ *
+ * Keep imports ordered from foundation -> compact -> standalone components
+ * -> expanded shell -> expanded integration overrides. Later imports may
+ * intentionally refine earlier component defaults inside the expanded window.
+ */
+
+@import './foundation.css';
+
+@import './compact/base.css';
+@import './compact/themes.css';
+
+@import './components/status-hero.css';
+@import './components/quota-strip.css';
+@import './components/node-table.css';
+@import './components/usage-panel.css';
+@import './components/settings-view.css';
+@import './components/confirm-dialog.css';
+@import './components/quick-actions-panel.css';
+@import './components/provider-auth-list.css';
+
+@import './expanded/shell.css';
+@import './expanded/integrations.css';

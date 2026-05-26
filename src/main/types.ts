@@ -232,16 +232,99 @@ export interface QuotaWindow {
 }
 
 /**
+ * Closed enumeration of where a `QuotaSnapshot` originated. Extended
+ * by the cpa-quota-import feature (design.md §`QuotaSnapshot`
+ * extension): the legacy `local_log` / `remote_api` values are kept
+ * for the Codex JSONL fallback path and the v1.1 remote adapters,
+ * while `imported_auth` / `health_check` are produced by the new
+ * per-account adapters that consume a `Provider_Auth_Account`.
+ */
+export type QuotaSource =
+  | 'local_log'
+  | 'remote_api'
+  | 'imported_auth'
+  | 'health_check';
+
+/**
+ * Closed enumeration of what kind of measurement a snapshot carries.
+ * `'quota'` and `'credits'` are reserved for `quota_capability =
+ * 'official'` providers; `'health'` covers reachability-only checks;
+ * `'usage'` is for providers whose only datum is local usage stats
+ * (e.g. balances written by `usage.service.ts`). Defaults to
+ * `'quota'` for the legacy Codex local-log path so existing
+ * snapshots continue to validate.
+ */
+export type QuotaKind = 'quota' | 'credits' | 'health' | 'usage';
+
+/**
+ * Per-snapshot status discriminator. Distinct from the IPC envelope
+ * `QuotaStatus` (which carries `snapshots: QuotaSnapshot[]`); the
+ * `2` suffix avoids the name collision while leaving the public
+ * envelope type stable.
+ *
+ *   - `ok`          — adapter returned a fresh result.
+ *   - `stale`       — previous snapshot retained after a failed
+ *                     refresh (Requirement 6.4).
+ *   - `unavailable` — secret decryption failed or `safeStorage`
+ *                     reported `isEncryptionAvailable === false`.
+ *   - `unsupported` — Foundation Phase placeholder; the v1 adapter
+ *                     for this provider returns no real data.
+ *
+ * Defaults to `'ok'` for legacy snapshots without an adapter result.
+ */
+export type QuotaStatus2 = 'ok' | 'stale' | 'unavailable' | 'unsupported';
+
+/**
  * Full quota snapshot for a single provider at a point in time.
+ *
+ * Extended by the cpa-quota-import feature with per-account fields
+ * (design.md §`QuotaSnapshot` extension). Existing fields keep their
+ * shape; new fields are populated by the per-account adapters
+ * introduced in v1, and default to `null` / `'quota'` / `'ok'` for
+ * the legacy Codex local-log path so the snapshot type stays
+ * structural.
  */
 export interface QuotaSnapshot {
+  // --- existing fields (kept verbatim) -------------------------------------
   provider: string;
   /** When this snapshot was captured (epoch ms). */
   capturedAt: number;
-  /** Source of the snapshot: 'local_log' (parsed from session JSONL) or 'remote_api'. */
-  source: 'local_log' | 'remote_api';
+  /**
+   * Source of the snapshot. The legacy `'local_log'` / `'remote_api'`
+   * values remain in use for the Codex JSONL fallback and v1.1 remote
+   * adapters; `'imported_auth'` and `'health_check'` are produced by
+   * the per-account adapters introduced in cpa-quota-import.
+   */
+  source: QuotaSource;
   /** One or more quota windows. */
   windows: QuotaWindow[];
+
+  // --- cpa-quota-import additions ------------------------------------------
+  /**
+   * `provider_auth.id` of the account this snapshot was produced for.
+   * `null` only for the legacy Codex local-log fallback path
+   * (Requirement 11.6) — every snapshot produced by a per-account
+   * adapter carries a non-null id.
+   */
+  providerAuthId: string | null;
+  /** Mirror of `provider_auth.label`; `null` for the legacy path. */
+  accountLabel: string | null;
+  /** ChatGPT / Codex account id when known; `null` otherwise. */
+  accountId: string | null;
+  /** Google project id (Gemini CLI / Antigravity) when known. */
+  projectId: string | null;
+  /** Defaults to `'quota'` for legacy rows. */
+  kind: QuotaKind;
+  /** Defaults to `'ok'` for legacy rows. */
+  status: QuotaStatus2;
+  /** Pre-redacted plan label / tier; `null` when not surfaced by the adapter. */
+  rawPlanLabel: string | null;
+  /** Model grouping (e.g. Claude Sonnet / Opus, Gemini Flash / Pro). */
+  modelGroup: string | null;
+  /** Closed-set error code from the latest adapter result, or `null`. */
+  lastErrorCode: ProviderAuthErrorCode | null;
+  /** ≤80 chars, pre-redacted; `null` iff there is no error. */
+  lastErrorMessage: string | null;
 }
 
 /**
@@ -250,6 +333,203 @@ export interface QuotaSnapshot {
 export interface QuotaStatus {
   /** Per-provider quota snapshots (latest known). */
   snapshots: QuotaSnapshot[];
+}
+
+// ---------------------------------------------------------------------------
+// CPA Quota Import / Provider Auth (Foundation Phase)
+// ---------------------------------------------------------------------------
+//
+// Source of truth for the closed `ProviderId` enum and its default
+// `QuotaCapability` mapping. Subsequent tasks in this feature
+// (cpa-quota-import) extend this section with `ProviderAuthMetadata`,
+// `ProviderAuthSecretPayload`, `ProviderAuthErrorCode`, and the
+// `QuotaSnapshot` per-account fields.
+//
+// References: cpa-quota-import/requirements.md Requirement 4.1, 4.3,
+// 5.1, 5.2; cpa-quota-import/design.md §Components and Interfaces >
+// `ProviderId` and `Quota_Capability`.
+
+/**
+ * Closed enumeration of provider identifiers supported by the
+ * Provider_Auth import flow and the multi-provider quota aggregator.
+ *
+ * v1 takes the 8 values pinned in `requirements.md` Requirement 4.1.
+ * Adding a new provider requires a follow-up spec + migration; the
+ * union is deliberately closed so `zod` schemas, the import dialog
+ * picker, and the adapter registry can all rely on exhaustive
+ * matching.
+ */
+export type ProviderId =
+  | 'claude-code'
+  | 'codex'
+  | 'gemini-cli'
+  | 'antigravity'
+  | 'gemini-api'
+  | 'deepseek'
+  | 'xiaomi'
+  | 'openai-compatible';
+
+/**
+ * Closed enumeration of how much quota visibility a given provider
+ * exposes:
+ *
+ *   - `official`     — first-party quota / credits endpoint exists; the
+ *                      aggregator may produce `kind ∈ { 'quota', 'credits' }`
+ *                      snapshots.
+ *   - `health_only`  — only a reachability / auth check is available;
+ *                      the aggregator emits `kind: 'health'` snapshots.
+ *   - `usage_only`   — no remote quota; UI surfaces local usage stats
+ *                      (e.g. token / balance counters from `usage_events`).
+ *   - `unsupported`  — placeholder for provider rows that should not be
+ *                      polled (future use).
+ */
+export type QuotaCapability =
+  | 'official'
+  | 'health_only'
+  | 'usage_only'
+  | 'unsupported';
+
+/**
+ * Default `QuotaCapability` for each `ProviderId`. Consulted **once**
+ * at import time to seed `provider_auth.quota_capability`; existing
+ * rows are never auto-rewritten when this map evolves.
+ *
+ * DeepSeek resolves to `health_only` per Q1 in
+ * `cpa-quota-import/design.md` — local balance accounting stays in
+ * `usage.service.ts` via the existing `deepseek.collector.ts` path,
+ * so the quota aggregator only needs to confirm the `/user/balance`
+ * endpoint is reachable.
+ */
+export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = {
+  'claude-code': 'official',
+  codex: 'official',
+  'gemini-cli': 'official',
+  antigravity: 'official',
+  'gemini-api': 'health_only',
+  deepseek: 'health_only',
+  xiaomi: 'health_only',
+  'openai-compatible': 'health_only',
+};
+
+/**
+ * Closed enumeration of error codes surfaced by the Provider_Auth
+ * import / validation / refresh pipelines and the per-account quota
+ * adapters. Pinned by `cpa-quota-import/requirements.md` Requirement
+ * 10.1; the order below matches that listing.
+ *
+ * Each code carries a fixed UI semantic:
+ *
+ *   - `auth_missing`         — secret allowlist hit but no payload found.
+ *   - `auth_expired`         — token expired / DPAPI decrypt failure;
+ *                              user must re-import from CPA.
+ *   - `project_missing`      — Gemini CLI / Antigravity payload lacks
+ *                              the required `project_id`.
+ *   - `upstream_unauthorized`— provider returned 401/403; v1.1 only.
+ *   - `rate_limited`         — provider returned 429.
+ *   - `upstream_changed`     — provider response shape diverged from
+ *                              the contract; v1.1 only.
+ *   - `network_error`        — DNS / TCP / TLS failure.
+ *   - `unsupported`          — Foundation Phase placeholder adapter
+ *                              return value; replaced by real codes
+ *                              in v1.1.
+ *   - `parse_error`          — CPA auth file is malformed or oversized.
+ *   - `unsupported_file`     — picked file is not `.json` / `.txt`.
+ *   - `cancelled`            — user dismissed the OS file dialog.
+ *   - `validation`           — IPC schema rejected the request payload.
+ */
+export type ProviderAuthErrorCode =
+  | 'auth_missing'
+  | 'auth_expired'
+  | 'project_missing'
+  | 'upstream_unauthorized'
+  | 'rate_limited'
+  | 'upstream_changed'
+  | 'network_error'
+  | 'unsupported'
+  | 'parse_error'
+  | 'unsupported_file'
+  | 'cancelled'
+  | 'validation';
+
+/**
+ * Renderer-visible projection of one `provider_auth` row.
+ *
+ * This is the **only** shape the IPC layer is allowed to hand back to
+ * the renderer for an imported account: it carries no access token,
+ * no refresh token, no API key, no expiry, no `baseUrl`, and no
+ * filesystem path. The redaction is structural — there is literally
+ * nowhere on this type for a secret to live — which makes the
+ * Provider_Auth IPC channels renderer-blind by construction
+ * (`requirements.md` Requirement 1.4 + design.md §Layered Trust
+ * Model).
+ *
+ * `lastErrorMessage` is bounded at 80 characters by the IPC schema
+ * (`schemas.ts`); messages are pre-redacted by `provider_auth.service`
+ * before the row is returned.
+ */
+export interface ProviderAuthMetadata {
+  /** Local UUIDv4. Stable across renames; never reused after delete. */
+  id: string;
+  provider: ProviderId;
+  /**
+   * User-readable label. Falls back to a derived value
+   * (`accountId` → `email` → `<provider>:imported-<short-uuid>`)
+   * when the source CPA file does not carry an explicit `label`.
+   */
+  label: string;
+  /**
+   * Where the row originated. v1 only supports the CPA auth-file
+   * import flow; future entry points (e.g. `'manual-api-key'`)
+   * extend this union.
+   */
+  source: 'cpa-auth-file';
+  /** ChatGPT / Codex account id when the parser could extract one. */
+  accountId: string | null;
+  /** Google project id (Gemini CLI / Antigravity) when known. */
+  projectId: string | null;
+  quotaCapability: QuotaCapability;
+  /** Epoch ms; row creation. */
+  importedAt: number;
+  /** Epoch ms; latest mutation (validate / refresh / metadata edit). */
+  updatedAt: number;
+  /** Epoch ms of the last lightweight validate, or `null` if never run. */
+  lastValidatedAt: number | null;
+  /** Epoch ms of the last successful adapter refresh, or `null`. */
+  lastQuotaAt: number | null;
+  lastErrorCode: ProviderAuthErrorCode | null;
+  /** ≤80 chars, pre-redacted. `null` iff there is no error. */
+  lastErrorMessage: string | null;
+}
+
+/**
+ * Main-only structural type carrying the encrypted-at-rest secret
+ * material for one Provider_Auth row. NEVER re-exported from the
+ * renderer mirror (`src/renderer/lib/types.ts`) — referencing it from
+ * the renderer bundle is a compile-time error, which keeps token /
+ * API key fields off the IPC surface by construction.
+ *
+ * The full payload is JSON-serialized and stored as a single
+ * ciphertext blob in the `secrets` table under the key
+ * `cpaAuth.providerAuth.<id>` (design.md §Storage Layout). Decryption
+ * is amortised — one `safeStorage.decryptString` per refresh.
+ *
+ * Every field is optional so a single shape covers OAuth providers
+ * (`accessToken` + `refreshToken` + `expiresAt`) and plain API-key
+ * providers (`apiKey`) without per-provider sub-types.
+ */
+export interface ProviderAuthSecretPayload {
+  accessToken?: string;
+  refreshToken?: string;
+  apiKey?: string;
+  accountId?: string;
+  projectId?: string;
+  /** Epoch ms; absent for plain API-key payloads. */
+  expiresAt?: number;
+  baseUrl?: string;
+  /** Verbatim `metadata.*` block from the CPA file (minus secret keys). */
+  rawMetadata?: Record<string, unknown>;
+  /** Verbatim `attributes.*` block from the CPA file (minus secret keys). */
+  rawAttributes?: Record<string, unknown>;
 }
 
 export interface UsageSummary {
@@ -325,6 +605,55 @@ export interface ManagementInterfaceSettings {
   configFileWhitelist: ManagementConfigFileEntry[];
 }
 
+// ---------------------------------------------------------------------------
+// Appearance / theming
+// ---------------------------------------------------------------------------
+
+/**
+ * Color scheme applied to the expanded window. The compact widget
+ * does NOT honour `colorMode` because it is fully transparent and
+ * each `compactTheme` carries its own surface treatment; running it
+ * through a `light` recolouring would defeat the high-contrast
+ * intent of the floating overlay.
+ */
+export type ColorMode = 'dark' | 'light';
+
+/**
+ * One of five hand-tuned visual presets for the compact (floating)
+ * widget. Each preset only changes decoration (background, edge
+ * lighting, motion); the underlying layout — status hero,
+ * sparkline, quota strip, usage summary — stays identical so users
+ * can swap presets without re-learning where information lives.
+ *
+ *   - obsidian-glass : default; black-glass surface with a cool rim.
+ *   - aurora-ring    : slow conic-gradient aurora hugging the edge.
+ *   - holo-grid      : HUD-style grid + scanning line.
+ *   - liquid-metal   : graphite + slow specular sweep, cool highlights.
+ *   - signal-pulse   : status-driven concentric pulse around the dot.
+ */
+export type CompactTheme =
+  | 'obsidian-glass'
+  | 'aurora-ring'
+  | 'holo-grid'
+  | 'liquid-metal'
+  | 'signal-pulse';
+
+/**
+ * Persisted appearance preferences. Both fields are required; a
+ * normalize step in `app.ts` fills in the defaults for users whose
+ * settings predate this feature.
+ */
+export interface AppearanceSettings {
+  colorMode: ColorMode;
+  compactTheme: CompactTheme;
+  /**
+   * Global UI typography scale for the expanded window. `1` is the
+   * designed baseline; users can tune this in Settings when a monitor
+   * or Windows scaling makes small text feel cramped.
+   */
+  fontScale: number;
+}
+
 /**
  * Persisted user settings. Secrets are NOT in this object; they live in
  * the `secrets` table and are accessed via the secrets module.
@@ -362,6 +691,12 @@ export interface AppSettings {
    * always confirmed by the renderer dialog, never gated by a setting).
    */
   managementInterface: ManagementInterfaceSettings;
+  /**
+   * Visual appearance: expanded-window color scheme + compact-window
+   * theme preset. Required at runtime; the boot sequence normalizes
+   * older settings rows that predate this field.
+   */
+  appearance: AppearanceSettings;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +741,26 @@ export interface RecentConfigSwitchEntry {
 }
 
 /**
+ * Per-`provider_auth`-row projection embedded in the diagnostics
+ * export (Requirement 13.4). Exposes only the non-sensitive
+ * troubleshooting fields — by Q5 resolution, the redacted shape
+ * deliberately excludes `label`, `accountId`, and `projectId`
+ * (semi-sensitive: an account label can carry a personal email or
+ * the literal Google project id, both of which are unnecessary for
+ * support-bundle triage). The producing projection lives in
+ * `services/provider_auth.service.ts#diagnosticsRow` and is the
+ * single source of truth for the column whitelist.
+ */
+export interface ProviderAuthDiagnosticsEntry {
+  id: string;
+  provider: ProviderId;
+  quotaCapability: QuotaCapability;
+  lastErrorCode: ProviderAuthErrorCode | null;
+  lastQuotaAt: number | null;
+  lastValidatedAt: number | null;
+}
+
+/**
  * Redacted summary of the live `managementInterface` settings included
  * in `getDiagnostics` for support-bundle triage. Sensitive material is
  * never surfaced:
@@ -443,6 +798,14 @@ export interface DiagnosticsReport {
    * count so individual entries never reach the diagnostics output.
    */
   managementInterface: ManagementInterfaceDiagnosticsSummary;
+  /**
+   * Redacted projection of every `provider_auth` row
+   * (cpa-quota-import Requirement 13.4). Only the troubleshooting
+   * fields are surfaced — `label`, `accountId`, and `projectId` are
+   * deliberately omitted per the Q5 resolution. Empty when no
+   * accounts have been imported.
+   */
+  providerAuthAccounts: ProviderAuthDiagnosticsEntry[];
   schemaVersion: number;
 }
 
@@ -461,12 +824,17 @@ export interface UsageSummaryInput {
 
 export type Unsubscribe = () => void;
 
-export type DesktopPushChannel = 'dashboard.updated' | 'openclash.updated' | 'navigate-tab';
+export type DesktopPushChannel =
+  | 'dashboard.updated'
+  | 'openclash.updated'
+  | 'navigate-tab'
+  | 'settings.updated';
 
 export interface DesktopPushPayloads {
   'dashboard.updated': DashboardState;
   'openclash.updated': OpenClashDetails;
   'navigate-tab': string;
+  'settings.updated': AppSettings;
 }
 
 export interface UpdateSecretInput {
@@ -635,6 +1003,28 @@ export interface DesktopApi {
     input: SwitchOpenClashConfigInput,
   ): Promise<ConfigSwitchResult>;
   clearManagementCredentials(): Promise<void>;
+  // CPA quota import (cpa-quota-import task 10.4).
+  // Channel names are whitelisted in `src/main/ipc/channels.ts` and
+  // every payload is validated by the zod schemas in
+  // `src/main/schemas.ts` (`desktopApiSchemas`) before reaching the
+  // underlying provider-auth / quota services. Returns are
+  // structurally redacted — no method on this surface is allowed to
+  // hand back a token, refresh token, API key, or the raw CPA file
+  // contents (Requirement 1.4).
+  listProviderAuths(): Promise<ProviderAuthMetadata[]>;
+  importProviderAuthFile(input: {
+    provider: ProviderId;
+  }): Promise<ProviderAuthMetadata>;
+  deleteProviderAuth(input: { id: string }): Promise<void>;
+  refreshProviderQuota(input?: {
+    id?: string;
+    provider?: ProviderId;
+  }): Promise<QuotaStatus>;
+  validateProviderAuth(input: { id: string }): Promise<{
+    ok: boolean;
+    code: ProviderAuthErrorCode | 'ok';
+    message: string;
+  }>;
   on<C extends DesktopPushChannel>(
     channel: C,
     cb: (payload: DesktopPushPayloads[C]) => void,

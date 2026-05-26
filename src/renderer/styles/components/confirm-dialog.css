@@ -1,0 +1,157 @@
+/*
+ * Config switch confirmation dialog styles.
+ */
+
+/* Confirm dialog (network-quick-actions config switch) ------------------- */
+/*
+ * Modal confirmation for OpenClash config switches. The dialog is owned
+ * by `ConfirmDialog.tsx` and rendered inline by `ConfigSwitchCard`. It
+ * sits on top of the expanded window content; the compact window never
+ * mounts it.
+ */
+
+.confirm-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 9, 12, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.confirm-dialog {
+  width: min(420px, 100%);
+  max-width: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(28, 30, 36, 0.98),
+    rgba(20, 21, 26, 0.98)
+  );
+  color: var(--ex-text, #f5f5f7);
+  border: 1px solid var(--ex-border-strong, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  padding: 20px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: var(--type-sm, 13px);
+}
+
+.confirm-dialog,
+.confirm-dialog * {
+  box-sizing: border-box;
+}
+
+.confirm-dialog__title {
+  margin: 0;
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-md, 15px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ex-text, #f5f5f7);
+}
+
+.confirm-dialog__paths {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirm-dialog__path-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.confirm-dialog__path-label {
+  flex: 0 0 auto;
+  font-size: var(--type-xs, 12px);
+  color: var(--ex-text-faint, rgba(245, 245, 247, 0.55));
+  letter-spacing: 0.02em;
+}
+
+.confirm-dialog__path-value {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--ex-ui-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-xs, 12px);
+  color: var(--ex-text, #f5f5f7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-dialog__warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #fcd34d;
+  font-size: var(--type-xs, 12px);
+  line-height: 1.5;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.confirm-dialog__btn {
+  border-radius: 7px;
+  padding: 7px 16px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 140ms ease-out, color 140ms ease-out,
+    border-color 140ms ease-out, filter 140ms ease-out;
+}
+
+.confirm-dialog__btn:focus-visible {
+  outline: 2px solid var(--ex-accent, #a5b4fc);
+  outline-offset: 2px;
+}
+
+.confirm-dialog__btn--cancel {
+  background: transparent;
+  border: 1px solid var(--ex-border-strong, rgba(255, 255, 255, 0.16));
+  color: var(--ex-text-mute, rgba(245, 245, 247, 0.72));
+}
+
+.confirm-dialog__btn--cancel:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ex-text, #f5f5f7);
+}
+
+.confirm-dialog__btn--confirm {
+  background: linear-gradient(180deg, #f97316, #ea580c);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.32);
+}
+
+.confirm-dialog__btn--confirm:hover {
+  filter: brightness(1.08);
+}
+
+.confirm-dialog__btn--confirm:active {
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-dialog__btn {
+    transition: none;
+  }
+}

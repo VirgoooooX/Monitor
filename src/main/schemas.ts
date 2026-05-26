@@ -143,18 +143,27 @@ export const collectorToggleSchema = z
   .strict();
 
 /**
- * URL of the OpenClash management interface (LuCI panel). Must be
- * http(s)://, must not embed userinfo, and must not include a query
- * string or fragment (Requirement 13.6 — credentials cannot be smuggled
- * via `?token=...` or `#password=...`).
+ * URL of the OpenClash management interface (LuCI panel). Either:
+ *   - the empty string `''` — the "not configured" sentinel, used by
+ *     the seeded default and surfaced in Settings as the empty
+ *     placeholder, OR
+ *   - a http(s):// URL with no userinfo, query, or fragment
+ *     (Requirement 13.6 — credentials cannot be smuggled via
+ *     `?token=...` or `#password=...`).
+ *
+ * The renderer's `validateManagementUrl` mirrors the same accepted
+ * forms, and `buildDefaultAppSettings` seeds `''`. Keeping the empty
+ * sentinel valid here means the seeded blob round-trips through
+ * `appSettingsSchema` cleanly and Save in Settings does not require
+ * the user to fill in a URL on first run.
  *
  * See network-quick-actions/design.md §Settings Validation (zod).
  */
 export const managementUrlSchema = z
   .string()
   .trim()
-  .min(1)
   .superRefine((value, ctx) => {
+    if (value === '') return;
     let parsed: URL;
     try {
       parsed = new URL(value);
@@ -233,6 +242,244 @@ export const configSwitchVerifyWindowMsSchema = z
   .min(MIN_VERIFY_WINDOW_MS)
   .max(MAX_VERIFY_WINDOW_MS);
 
+// ---------------------------------------------------------------------------
+// CLIProxyAPI compatibility settings
+// ---------------------------------------------------------------------------
+//
+// `cliproxy` carries the live config for the CLIProxyAPI usage queue
+// importer. Validation matches the in-code `CliProxySettings` shape
+// and the rules pinned by cpa-quota-import/requirements.md
+// Requirement 13.2:
+//
+//   - `managementUrl` is either the empty sentinel `''` ("not
+//     configured", used by `buildDefaultAppSettings`) or a valid
+//     http(s):// URL with a non-empty host (`httpUrlSchema`).
+//   - `authDir` is either `''` (use the platform default, typically
+//     `~/.cli-proxy-api`) or a trimmed non-empty path string. The
+//     filesystem layer revalidates the path before reading it.
+//   - `usageQueueBatchSize` is bounded so a runaway value cannot
+//     starve the renderer's IPC queue.
+//
+// Implemented via `z.union([..., z.literal('')])` so the empty
+// sentinel round-trips cleanly while non-empty values get the full
+// refinement (see network-quick-actions/design.md §Settings
+// Validation for the same pattern on `managementInterface.url`).
+export const cliproxySettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    managementUrl: z.union([httpUrlSchema, z.literal('')]),
+    authDir: z.union([trimmedNonEmpty, z.literal('')]),
+    usageQueueBatchSize: z.number().int().min(1).max(1_000),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Provider Auth (cpa-quota-import)
+// ---------------------------------------------------------------------------
+//
+// Schemas for the closed `ProviderId` enum (Requirement 4.1), the
+// closed `ProviderAuthErrorCode` enum (Requirement 10.1), and the
+// renderer-visible `ProviderAuthMetadata` projection (design.md
+// §IPC channels and schemas). All schemas are `.strict()` so an
+// extra unknown key on the wire is rejected at the IPC boundary
+// (Property 12 of the parent design; Property 17 of this feature).
+//
+// Each enum mirrors the TypeScript union exported from `./types.ts`;
+// adding or removing a value requires updating both sides in lockstep.
+
+/**
+ * Closed `ProviderId` enum. v1 takes the 8 values pinned by
+ * `cpa-quota-import/requirements.md` Requirement 4.1; new providers
+ * require a follow-up spec + migration.
+ */
+export const providerIdSchema = z.enum([
+  'claude-code',
+  'codex',
+  'gemini-cli',
+  'antigravity',
+  'gemini-api',
+  'deepseek',
+  'xiaomi',
+  'openai-compatible',
+]);
+
+/**
+ * Closed `ProviderAuthErrorCode` enum (Requirement 10.1). The order
+ * mirrors the TypeScript union for easy diffing; `validation` and
+ * `cancelled` are shared across the import / refresh / validate
+ * pipelines.
+ */
+export const providerAuthErrorCodeSchema = z.enum([
+  'auth_missing',
+  'auth_expired',
+  'project_missing',
+  'upstream_unauthorized',
+  'rate_limited',
+  'upstream_changed',
+  'network_error',
+  'unsupported',
+  'parse_error',
+  'unsupported_file',
+  'cancelled',
+  'validation',
+]);
+
+/** Closed `QuotaCapability` enum (Requirement 5.1). */
+export const quotaCapabilitySchema = z.enum([
+  'official',
+  'health_only',
+  'usage_only',
+  'unsupported',
+]);
+
+/**
+ * Renderer-visible projection of one `provider_auth` row. This is
+ * the only Provider_Auth shape allowed to cross the IPC boundary —
+ * it carries no token / refresh token / API key / file path /
+ * `baseUrl` field, so redaction is structural rather than runtime
+ * (`requirements.md` Requirement 1.4 + design.md §Layered Trust
+ * Model). `lastErrorMessage` is bounded at 80 characters to match
+ * the pre-redaction rule in `provider_auth.service`.
+ *
+ * Reused as the response shape of `desktop:listProviderAuths` and
+ * `desktop:importProviderAuthFile` (design.md §IPC channels and
+ * schemas).
+ */
+export const providerAuthMetadataSchema = z
+  .object({
+    id: trimmedNonEmpty,
+    provider: providerIdSchema,
+    label: trimmedNonEmpty,
+    source: z.literal('cpa-auth-file'),
+    accountId: z.string().nullable(),
+    projectId: z.string().nullable(),
+    quotaCapability: quotaCapabilitySchema,
+    importedAt: z.number().int(),
+    updatedAt: z.number().int(),
+    lastValidatedAt: z.number().int().nullable(),
+    lastQuotaAt: z.number().int().nullable(),
+    lastErrorCode: providerAuthErrorCodeSchema.nullable(),
+    lastErrorMessage: z.string().max(80).nullable(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// QuotaSnapshot (extended for cpa-quota-import)
+// ---------------------------------------------------------------------------
+//
+// Schemas backing the `desktop:getQuotaStatus` envelope. The legacy
+// `local_log` / `remote_api` source values stay valid so the Codex
+// JSONL fallback path round-trips unchanged; the new `imported_auth`
+// / `health_check` values are produced by the per-account adapters
+// introduced in v1 (design.md §`QuotaSnapshot` extension).
+//
+// Permissive on `windows[*]` (omitted fields default to `null`-ish
+// in the existing producer code) but strict on the snapshot envelope:
+// every per-account field is required so a snapshot persisted by
+// the new aggregator never "forgets" its `providerAuthId`.
+
+const quotaWindowSchema = z.object({
+  name: z.string(),
+  percentLeft: z.number().nullable(),
+  resetAt: z.number().nullable(),
+  windowSeconds: z.number().nullable(),
+});
+
+/**
+ * Closed enum of `QuotaSnapshot.source` values. Extended in v1 with
+ * `imported_auth` (per-account adapter consuming a Provider_Auth
+ * row) and `health_check` (reachability-only providers).
+ */
+export const quotaSourceSchema = z.enum([
+  'local_log',
+  'remote_api',
+  'imported_auth',
+  'health_check',
+]);
+
+/** Closed enum of `QuotaSnapshot.kind` values (Requirement 6.1). */
+export const quotaKindSchema = z.enum([
+  'quota',
+  'credits',
+  'health',
+  'usage',
+]);
+
+/**
+ * Closed enum of per-snapshot status. Distinct from the IPC-envelope
+ * `QuotaStatus` (which carries `snapshots: QuotaSnapshot[]`); the
+ * `2` suffix on the TypeScript side avoids the name collision.
+ */
+export const quotaSnapshotStatusSchema = z.enum([
+  'ok',
+  'stale',
+  'unavailable',
+  'unsupported',
+]);
+
+/**
+ * Full `QuotaSnapshot` shape with the per-account fields added by
+ * cpa-quota-import. Mirrors the TypeScript interface in
+ * `./types.ts#QuotaSnapshot`. The renderer is allowed to consume
+ * every field (none are sensitive — token / refresh token / API key
+ * fields live exclusively on the main-only
+ * `ProviderAuthSecretPayload` and are never serialised here).
+ */
+export const quotaSnapshotSchema = z.object({
+  provider: z.string(),
+  capturedAt: z.number(),
+  source: quotaSourceSchema,
+  windows: z.array(quotaWindowSchema),
+  providerAuthId: z.string().nullable(),
+  accountLabel: z.string().nullable(),
+  accountId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  kind: quotaKindSchema,
+  status: quotaSnapshotStatusSchema,
+  rawPlanLabel: z.string().nullable(),
+  modelGroup: z.string().nullable(),
+  lastErrorCode: providerAuthErrorCodeSchema.nullable(),
+  lastErrorMessage: z.string().max(80).nullable(),
+});
+
+// ---------------------------------------------------------------------------
+// Appearance (theme system)
+// ---------------------------------------------------------------------------
+//
+// `colorMode` is applied only to the expanded window; `compactTheme`
+// is one of five hand-tuned floating-widget presets (see
+// `types.ts#CompactTheme`). Both are required at the schema level —
+// the boot-time normalize step in `app.ts` fills in defaults for
+// settings rows that predate this feature so legacy users never
+// trip the strict validator.
+const colorModeSchema = z.enum(['dark', 'light']);
+
+const compactThemeSchema = z.enum([
+  'obsidian-glass',
+  'aurora-ring',
+  'holo-grid',
+  'liquid-metal',
+  'signal-pulse',
+]);
+
+const fontScaleSchema = z.number().min(0.9).max(1.2);
+
+export const appearanceSchema = z
+  .object({
+    colorMode: colorModeSchema,
+    compactTheme: compactThemeSchema,
+    fontScale: fontScaleSchema,
+  })
+  .strict();
+
+const appearancePatchSchema = z
+  .object({
+    colorMode: colorModeSchema.optional(),
+    compactTheme: compactThemeSchema.optional(),
+    fontScale: fontScaleSchema.optional(),
+  })
+  .strict();
+
 export const appSettingsSchema = z
   .object({
     controllerUrl: controllerUrlSchema,
@@ -256,6 +503,8 @@ export const appSettingsSchema = z
     autostart: z.boolean(),
     configSwitchVerifyWindowMs: configSwitchVerifyWindowMsSchema,
     managementInterface: managementInterfaceSchema,
+    cliproxy: cliproxySettingsSchema,
+    appearance: appearanceSchema,
   })
   .strict();
 
@@ -282,6 +531,8 @@ export const appSettingsPatchSchema = z
     autostart: z.boolean().optional(),
     configSwitchVerifyWindowMs: configSwitchVerifyWindowMsSchema.optional(),
     managementInterface: managementInterfaceSchema.optional(),
+    cliproxy: cliproxySettingsSchema.optional(),
+    appearance: appearancePatchSchema.optional(),
   })
   .strict();
 
@@ -577,6 +828,26 @@ const managementInterfaceDiagnosticsSummarySchema = z
   })
   .strict();
 
+/**
+ * Per-`provider_auth`-row diagnostics projection (cpa-quota-import
+ * Requirement 13.4). Mirrors `ProviderAuthDiagnosticsEntry` in
+ * `./types.ts`. By Q5 resolution this whitelist deliberately omits
+ * `label`, `accountId`, and `projectId` — only the closed-set
+ * troubleshooting fields are validated, and `.strict()` rejects any
+ * stray sensitive column that might leak in from a future projection
+ * change.
+ */
+const providerAuthDiagnosticsEntrySchema = z
+  .object({
+    id: trimmedNonEmpty,
+    provider: providerIdSchema,
+    quotaCapability: quotaCapabilitySchema,
+    lastErrorCode: providerAuthErrorCodeSchema.nullable(),
+    lastQuotaAt: z.number().int().nullable(),
+    lastValidatedAt: z.number().int().nullable(),
+  })
+  .strict();
+
 export const diagnosticsReportSchema = z
   .object({
     generatedAt: z.number().int(),
@@ -585,6 +856,7 @@ export const diagnosticsReportSchema = z
     redactedControllerUrl: z.string(),
     recentConfigSwitches: z.array(recentConfigSwitchEntrySchema),
     managementInterface: managementInterfaceDiagnosticsSummarySchema,
+    providerAuthAccounts: z.array(providerAuthDiagnosticsEntrySchema),
     schemaVersion: z.number().int().nonnegative(),
   })
   .strict();
@@ -734,6 +1006,115 @@ export const switchOpenClashConfigInputSchema = z
 export const clearManagementCredentialsInputSchema = emptyInputSchema;
 
 // ---------------------------------------------------------------------------
+// CPA quota import IPC schemas (cpa-quota-import spec, task 10.2)
+// ---------------------------------------------------------------------------
+//
+// These schemas back the five new `desktop:` channels added in task
+// 10.1: `listProviderAuths`, `importProviderAuthFile`,
+// `deleteProviderAuth`, `refreshProviderQuota`, and
+// `validateProviderAuth`. They are wired into the IPC handler
+// registry via `desktopApiSchemas` below so any malformed payload is
+// rejected with `{ ok: false, error: { code: 'validation', ... } }`
+// at the IPC boundary, before the underlying service is ever invoked
+// (carries forward parent design Property 12 / cpa-quota-import
+// Requirement 9.6).
+//
+// Notes on shape:
+//   - `importProviderAuthFileInput` carries only `{ provider }`. The
+//     renderer never supplies a file path or file content — main
+//     opens the OS file dialog itself (design.md §Layered Trust
+//     Model + Requirement 8.1).
+//   - `refreshProviderQuotaInput` lets the caller scope the refresh
+//     by either `id` (single account) or `provider` (every account
+//     for that provider). Both fields are optional; an empty object
+//     means "refresh everything subject to the per-account 5-minute
+//     throttle" (Requirement 11.3).
+//   - The output of `desktop:refreshProviderQuota` reuses the same
+//     `QuotaStatus` envelope the existing `desktop:getQuotaStatus`
+//     channel returns. This keeps the renderer's quota-rendering
+//     code path single-sourced.
+
+/**
+ * Input for `desktop:importProviderAuthFile`. The renderer chooses
+ * the provider type up front (the dialog title and the persisted
+ * `provider_auth.provider` column both reflect this value); main
+ * then opens `dialog.showOpenDialog` and reads the file itself, so
+ * no file path or file content ever crosses the IPC boundary
+ * (design.md §Layered Trust Model + Requirement 8.1).
+ */
+export const importProviderAuthFileInputSchema = z
+  .object({
+    provider: providerIdSchema,
+  })
+  .strict();
+
+/**
+ * Input for `desktop:deleteProviderAuth`. The single-field shape
+ * mirrors the repository's `remove(id)` signature; the handler
+ * tolerates an unknown id (idempotent removal — Requirement 9.5).
+ */
+export const deleteProviderAuthInputSchema = z
+  .object({
+    id: trimmedNonEmpty,
+  })
+  .strict();
+
+/**
+ * Input for `desktop:refreshProviderQuota`. Either field may be
+ * omitted: an empty payload triggers a global refresh, `id` scopes
+ * to a single `provider_auth` row, and `provider` scopes to every
+ * row for the given provider. The fields are not mutually exclusive
+ * — when both are supplied the handler narrows to the row matching
+ * both (the per-account 5-minute throttle still applies regardless).
+ *
+ * `id` is `z.string().optional()` rather than `trimmedNonEmpty` so
+ * `{ id: undefined }` is accepted exactly like `{}`. The handler
+ * treats blank strings as "no id" defensively before forwarding to
+ * the service.
+ */
+export const refreshProviderQuotaInputSchema = z
+  .object({
+    id: z.string().optional(),
+    provider: providerIdSchema.optional(),
+  })
+  .strict();
+
+/**
+ * Input for `desktop:validateProviderAuth`. Lightweight validation
+ * runs entirely on the locally stored Secret Payload — no upstream
+ * call is issued in v1 (design.md §validateLightweight) — so a
+ * valid `id` is the only thing the handler needs.
+ */
+export const validateProviderAuthInputSchema = z
+  .object({
+    id: trimmedNonEmpty,
+  })
+  .strict();
+
+/**
+ * Result envelope for `desktop:validateProviderAuth`. `ok` is a
+ * direct boolean rather than the `IpcResult` discriminator because
+ * a "validation failed" outcome is a normal, non-exceptional answer
+ * — it carries a `ProviderAuthErrorCode` so the renderer can render
+ * the appropriate Chinese copy without parsing the message string.
+ *
+ * `code` widens to `'ok' | ProviderAuthErrorCode` so the success
+ * case has a stable, structured value the renderer can switch on
+ * (design.md §`ProviderAuthValidationResult`).
+ *
+ * `message` is bounded at 80 characters to match the pre-redaction
+ * rule in `provider_auth.service` and the same bound on
+ * `ProviderAuthMetadata.lastErrorMessage`.
+ */
+export const providerAuthValidationResultSchema = z
+  .object({
+    ok: z.boolean(),
+    code: z.union([providerAuthErrorCodeSchema, z.literal('ok')]),
+    message: z.string().max(80),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Push channel schemas
 // ---------------------------------------------------------------------------
 
@@ -741,6 +1122,7 @@ export const desktopPushChannelSchema = z.enum([
   'dashboard.updated',
   'openclash.updated',
   'navigate-tab',
+  'settings.updated',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -796,17 +1178,7 @@ export const desktopApiSchemas = {
   getQuotaStatus: {
     input: z.undefined().or(z.null()).or(z.void()),
     output: z.object({
-      snapshots: z.array(z.object({
-        provider: z.string(),
-        capturedAt: z.number(),
-        source: z.enum(['local_log', 'remote_api']),
-        windows: z.array(z.object({
-          name: z.string(),
-          percentLeft: z.number().nullable(),
-          resetAt: z.number().nullable(),
-          windowSeconds: z.number().nullable(),
-        })),
-      })),
+      snapshots: z.array(quotaSnapshotSchema),
     }),
   },
   // Network Quick Actions panel (network-quick-actions spec, task 10.2).
@@ -824,6 +1196,37 @@ export const desktopApiSchemas = {
   clearManagementCredentials: {
     input: clearManagementCredentialsInputSchema,
     output: z.void(),
+  },
+  // CPA quota import (cpa-quota-import spec, task 10.2). Each
+  // channel rejects malformed payloads at the IPC boundary with
+  // `{ ok: false, error: { code: 'validation', ... } }` before the
+  // underlying service is invoked (Requirement 9.6).
+  //
+  // `refreshProviderQuota` reuses the same `QuotaStatus` envelope
+  // returned by `getQuotaStatus` so the renderer's rendering code
+  // path stays single-sourced (design.md §IPC channels and
+  // schemas).
+  listProviderAuths: {
+    input: emptyInputSchema,
+    output: z.array(providerAuthMetadataSchema),
+  },
+  importProviderAuthFile: {
+    input: importProviderAuthFileInputSchema,
+    output: providerAuthMetadataSchema,
+  },
+  deleteProviderAuth: {
+    input: deleteProviderAuthInputSchema,
+    output: z.void(),
+  },
+  refreshProviderQuota: {
+    input: refreshProviderQuotaInputSchema,
+    output: z.object({
+      snapshots: z.array(quotaSnapshotSchema),
+    }),
+  },
+  validateProviderAuth: {
+    input: validateProviderAuthInputSchema,
+    output: providerAuthValidationResultSchema,
   },
 } as const;
 

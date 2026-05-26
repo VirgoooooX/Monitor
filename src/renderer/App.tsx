@@ -22,7 +22,7 @@
 //   • design.md §Window Strategy, §Compact Window Boot — First Render
 //   • PLAN.md §UI Implementation Guide §紧凑首页
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -37,8 +37,66 @@ import { UsagePanel } from './components/UsagePanel';
 import { SettingsView } from './components/SettingsView';
 import { StatusHero } from './components/StatusHero';
 import { Sparkline } from './components/Sparkline';
-import { formatLatency } from './lib/format';
-import type { DashboardState, NodeView, Unsubscribe } from './lib/types';
+import type {
+  AppearanceSettings,
+  DashboardState,
+  NodeView,
+  Unsubscribe,
+} from './lib/types';
+
+// Fallback applied while the initial `getSettings()` call is in
+// flight, or when the preload bridge is missing entirely (jsdom
+// tests, broken Electron config). Matches the seed value shipped by
+// `buildDefaultAppSettings()` in the main process so a renderer
+// that never reaches the bridge still produces a coherent UI.
+const DEFAULT_APPEARANCE: AppearanceSettings = {
+  colorMode: 'dark',
+  compactTheme: 'obsidian-glass',
+  fontScale: 1,
+};
+
+/**
+ * Subscribe to `settings.updated` and the initial `getSettings()` so
+ * both windows track appearance changes live. Centralised here so
+ * the compact and expanded roots share the same reducer/effects.
+ */
+function useAppearance(): AppearanceSettings {
+  const [appearance, setAppearance] = useState<AppearanceSettings>(
+    DEFAULT_APPEARANCE,
+  );
+
+  useEffect(() => {
+    const desktop = window.desktop;
+    if (!desktop) {
+      return;
+    }
+    let cancelled = false;
+    desktop
+      .getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        if (s.appearance) {
+          setAppearance(s.appearance);
+        }
+      })
+      .catch(() => {
+        // Non-fatal: keep DEFAULT_APPEARANCE so the UI still renders.
+      });
+
+    const unsub = desktop.on('settings.updated', (next) => {
+      if (!cancelled && next.appearance) {
+        setAppearance(next.appearance);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
+  return appearance;
+}
 
 const COMPACT_WIDTH = 360;
 const EXPANDED_WIDTH = 760;
@@ -64,6 +122,7 @@ function detectWindowMode(): WindowMode {
 
 export function App(): JSX.Element | null {
   const [mode, setMode] = useState<WindowMode>(detectWindowMode);
+  const appearance = useAppearance();
 
   // Keep the classification in sync with the (rare) runtime window
   // resize. The compact window is `resizable: false` so this hook is
@@ -92,11 +151,26 @@ export function App(): JSX.Element | null {
     }
   }, [mode]);
 
+  // Mirror the live appearance onto the document element so theme
+  // CSS scoped to `[data-color-mode]` / `[data-compact-theme]` can
+  // resolve without re-rendering every component. We also keep them
+  // on body for any selector that already targets the body.
+  useEffect(() => {
+    const root = document.documentElement;
+    const { body } = document;
+    root.dataset.colorMode = appearance.colorMode;
+    root.dataset.compactTheme = appearance.compactTheme;
+    root.style.setProperty('--ui-font-scale', String(appearance.fontScale));
+    body.dataset.colorMode = appearance.colorMode;
+    body.dataset.compactTheme = appearance.compactTheme;
+    body.style.setProperty('--ui-font-scale', String(appearance.fontScale));
+  }, [appearance.colorMode, appearance.compactTheme, appearance.fontScale]);
+
   if (mode === 'compact') {
-    return <CompactRoot />;
+    return <CompactRoot appearance={appearance} />;
   }
 
-  return <ExpandedRoot />;
+  return <ExpandedRoot appearance={appearance} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +192,11 @@ export function App(): JSX.Element | null {
  *     worse than waiting.
  *   • `state` loaded → render `<WidgetShell state={...} />`.
  */
-function CompactRoot(): JSX.Element | null {
+function CompactRoot({
+  appearance,
+}: {
+  readonly appearance: AppearanceSettings;
+}): JSX.Element | null {
   const [state, setState] = useState<DashboardState | null>(null);
   const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
 
@@ -172,6 +250,8 @@ function CompactRoot(): JSX.Element | null {
         data-testid="app-root"
         data-mode="compact"
         data-state="bridge-missing"
+        data-color-mode={appearance.colorMode}
+        data-compact-theme={appearance.compactTheme}
       >
         preload bridge unavailable
       </div>
@@ -188,6 +268,8 @@ function CompactRoot(): JSX.Element | null {
         data-testid="app-root"
         data-mode="compact"
         data-state="loading"
+        data-color-mode={appearance.colorMode}
+        data-compact-theme={appearance.compactTheme}
       >
         <div style={{ padding: '16px', color: '#ccc', fontSize: '13px' }}>
           加载中…
@@ -196,7 +278,7 @@ function CompactRoot(): JSX.Element | null {
     );
   }
 
-  return <WidgetShell state={state} />;
+  return <WidgetShell state={state} appearance={appearance} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +313,11 @@ const TABS: readonly TabDef[] = [
   { id: 'settings', label: '设置', icon: <SettingsIcon size={15} strokeWidth={1.75} /> },
 ];
 
-function ExpandedRoot(): JSX.Element {
+function ExpandedRoot({
+  appearance,
+}: {
+  readonly appearance: AppearanceSettings;
+}): JSX.Element {
   const [tab, setTab] = useState<ExpandedTab>('network');
   const [dashboard, setDashboard] = useState<DashboardState | null>(null);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -326,21 +412,13 @@ function ExpandedRoot(): JSX.Element {
     };
   }, [reloadNodes]);
 
-  const networkBadges = useMemo(() => {
-    if (!dashboard) return [];
-    const apiOk = dashboard.openclash.apiOk;
-    return [
-      { label: '路由', tone: dashboard.router.ok ? 'ok' : 'bad' as const },
-      { label: 'Clash TCP', tone: dashboard.openclash.tcpOk ? 'ok' : 'bad' as const },
-      {
-        label: 'API',
-        tone: apiOk === true ? 'ok' : apiOk === 'auth_error' ? 'warn' : 'bad' as const,
-      },
-    ];
-  }, [dashboard]);
-
   return (
-    <div className="ex" data-testid="expanded-root">
+    <div
+      className="ex"
+      data-testid="expanded-root"
+      data-color-mode={appearance.colorMode}
+      data-compact-theme={appearance.compactTheme}
+    >
       {/* ── Topbar ────────────────────────────────────────────── */}
       <header className="ex__topbar">
         <div className="ex__brand">
@@ -423,23 +501,6 @@ function ExpandedRoot(): JSX.Element {
                       fill
                     />
                   </div>
-
-                  <ul className="ex__badges">
-                    {networkBadges.map((b) => (
-                      <li key={b.label} className={`ex__badge ex__badge--${b.tone}`}>
-                        <span className="ex__badge-dot" />
-                        <span className="ex__badge-label">{b.label}</span>
-                      </li>
-                    ))}
-                    {dashboard.currentNode.avgLatencyMs !== null && (
-                      <li className="ex__badge ex__badge--neutral ex__badge--metric">
-                        <span className="ex__badge-label">avg</span>
-                        <span className="ex__badge-value">
-                          {formatLatency(dashboard.currentNode.avgLatencyMs)}
-                        </span>
-                      </li>
-                    )}
-                  </ul>
                 </>
               ) : (
                 <div className="ex__placeholder">等待数据中…</div>

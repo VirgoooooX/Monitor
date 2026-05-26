@@ -1,0 +1,338 @@
+/*
+ * Provider_Auth section list — per-account rows in the settings page.
+ *
+ * The section lives inside `SettingsView`'s rail navigation, so this
+ * stylesheet inherits the same `--sv-*` token namespace via the
+ * settings-view container. Tokens are aliased locally to a `--pal-*`
+ * prefix so the component can render outside the settings shell
+ * (tests, future standalone widgets) with sensible defaults.
+ *
+ * Layout per row (CSS grid):
+ *
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ provider-chip   label    identifier                      │ row-head
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ capability   校验 3m前   刷新 12m前   状态                │ meta
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ (optional capability hint OR error hint)                 │
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │                              [刷新]  [删除]               │ actions
+ *   └──────────────────────────────────────────────────────────┘
+ */
+
+.provider-auth-list {
+  --pal-text: var(--sv-text, var(--ex-text, #1f2328));
+  --pal-text-mute: var(--sv-text-mute, var(--ex-text-mute, rgba(31, 35, 40, 0.7)));
+  --pal-text-faint: var(--sv-text-faint, var(--ex-text-faint, rgba(31, 35, 40, 0.5)));
+  --pal-surface: var(--sv-surface, var(--ex-surface, #f6f8fa));
+  --pal-surface-strong: var(--sv-surface-strong, var(--ex-surface-strong, #ffffff));
+  --pal-border: var(--sv-border, var(--ex-border, #e1e4e8));
+  --pal-border-strong: var(--sv-border-strong, var(--ex-border-strong, #d0d7de));
+  --pal-accent: var(--sv-accent, var(--ex-accent, #6366f1));
+  --pal-warn: #f59e0b;
+  --pal-error: #f87171;
+  --pal-success: #34d399;
+
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.provider-auth-list__empty {
+  margin: 0;
+  font-size: var(--type-sm, 13px);
+  color: var(--sv-text-faint, var(--ex-text-faint, rgba(31, 35, 40, 0.5)));
+  font-style: italic;
+}
+
+/* ── Row container ──────────────────────────────────────────────── */
+
+.provider-auth-list__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--pal-surface);
+  border: 1px solid var(--pal-border);
+  border-radius: 9px;
+  transition: border-color 140ms ease-out, background 140ms ease-out;
+}
+
+.provider-auth-list__row:hover {
+  border-color: var(--pal-border-strong);
+  background: var(--pal-surface-strong);
+}
+
+/* Auth-expired rows take the warning border tone so the user spots
+   them at a glance even without reading the inline hint copy. */
+.provider-auth-list__row[data-error-code='auth_expired'] {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.06);
+}
+
+/* ── Header row: provider chip + label + identifier ────────────── */
+
+.provider-auth-list__row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.provider-auth-list__provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 999px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--pal-text);
+  flex: 0 0 auto;
+}
+
+.provider-auth-list__provider-name {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+}
+
+.provider-auth-list__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--type-base, 14px);
+  font-weight: 500;
+  color: var(--pal-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-auth-list__identifier {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--type-xs, 12px);
+  color: var(--pal-text-faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Meta row: capability + timestamps + status badge ──────────── */
+
+.provider-auth-list__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.provider-auth-list__capability {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--pal-border);
+  border-radius: 4px;
+  font-size: var(--type-micro, 11px);
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pal-text-mute);
+}
+
+/* `official` capability stands out with the accent color so users
+   can scan the list and spot which accounts produce real quota
+   numbers vs which only do health / usage checks. */
+.provider-auth-list__capability[data-capability='official'] {
+  background: rgba(99, 102, 241, 0.14);
+  border-color: rgba(99, 102, 241, 0.42);
+  color: var(--pal-accent);
+}
+
+.provider-auth-list__capability[data-capability='unsupported'] {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.32);
+  color: var(--pal-error);
+}
+
+.provider-auth-list__timestamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-xs, 12px);
+  color: var(--pal-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-auth-list__timestamp-label {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: var(--type-micro, 11px);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pal-text-faint);
+}
+
+.provider-auth-list__timestamp-value {
+  color: var(--pal-text-mute);
+}
+
+/* ── Status badge ──────────────────────────────────────────────── */
+
+.provider-auth-list__status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 2px 9px;
+  border-radius: 4px;
+  font-size: var(--type-micro, 11px);
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.provider-auth-list__status--ok {
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.4);
+  color: var(--pal-success);
+}
+
+.provider-auth-list__status--warn {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--pal-warn);
+}
+
+.provider-auth-list__status--error {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: var(--pal-error);
+}
+
+/* ── Inline hint copy (capability + error) ─────────────────────── */
+
+.provider-auth-list__capability-hint {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: var(--type-sm, 13px);
+  color: var(--pal-text-mute);
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+.provider-auth-list__error-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: var(--type-sm, 13px);
+  color: var(--pal-error);
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+/* ── Actions row ───────────────────────────────────────────────── */
+
+.provider-auth-list__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.provider-auth-list__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: var(--type-sm, 13px);
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--pal-border);
+  background: transparent;
+  color: var(--pal-text-mute);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition:
+    border-color 140ms ease-out,
+    background 140ms ease-out,
+    color 140ms ease-out;
+}
+
+.provider-auth-list__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--pal-text);
+}
+
+.provider-auth-list__btn:focus-visible {
+  outline: 2px solid var(--pal-accent);
+  outline-offset: 2px;
+}
+
+.provider-auth-list__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.provider-auth-list__btn--refresh:hover:not(:disabled) {
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--pal-accent);
+}
+
+.provider-auth-list__btn--delete:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--pal-error);
+}
+
+.provider-auth-list__btn-icon {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+}
+
+/* Refresh icon spins while a refresh is in-flight. The animation
+   only attaches to the firing row's button (data-busy='true') —
+   sibling rows render the static glyph. */
+.provider-auth-list__btn-icon--spin {
+  animation: provider-auth-list-spin 1s linear infinite;
+}
+
+@keyframes provider-auth-list-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Light-mode overrides ─────────────────────────────────────── */
+[data-color-mode='light'] .provider-auth-list__row {
+  background: #ffffff;
+  border-color: var(--ex-border, #e1e4e8);
+}
+
+[data-color-mode='light'] .provider-auth-list__capability {
+  background: #f1f3f5;
+}
+
+[data-color-mode='light'] .provider-auth-list__capability-hint {
+  background: rgba(0, 0, 0, 0.04);
+}

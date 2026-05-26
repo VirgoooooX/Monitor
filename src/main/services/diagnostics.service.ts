@@ -27,15 +27,18 @@ import type {
   CollectorHealthRow,
   DiagnosticsReport,
   ManagementInterfaceDiagnosticsSummary,
+  ProviderAuthDiagnosticsEntry,
   RecentConfigSwitchEntry,
 } from '../types';
 import type {
   CollectorHealthRepository,
   OpenClashConfigChangesRepository,
+  ProviderAuthRepository,
   SettingsRepository,
 } from '../store/repositories';
 import { readCapabilityResults } from '../collectors/usage/Collector';
 import { APP_SETTINGS_KEY } from '../store/repositories';
+import { diagnosticsRow } from './provider_auth.service';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -52,6 +55,15 @@ export interface DiagnosticsServiceDeps {
    * empty array.
    */
   openClashConfigChanges?: OpenClashConfigChangesRepository;
+  /**
+   * Source for the `providerAuthAccounts` summary
+   * (cpa-quota-import Requirement 13.4). Optional for the same
+   * reason as `openClashConfigChanges` — when omitted, the field is
+   * an empty array. Each row is projected through
+   * {@link diagnosticsRow} so the report carries only the redacted
+   * troubleshooting columns (no `label` / `accountId` / `projectId`).
+   */
+  providerAuth?: ProviderAuthRepository;
   /** Returns all known secret plaintext values (used for value-based redaction). */
   getSecretValues: () => string[];
 }
@@ -242,6 +254,7 @@ export function createDiagnosticsService(
     settings,
     collectorHealth,
     openClashConfigChanges,
+    providerAuth,
     getSecretValues,
   } = deps;
 
@@ -273,7 +286,16 @@ export function createDiagnosticsService(
       //    (network-quick-actions Requirement 12.4).
       const managementInterface = buildManagementInterfaceSummary(appSettings);
 
-      // 5. Build the report.
+      // 5. Project every `provider_auth` row through the
+      //    diagnostics-only column whitelist
+      //    (cpa-quota-import Requirement 13.4). The projection lives
+      //    in `provider_auth.service.ts` so the column whitelist has
+      //    a single source of truth — `label`, `accountId`, and
+      //    `projectId` are deliberately omitted (Q5 resolution).
+      const providerAuthAccounts: ProviderAuthDiagnosticsEntry[] =
+        providerAuth?.list().map(diagnosticsRow) ?? [];
+
+      // 6. Build the report.
       const report: DiagnosticsReport = {
         generatedAt: Date.now(),
         collectors,
@@ -281,14 +303,15 @@ export function createDiagnosticsService(
         redactedControllerUrl,
         recentConfigSwitches,
         managementInterface,
+        providerAuthAccounts,
         schemaVersion: 1,
       };
 
-      // 6. Load secret values for value-based redaction.
+      // 7. Load secret values for value-based redaction.
       const secretVals = getSecretValues();
       const secretSet = new Set(secretVals.filter((v) => v.length > 0));
 
-      // 7. Deep-redact the entire report. The redaction sieve walks
+      // 8. Deep-redact the entire report. The redaction sieve walks
       //    every nested object and array so the new
       //    `recentConfigSwitches` and `managementInterface` blocks
       //    are also covered (no secret value can survive as a

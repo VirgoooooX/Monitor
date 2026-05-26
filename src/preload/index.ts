@@ -40,6 +40,9 @@ import type {
   IpcResult,
   NetworkQuickActions,
   OpenClashDetails,
+  ProviderAuthErrorCode,
+  ProviderAuthMetadata,
+  ProviderId,
   QuotaStatus,
   SwitchNodeInput,
   SwitchNodeResult,
@@ -250,6 +253,79 @@ const desktopApi: DesktopApi = {
     return invoke<void>(
       DESKTOP_INVOKE_CHANNELS.clearManagementCredentials,
     );
+  },
+
+  // -------------------------------------------------------------------------
+  // CPA Quota Import / Provider_Auth (cpa-quota-import task 10.4)
+  // -------------------------------------------------------------------------
+  //
+  // The five channels below back the Provider_Auth section of the
+  // expanded settings page. Each method follows the same envelope
+  // contract as every other invoke on this bridge — `invoke<T>()`
+  // rejects with an `IpcEnvelopeError` carrying `error.code` /
+  // `error.message` whenever the main-side handler returns
+  // `{ ok: false, ... }` (e.g. a `'validation'` failure from the
+  // zod input schema in `desktopApiSchemas`, or a redacted
+  // `ProviderAuthErrorCode` from the underlying service).
+  //
+  // Channel-name whitelisting is implicit: `DESKTOP_INVOKE_CHANNELS`
+  // is the single source of truth for both the preload bridge and
+  // the main-process handler registry, so drift between the two
+  // sides is a compile error.
+  //
+  // The renderer never sees secret material on these channels:
+  //   - `listProviderAuths` / `importProviderAuthFile` return
+  //     `ProviderAuthMetadata`, whose shape is structurally redacted
+  //     (no `accessToken` / `apiKey` / file path / expiry fields).
+  //   - `refreshProviderQuota` reuses the existing `QuotaStatus`
+  //     envelope so the renderer's quota rendering stays
+  //     single-sourced.
+  //   - `validateProviderAuth` returns a fixed `{ ok, code, message }`
+  //     triple where `code` widens to `'ok' | ProviderAuthErrorCode`
+  //     and `message` is bounded at 80 characters by the schema.
+
+  listProviderAuths(): Promise<ProviderAuthMetadata[]> {
+    return invoke<ProviderAuthMetadata[]>(
+      DESKTOP_INVOKE_CHANNELS.listProviderAuths,
+    );
+  },
+
+  importProviderAuthFile(input: {
+    provider: ProviderId;
+  }): Promise<ProviderAuthMetadata> {
+    return invoke<ProviderAuthMetadata>(
+      DESKTOP_INVOKE_CHANNELS.importProviderAuthFile,
+      input,
+    );
+  },
+
+  deleteProviderAuth(input: { id: string }): Promise<void> {
+    return invoke<void>(
+      DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
+      input,
+    );
+  },
+
+  refreshProviderQuota(input?: {
+    id?: string;
+    provider?: ProviderId;
+  }): Promise<QuotaStatus> {
+    return invoke<QuotaStatus>(
+      DESKTOP_INVOKE_CHANNELS.refreshProviderQuota,
+      input ?? {},
+    );
+  },
+
+  validateProviderAuth(input: { id: string }): Promise<{
+    ok: boolean;
+    code: ProviderAuthErrorCode | 'ok';
+    message: string;
+  }> {
+    return invoke<{
+      ok: boolean;
+      code: ProviderAuthErrorCode | 'ok';
+      message: string;
+    }>(DESKTOP_INVOKE_CHANNELS.validateProviderAuth, input);
   },
 
   on<C extends DesktopPushChannel>(

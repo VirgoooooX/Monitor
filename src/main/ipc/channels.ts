@@ -57,6 +57,16 @@ export const DESKTOP_INVOKE_CHANNELS = {
   getNetworkQuickActions: 'desktop:getNetworkQuickActions',
   switchOpenClashConfig: 'desktop:switchOpenClashConfig',
   clearManagementCredentials: 'desktop:clearManagementCredentials',
+  // CPA quota import (cpa-quota-import spec, task 10.1).
+  // Handlers, schemas, and `DesktopApi` method signatures are wired
+  // up in subsequent tasks; this entry is the single source of truth
+  // for the channel names used by both the preload bridge and the
+  // main-process handler registry.
+  listProviderAuths: 'desktop:listProviderAuths',
+  importProviderAuthFile: 'desktop:importProviderAuthFile',
+  deleteProviderAuth: 'desktop:deleteProviderAuth',
+  refreshProviderQuota: 'desktop:refreshProviderQuota',
+  validateProviderAuth: 'desktop:validateProviderAuth',
 } as const;
 
 /** Compile-time union of every supported invoke method name. */
@@ -76,6 +86,7 @@ export const DESKTOP_PUSH_CHANNELS = [
   'dashboard.updated',
   'openclash.updated',
   'navigate-tab',
+  'settings.updated',
 ] as const satisfies readonly DesktopPushChannel[];
 
 /**

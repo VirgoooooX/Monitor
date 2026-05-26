@@ -577,6 +577,24 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
     maxHeight: COMPACT_DEFAULT_SIZE.height,
     transparent: true,
     frame: false,
+    /*
+     * Disable the native window drop shadow.
+     *
+     * On Windows, Electron's transparent + frameless window still
+     * has the OS paint a rectangular DWM drop shadow around the
+     * BrowserWindow bounds. Because the rendered widget surface is
+     * rounded (border-radius: 12px) and sits inside a 6 px CSS
+     * margin, that rectangular shadow extends past the rounded
+     * corners and reads as a faint grey rectangular halo behind
+     * the widget — most visible against translucent or light
+     * wallpapers (e.g. the mint-green capture in the bug report).
+     *
+     * `hasShadow: false` removes the native shadow; the widget's
+     * own CSS box-shadow inside `.widget-shell` provides the visual
+     * lift, and that one is rounded with the surface so it never
+     * leaks past the corners.
+     */
+    hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
     maximizable: false,

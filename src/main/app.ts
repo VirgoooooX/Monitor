@@ -106,6 +106,8 @@ import {
 import type { UsageCollector } from './collectors/usage/types';
 import type { AppSettings } from './types';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Default settings seed
@@ -117,8 +119,14 @@ import path from 'node:path';
  * Mirrors design.md §Validation rules (controllerUrl format, probe
  * URL list, switch-verify delay) and design.md §Default intervals
  * (per-task tick rates).
+ *
+ * Exported (test-only) so `cpa-quota-import` Property 5
+ * (`schemas.app-defaults.pbt.test.ts`) can assert that the seeded
+ * blob round-trips through `appSettingsSchema` without instantiating
+ * the full Electron boot sequence. Production callers reach the seed
+ * via {@link loadOrSeedAppSettings}.
  */
-function buildDefaultAppSettings(): AppSettings {
+export function buildDefaultAppSettings(): AppSettings {
   return {
     controllerUrl: 'http://192.168.31.100:9090',
     primaryGroups: ['🚀 节点选择', '🔮 默认'],
@@ -152,6 +160,63 @@ function buildDefaultAppSettings(): AppSettings {
       requestTimeoutMs: 10_000,
       configFileWhitelist: [],
     },
+    cliproxy: {
+      enabled: false,
+      managementUrl: '',
+      authDir: '',
+      usageQueueBatchSize: 25,
+    },
+    appearance: {
+      colorMode: 'dark',
+      compactTheme: 'obsidian-glass',
+      fontScale: 1,
+    },
+  };
+}
+
+/**
+ * Fill in any forward-compat fields missing from a previously
+ * persisted `AppSettings` row. Older databases may be missing newer
+ * blocks (`appearance` from the theme system, `cliproxy` from the
+ * CLIProxyAPI usage importer); the strict zod schema would reject
+ * them on load. We patch them here once at boot, and write the
+ * patched value back through {@link writeAppSettings} so the next
+ * launch hits the fast path with no normalize work to do.
+ *
+ * The function is intentionally pure — callers compare its output
+ * with the original to decide whether a write-back is needed.
+ */
+function normalizeAppSettings(raw: AppSettings): AppSettings {
+  // Pre-theme-system rows are missing `appearance`. Pre-network-quick-actions
+  // rows are missing `managementInterface` and `configSwitchVerifyWindowMs`.
+  // Pre-cpa-quota-import rows are missing `cliproxy`. Patch each block
+  // independently so an in-place upgrade across multiple feature
+  // generations still produces a valid `AppSettings`.
+  const appearance = {
+    colorMode: raw.appearance?.colorMode ?? ('dark' as const),
+    compactTheme: raw.appearance?.compactTheme ?? ('obsidian-glass' as const),
+    fontScale: raw.appearance?.fontScale ?? 1,
+  };
+  const cliproxy = raw.cliproxy ?? {
+    enabled: false,
+    managementUrl: '',
+    authDir: '',
+    usageQueueBatchSize: 25,
+  };
+  const managementInterface = raw.managementInterface ?? {
+    kind: 'openclash-luci' as const,
+    url: '',
+    requestTimeoutMs: 10_000,
+    configFileWhitelist: [],
+  };
+  const configSwitchVerifyWindowMs =
+    raw.configSwitchVerifyWindowMs ?? 8_000;
+  return {
+    ...raw,
+    managementInterface,
+    configSwitchVerifyWindowMs,
+    cliproxy,
+    appearance,
   };
 }
 
@@ -165,7 +230,17 @@ function buildDefaultAppSettings(): AppSettings {
 function loadOrSeedAppSettings(repos: Repositories): AppSettings {
   const existing = readAppSettings(repos.settings);
   if (existing !== undefined) {
-    return existing;
+    // Forward-compat: older rows may be missing `appearance` (added
+    // by the theme-system feature). The strict zod schema would
+    // reject such rows on read, so we patch them in place and
+    // persist the patched value once. JSON-string equality is fine
+    // here — the settings tree is small and the comparison happens
+    // at most once per boot.
+    const normalized = normalizeAppSettings(existing);
+    if (JSON.stringify(normalized) !== JSON.stringify(existing)) {
+      writeAppSettings(repos.settings, normalized);
+    }
+    return normalized;
   }
   const seeded = buildDefaultAppSettings();
   writeAppSettings(repos.settings, seeded);
@@ -454,12 +529,69 @@ async function boot(): Promise<void> {
   const usageService = createUsageService({
     usageEvents: repositories.usageEvents,
     settings: repositories.settings,
+    providerAuth: repositories.providerAuth,
   });
 
-  // Quota service
+  // Quota service (cpa-quota-import task 6.2). The aggregator now
+  // dispatches per `provider_auth` row through the placeholder
+  // adapter registry; the legacy Codex local-log path is retained as
+  // a fallback when no Codex `provider_auth` row exists
+  // (Requirement 11.6). Full wiring of the new IPC channels (list /
+  // import / delete / refreshProviderQuota / validate) lands in task
+  // 10.x; this constructor only hooks the dependencies the existing
+  // `getQuotaStatus` IPC needs.
   const { createQuotaService } = require('./services/quota.service') as typeof import('./services/quota.service');
+  const { createSecretsAdmin } = require('./security/secrets.admin') as typeof import('./security/secrets.admin');
+  const { adapterRegistry } = require('./services/quota/adapters') as typeof import('./services/quota/adapters');
+  const { parseLocalRateLimits } = require('./collectors/usage/codex-quota.collector') as typeof import('./collectors/usage/codex-quota.collector');
+  const secretsAdmin = createSecretsAdmin(secretsModule);
   const quotaService = createQuotaService({
     settings: repositories.settings,
+    providerAuth: repositories.providerAuth,
+    secrets: secretsAdmin,
+    adapters: adapterRegistry,
+    parseCodexLocalRateLimits: parseLocalRateLimits,
+  });
+
+  // Provider_Auth service (cpa-quota-import task 10.5). Owns import /
+  // list / delete / validate against the `provider_auth` repository
+  // and the `cpaAuth.providerAuth.<uuid>` secret namespace via the
+  // `secretsAdmin` wrapper. The dialog runs in main — the renderer's
+  // `importProviderAuthFile` IPC only carries `{ provider }`; the
+  // returned file path never crosses the IPC boundary
+  // (design.md §Layered Trust Model + Requirement 8.1 / 8.2).
+  //
+  // Dialog options match design.md §Provider_Auth_Service:
+  //   properties: ['openFile']
+  //   filters:
+  //     - { name: 'CPA Auth', extensions: ['json', 'txt'] }
+  //     - { name: 'All',      extensions: ['*']         }
+  //
+  // The owning window is the compact window (the always-on-top boot
+  // window); on macOS this anchors the dialog to that window so the
+  // user cannot lose it behind another app, and on Windows/Linux it
+  // is harmless. `dialog.showOpenDialog(BrowserWindow, ...)` accepts
+  // a possibly-destroyed window handle gracefully.
+  const { createProviderAuthService } =
+    require('./services/provider_auth.service') as typeof import('./services/provider_auth.service');
+  const { parseAuthFile } =
+    require('./services/auth-file.parser') as typeof import('./services/auth-file.parser');
+  const providerAuthService = createProviderAuthService({
+    repo: repositories.providerAuth,
+    secrets: secretsAdmin,
+    showOpenDialog: () =>
+      dialog.showOpenDialog(compactWindow, {
+        properties: ['openFile'],
+        filters: [
+          { name: 'CPA Auth', extensions: ['json', 'txt'] },
+          { name: 'All', extensions: ['*'] },
+        ],
+      }),
+    readFile: (p) => fs.promises.readFile(p, 'utf-8'),
+    statFile: (p) => fs.promises.stat(p).then((s) => ({ size: s.size })),
+    parse: parseAuthFile,
+    uuid: () => crypto.randomUUID(),
+    now: () => Date.now(),
   });
 
   // Diagnostics service (task 9.3 + network-quick-actions task 11.1).
@@ -471,6 +603,7 @@ async function boot(): Promise<void> {
     settings: repositories.settings,
     collectorHealth: repositories.collectorHealth,
     openClashConfigChanges: repositories.openClashConfigChanges,
+    providerAuth: repositories.providerAuth,
     getSecretValues: () => {
       try {
         const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
@@ -640,6 +773,8 @@ async function boot(): Promise<void> {
     },
     getUsageSummary: (range) => usageService.getUsageSummary({ range }),
     getQuotaStatus: () => quotaService.getQuotaStatus(),
+    providerAuthService,
+    quotaService,
     getDiagnostics: () => diagnosticsService.export(),
     runRefreshNow: async () => {
       // Run all collectors immediately (including usage)
@@ -823,9 +958,29 @@ function applyAppSettingsPatch(
       ...current.collectors,
       ...(patch.collectors ?? {}),
     },
+    cliproxy: {
+      ...current.cliproxy,
+      ...(patch.cliproxy ?? {}),
+    },
+    appearance: {
+      ...current.appearance,
+      ...(patch.appearance ?? {}),
+    },
   };
   writeAppSettings(repositories.settings, next);
   _settings = next;
+
+  // Broadcast `settings.updated` so every live renderer can react
+  // (e.g. the appearance switcher applies a new theme without a
+  // restart). We push AFTER the persist+memoize step so any window
+  // that reaches back through `getSettings()` synchronously inside
+  // its handler sees the same value that was broadcast. Destroyed
+  // windows are skipped defensively.
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) {
+      w.webContents.send('settings.updated', next);
+    }
+  }
 
   // Side-effect: sync the OS login-item setting when `autostart` changes.
   if (patch.autostart !== undefined) {
@@ -859,6 +1014,16 @@ function applyAppSettingsPatch(
         controllerUrl: next.controllerUrl,
         managementUrl: next.managementInterface.url,
       });
+    // TODO(v1.1): cpa-quota-import — when real provider adapters land
+    // (Claude Code, Codex, Gemini CLI, Antigravity), the following
+    // origins must be added to the `connect-src` allowlist:
+    //   - https://api.anthropic.com (Claude Code quota)
+    //   - https://chatgpt.com (Codex quota; existing Codex remote path)
+    //   - https://cloudcode-pa.googleapis.com (Gemini CLI quota)
+    //   - https://daily-cloudcode-pa.googleapis.com (Antigravity quota)
+    //   - https://daily-cloudcode-pa.sandbox.googleapis.com (Antigravity sandbox)
+    // v1 placeholder adapters issue zero outbound HTTPS calls so no
+    // allowlist change is required for the Foundation Phase.
     applyCspHeaders(session.defaultSession, allowedConnect);
     for (const w of BrowserWindow.getAllWindows()) {
       if (!w.isDestroyed()) {

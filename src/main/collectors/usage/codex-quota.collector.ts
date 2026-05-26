@@ -111,6 +111,16 @@ export async function parseLocalRateLimits(): Promise<QuotaSnapshot | null> {
         capturedAt: timestamp,
         source: 'local_log',
         windows: rateLimits,
+        providerAuthId: null,
+        accountLabel: null,
+        accountId: null,
+        projectId: null,
+        kind: 'quota',
+        status: 'ok',
+        rawPlanLabel: null,
+        modelGroup: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
       };
     }
   }
@@ -327,6 +337,16 @@ export async function fetchRemoteQuota(): Promise<QuotaSnapshot | null> {
       capturedAt: Date.now(),
       source: 'remote_api',
       windows,
+      providerAuthId: null,
+      accountLabel: null,
+      accountId: null,
+      projectId: null,
+      kind: 'quota',
+      status: 'ok',
+      rawPlanLabel: null,
+      modelGroup: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
     };
   } catch {
     return null;

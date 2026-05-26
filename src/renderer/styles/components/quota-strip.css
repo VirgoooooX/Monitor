@@ -1,0 +1,141 @@
+/*
+ * QuotaStrip and provider icon styles.
+ */
+
+/* Quota strip (compact widget) -------------------------------------------- */
+
+.quota-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.quota-strip__group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quota-strip__provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  min-width: 22px;
+  width: 22px;
+  align-self: center;
+}
+
+/* Provider brand glyphs come from @lobehub/icons-static-svg.
+   The wrapper controls dimensions; the inline <svg> uses 1em sizing. */
+.provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.provider-icon > svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+
+/* Fallback (unknown provider) keeps the old monochrome look. */
+.provider-icon--fallback {
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+
+.quota-strip__windows {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.quota-strip__row {
+  /* Flex layout so trailing slots (reset / warn icon) collapse
+     when absent — a fixed-grid `auto` track still reserves the
+     gap, which left ~32 px of dead air to the right of the bar
+     when neither slot was rendered. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+}
+
+.quota-strip__window-label {
+  flex: 0 0 20px;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.quota-strip__track {
+  /* Grow into all the space the trailing slots leave behind so
+     the bar reaches the same right edge as the sparkline above. */
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.quota-strip__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease-out;
+}
+
+.quota-strip__fill--ok {
+  background: var(--color-ok);
+}
+
+.quota-strip__fill--warn {
+  background: var(--color-warn);
+}
+
+.quota-strip__fill--critical {
+  background: var(--color-bad);
+}
+
+.quota-strip__percent {
+  flex: 0 0 auto;
+  min-width: 30px;
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.quota-strip__row[data-urgency='critical'] .quota-strip__percent {
+  color: var(--color-bad);
+}
+
+.quota-strip__row[data-urgency='warn'] .quota-strip__percent {
+  color: var(--color-warn);
+}
+
+.quota-strip__reset {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.quota-strip__warn-icon {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+
