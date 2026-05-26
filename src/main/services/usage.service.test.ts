@@ -49,7 +49,7 @@ function baseSettings(): AppSettings {
     },
     appearance: {
       colorMode: 'dark',
-      compactTheme: 'obsidian-glass',
+      compactTheme: 'mint-monitor',
       fontScale: 1,
     },
   };

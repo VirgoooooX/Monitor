@@ -1030,9 +1030,7 @@
   border-radius: 8px;
   overflow: hidden;
   isolation: isolate;
-  background: linear-gradient(145deg,
-    rgba(24, 24, 28, 0.94),
-    rgba(16, 16, 18, 0.96));
+  background: rgba(20, 22, 24, 0.9);
 }
 
 .settings-view__theme-preview-fx {
@@ -1059,9 +1057,190 @@
   background: rgba(255, 255, 255, 0.22);
 }
 
-/* Per-preset preview decoration — re-uses the same backgrounds the
-   live shells paint, scaled down. Keeping these colocated with the
-   widget themes above means a single source of truth for the look. */
+/* Per-preset preview decoration — visually matches the live shells.
+   Each preview re-uses the same identity tokens (material, accent
+   colour, divider treatment) so users can recognise the preset at
+   a glance. */
+
+/* liquid-glass — light translucent glass with cool drop. */
+.settings-view__theme-preview[data-compact-theme='liquid-glass'] {
+  background:
+    radial-gradient(60% 60% at 18% 18%,
+      rgba(255, 255, 255, 0.85), transparent 60%),
+    radial-gradient(80% 60% at 100% 100%,
+      rgba(125, 211, 252, 0.55), transparent 65%),
+    rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+.settings-view__theme-preview[data-compact-theme='liquid-glass']
+  .settings-view__theme-preview-bar {
+  background: rgba(16, 185, 129, 0.85);
+}
+.settings-view__theme-preview[data-compact-theme='liquid-glass']
+  .settings-view__theme-preview-bar--short {
+  background: rgba(125, 211, 252, 0.7);
+}
+
+/* material-you — two tonal containers with an 8 px gap. */
+.settings-view__theme-preview[data-compact-theme='material-you'] {
+  background: #fffbfe;
+  box-shadow: inset 0 0 0 1px rgba(81, 91, 87, 0.18);
+}
+.settings-view__theme-preview[data-compact-theme='material-you']
+  .settings-view__theme-preview-fx {
+  background:
+    linear-gradient(#d7f8e7, #d7f8e7) 5px 5px / calc(100% - 10px) 22px no-repeat,
+    linear-gradient(#e7f0ec, #e7f0ec) 5px 33px / calc(100% - 10px) 22px no-repeat;
+  border-radius: 6px;
+}
+.settings-view__theme-preview[data-compact-theme='material-you']
+  .settings-view__theme-preview-bar {
+  background: #0f8f62;
+  bottom: 10px;
+  border-radius: 999px;
+  height: 3px;
+}
+.settings-view__theme-preview[data-compact-theme='material-you']
+  .settings-view__theme-preview-bar--short {
+  background: rgba(15, 143, 98, 0.5);
+  bottom: 18px;
+}
+
+/* soft-neumorph — light embossed shell + inset groove. */
+.settings-view__theme-preview[data-compact-theme='soft-neumorph'] {
+  background: #e9edf0;
+  box-shadow:
+    6px 6px 14px rgba(150, 160, 170, 0.42),
+    -6px -6px 14px rgba(255, 255, 255, 0.92);
+}
+.settings-view__theme-preview[data-compact-theme='soft-neumorph']
+  .settings-view__theme-preview-fx {
+  background: #e9edf0;
+  inset: 8px;
+  border-radius: 6px;
+  box-shadow:
+    inset 3px 3px 6px rgba(150, 160, 170, 0.45),
+    inset -3px -3px 6px rgba(255, 255, 255, 0.92);
+}
+.settings-view__theme-preview[data-compact-theme='soft-neumorph']
+  .settings-view__theme-preview-bar {
+  background: #26b783;
+  border-radius: 2px;
+  bottom: 18px;
+  left: 18px;
+  right: 18px;
+}
+.settings-view__theme-preview[data-compact-theme='soft-neumorph']
+  .settings-view__theme-preview-bar--short {
+  background: rgba(38, 183, 131, 0.55);
+  bottom: 26px;
+  right: 32px;
+}
+
+/* paper-dashboard — near-white paper + thin separator line. */
+.settings-view__theme-preview[data-compact-theme='paper-dashboard'] {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 6px,
+      rgba(31, 38, 35, 0.025) 6px 7px),
+    #fbfaf7;
+  box-shadow: inset 0 0 0 1px rgba(31, 38, 35, 0.10);
+}
+.settings-view__theme-preview[data-compact-theme='paper-dashboard']
+  .settings-view__theme-preview-fx {
+  background-image: linear-gradient(rgba(31, 38, 35, 0.12), rgba(31, 38, 35, 0.12));
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+  background-position: 0 50%;
+}
+.settings-view__theme-preview[data-compact-theme='paper-dashboard']
+  .settings-view__theme-preview-bar {
+  background: #159a6b;
+  height: 3px;
+  border-radius: 2px;
+}
+.settings-view__theme-preview[data-compact-theme='paper-dashboard']
+  .settings-view__theme-preview-bar--short {
+  background: rgba(31, 38, 35, 0.4);
+}
+
+/* mint-monitor — dark mint card + faint grid + green pill bar. */
+.settings-view__theme-preview[data-compact-theme='mint-monitor'] {
+  background:
+    radial-gradient(80% 60% at 100% 0%,
+      rgba(52, 211, 153, 0.10), transparent 65%),
+    rgba(15, 19, 20, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(126, 255, 205, 0.28);
+}
+.settings-view__theme-preview[data-compact-theme='mint-monitor']
+  .settings-view__theme-preview-fx {
+  background:
+    linear-gradient(rgba(126, 255, 205, 0.06) 1px, transparent 1px) 0 0 / 100% 10px,
+    linear-gradient(90deg, rgba(126, 255, 205, 0.06) 1px, transparent 1px) 0 0 / 10px 100%;
+}
+.settings-view__theme-preview[data-compact-theme='mint-monitor']
+  .settings-view__theme-preview-bar {
+  background: #34d399;
+  border-radius: 999px;
+  height: 4px;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+}
+.settings-view__theme-preview[data-compact-theme='mint-monitor']
+  .settings-view__theme-preview-bar--short {
+  background: rgba(52, 211, 153, 0.45);
+}
+
+/* device-oled — dark metallic bezel + inset OLED screen. */
+.settings-view__theme-preview[data-compact-theme='device-oled'] {
+  background: linear-gradient(160deg, #343a3d, #202426);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+.settings-view__theme-preview[data-compact-theme='device-oled']
+  .settings-view__theme-preview-fx {
+  inset: 6px;
+  background: #050807;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(53, 242, 160, 0.18);
+}
+.settings-view__theme-preview[data-compact-theme='device-oled']
+  .settings-view__theme-preview-bar {
+  background-image: repeating-linear-gradient(
+    90deg,
+    #35f2a0 0 4px,
+    rgba(0, 0, 0, 0.5) 4px 5px);
+  background-color: #35f2a0;
+  height: 4px;
+  border-radius: 0;
+  bottom: 16px;
+  left: 14px;
+  right: 14px;
+  box-shadow: 0 0 6px rgba(53, 242, 160, 0.4);
+}
+.settings-view__theme-preview[data-compact-theme='device-oled']
+  .settings-view__theme-preview-bar--short {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(53, 242, 160, 0.4) 0 4px,
+    transparent 4px 5px);
+  background-color: transparent;
+  bottom: 24px;
+}
+
+/* ── Legacy v1 theme previews ──────────────────────────────────────
+   The original v1 presets (theme system v1) are kept as additional
+   options, so their preview decorations live alongside the v2 ones
+   above. */
+
+.settings-view__theme-preview[data-compact-theme='obsidian-glass'] {
+  background: linear-gradient(145deg,
+    rgba(24, 24, 28, 0.94),
+    rgba(16, 16, 18, 0.96));
+}
 .settings-view__theme-preview[data-compact-theme='obsidian-glass']
   .settings-view__theme-preview-fx {
   background:
@@ -1076,7 +1255,6 @@
 .settings-view__theme-preview[data-compact-theme='aurora-ring'] {
   background: rgba(10, 10, 14, 0.95);
 }
-
 .settings-view__theme-preview[data-compact-theme='aurora-ring']
   .settings-view__theme-preview-fx {
   background: conic-gradient(
@@ -1096,7 +1274,6 @@
     rgba(8, 14, 18, 0.96),
     rgba(6, 10, 14, 0.97));
 }
-
 .settings-view__theme-preview[data-compact-theme='holo-grid']
   .settings-view__theme-preview-fx {
   background:
@@ -1110,7 +1287,6 @@
     #11141a 45%,
     #0c0f14 100%);
 }
-
 .settings-view__theme-preview[data-compact-theme='liquid-metal']
   .settings-view__theme-preview-fx {
   background:
@@ -1128,7 +1304,6 @@
     rgba(16, 18, 22, 0.96),
     rgba(10, 12, 16, 0.97));
 }
-
 .settings-view__theme-preview[data-compact-theme='signal-pulse']
   .settings-view__theme-preview-fx {
   background:

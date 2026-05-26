@@ -90,7 +90,7 @@ import { createTray } from './tray';
 // here. The factory modules continue to live in
 // `./collectors/usage/*` for the Codex local-log fallback inside
 // `quotaService` and for any future per-account adapter code.
-import type { AppSettings } from './types';
+import type { AppSettings, AppearanceSettings } from './types';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -154,7 +154,7 @@ export function buildDefaultAppSettings(): AppSettings {
     },
     appearance: {
       colorMode: 'dark',
-      compactTheme: 'obsidian-glass',
+      compactTheme: 'mint-monitor',
       fontScale: 1,
     },
   };
@@ -178,9 +178,35 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
   // Pre-cpa-quota-import rows are missing `cliproxy`. Patch each block
   // independently so an in-place upgrade across multiple feature
   // generations still produces a valid `AppSettings`.
+  //
+  // Theme system v2 added six new design-language presets but kept
+  // every v1 preset (obsidian-glass / aurora-ring / holo-grid /
+  // liquid-metal / signal-pulse) as additional options. We keep a
+  // defensive fallback in case the persisted value is some other
+  // unknown literal (e.g. a value from a never-shipped intermediate
+  // build): unknown values fall through to `mint-monitor`, the new
+  // default reference design.
+  const VALID_COMPACT_THEMES = new Set<string>([
+    'liquid-glass',
+    'material-you',
+    'soft-neumorph',
+    'paper-dashboard',
+    'mint-monitor',
+    'device-oled',
+    'obsidian-glass',
+    'aurora-ring',
+    'holo-grid',
+    'liquid-metal',
+    'signal-pulse',
+  ]);
+  const rawTheme = raw.appearance?.compactTheme as string | undefined;
+  const compactTheme: AppearanceSettings['compactTheme'] =
+    rawTheme !== undefined && VALID_COMPACT_THEMES.has(rawTheme)
+      ? (rawTheme as AppearanceSettings['compactTheme'])
+      : ('mint-monitor' as const);
   const appearance = {
     colorMode: raw.appearance?.colorMode ?? ('dark' as const),
-    compactTheme: raw.appearance?.compactTheme ?? ('obsidian-glass' as const),
+    compactTheme,
     fontScale: raw.appearance?.fontScale ?? 1,
   };
   const cliproxy = raw.cliproxy ?? {

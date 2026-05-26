@@ -201,6 +201,37 @@ describe('ProviderAuthList — auth_expired row', () => {
     const rowEl = screen.getByTestId(`provider-auth-list-row-${row.id}`);
     expect(rowEl.getAttribute('data-error-code')).toBe('auth_expired');
   });
+
+  it('keeps Refresh enabled for Gemini CLI auth_expired rows so stale CPA expiry can retry', () => {
+    const row = makeRow({
+      provider: 'gemini-cli' as ProviderId,
+      lastErrorCode: 'auth_expired' as ProviderAuthErrorCode,
+      lastErrorMessage: 'token expired',
+    });
+    const onRefresh = vi.fn();
+
+    render(
+      <ProviderAuthList
+        rows={[row]}
+        onRefresh={onRefresh}
+        onDelete={vi.fn()}
+        busyId={null}
+      />,
+    );
+
+    const refreshBtn = screen.getByTestId(
+      `provider-auth-list-row-${row.id}-refresh`,
+    ) as HTMLButtonElement;
+    expect(refreshBtn.disabled).toBe(false);
+
+    const expiredHint = screen.getByTestId(
+      `provider-auth-list-row-${row.id}-expired-hint`,
+    );
+    expect(expiredHint.textContent ?? '').toMatch(/刷新重试/);
+
+    fireEvent.click(refreshBtn);
+    expect(onRefresh).toHaveBeenCalledWith(row.id);
+  });
 });
 
 // ===========================================================================

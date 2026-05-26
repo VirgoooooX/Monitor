@@ -13,10 +13,10 @@
 import { useEffect, useState, useCallback } from 'react';
 
 import { formatTokens } from '../lib/format';
+import { quotaWindowDisplayName, quotaWindowPriority } from '../lib/quota-display';
 import type {
   CollectorStatus,
   QuotaSnapshot,
-  QuotaSource,
   QuotaStatus,
   QuotaWindow,
   UsageProviderSummary,
@@ -52,36 +52,114 @@ function formatCost(costUsd: number | null): string {
   return `$${costUsd.toFixed(2)}`;
 }
 
-function formatResetTime(resetAt: number | null): string {
-  if (resetAt === null) return '—';
-  const now = Date.now();
-  const diff = resetAt - now;
-  if (diff <= 0) return '即将重置';
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  if (hours > 24) {
-    const days = Math.floor(hours / 24);
-    return `${days}天 ${hours % 24}h`;
-  }
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+function formatClock(timestamp: number | null): string {
+  if (timestamp === null) return '—';
+  const date = new Date(timestamp);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function quotaBarClass(percentLeft: number | null): string {
-  if (percentLeft === null) return 'quota-bar--unknown';
+function formatPercent(percentLeft: number | null): string {
+  if (percentLeft === null) return '—';
+  return `${Math.round(percentLeft)}%`;
+}
+
+function clampPercent(percentLeft: number | null): number {
+  if (percentLeft === null) return 0;
+  return Math.min(Math.max(percentLeft, 0), 100);
+}
+
+function quotaWindowToneClass(percentLeft: number | null): string {
+  if (percentLeft === null) return 'quota-window-row--unknown';
   // Color by remaining: lots left = green, getting low = orange, nearly out = red.
-  if (percentLeft <= 20) return 'quota-bar--critical';
-  if (percentLeft <= 50) return 'quota-bar--warn';
-  return 'quota-bar--ok';
+  if (percentLeft <= 20) return 'quota-window-row--critical';
+  if (percentLeft <= 50) return 'quota-window-row--warn';
+  return 'quota-window-row--ok';
 }
 
-function windowDisplayName(name: string): string {
-  switch (name) {
-    case '5h': return '5 小时窗口';
-    case 'weekly': return '每周配额';
-    case 'monthly': return '每月配额';
-    case 'daily': return '每日配额';
-    default: return name;
+function providerDisplayName(provider: string): string {
+  switch (provider) {
+    case 'codex': return 'Codex';
+    case 'claude-code': return 'Claude Code';
+    case 'gemini-cli': return 'Gemini CLI';
+    case 'antigravity': return 'Antigravity';
+    case 'gemini-api': return 'Gemini API';
+    case 'deepseek-api': return 'DeepSeek';
+    case 'openai-compatible': return 'OpenAI Compat';
+    case 'xiaomi-cloud': return 'Xiaomi';
+    default: return provider.charAt(0).toUpperCase() + provider.slice(1);
+  }
+}
+
+function providerTone(provider: string): string {
+  return provider.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+}
+
+function sourceDisplayName(source: QuotaSnapshot['source']): string {
+  switch (source) {
+    case 'imported_auth': return 'CPA 文件';
+    case 'remote_api': return '官方 API';
+    case 'local_log': return '本地日志';
+    case 'health_check': return '健康检查';
+  }
+}
+
+function snapshotTitle(snapshot: QuotaSnapshot): string {
+  return (
+    snapshot.accountLabel?.trim() ||
+    snapshot.projectId?.trim() ||
+    snapshot.accountId?.trim() ||
+    providerDisplayName(snapshot.provider)
+  );
+}
+
+function compactIdentifier(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= 28) return value;
+  return `${value.slice(0, 12)}...${value.slice(-8)}`;
+}
+
+function snapshotMeta(snapshot: QuotaSnapshot): string {
+  const title = snapshotTitle(snapshot);
+  const parts: string[] = [];
+  if (snapshot.projectId && snapshot.projectId !== title) {
+    parts.push(`项目 ${compactIdentifier(snapshot.projectId) ?? snapshot.projectId}`);
+  }
+  if (snapshot.accountId && snapshot.accountId !== title) {
+    parts.push(`账号 ${compactIdentifier(snapshot.accountId) ?? snapshot.accountId}`);
+  }
+  parts.push(sourceDisplayName(snapshot.source));
+  return parts.join(' · ');
+}
+
+function snapshotStatusLabel(snapshot: QuotaSnapshot): string {
+  if (snapshot.lastErrorCode === 'auth_expired') return '凭据过期';
+  if (snapshot.lastErrorCode === 'upstream_unauthorized') return '上游拒绝';
+  if (snapshot.lastErrorCode === 'rate_limited') return '请求过快';
+  if (snapshot.status === 'stale') return '上次结果';
+  if (snapshot.status === 'unavailable') return '不可用';
+  if (snapshot.status === 'unsupported') return '暂未实现';
+  return '官方额度';
+}
+
+function snapshotStatusTone(snapshot: QuotaSnapshot): 'ok' | 'warn' | 'bad' | 'neutral' {
+  if (snapshot.status === 'ok' && snapshot.lastErrorCode == null) return 'ok';
+  if (snapshot.status === 'stale') return 'warn';
+  if (snapshot.status === 'unsupported') return 'neutral';
+  return 'bad';
+}
+
+function planLabelPrefix(provider: string): string {
+  return provider === 'gemini-cli' || provider === 'antigravity' ? '层级' : '套餐';
+}
+
+function providerPriority(provider: string): number {
+  switch (provider) {
+    case 'codex': return 0;
+    case 'claude-code': return 1;
+    case 'gemini-cli': return 2;
+    case 'antigravity': return 3;
+    default: return 10;
   }
 }
 
@@ -214,79 +292,134 @@ export function UsagePanel(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Element {
+  const orderedSnapshots = [...snapshots].sort((a, b) => {
+    const providerOrder = providerPriority(a.provider) - providerPriority(b.provider);
+    if (providerOrder !== 0) return providerOrder;
+    return snapshotTitle(a).localeCompare(snapshotTitle(b), 'zh-CN');
+  });
+
   return (
     <div className="quota-overview">
-      <h2 className="quota-overview__title">配额状态</h2>
-      <div className="quota-overview__list">
-        {snapshots.map((snapshot) =>
-          snapshot.windows.map((window, i) => (
-            <QuotaBar
-              key={`${snapshot.provider}-${window.name}-${i}`}
-              provider={snapshot.provider}
-              window={window}
-              source={snapshot.source}
-              capturedAt={snapshot.capturedAt}
-            />
-          )),
-        )}
+      <div className="quota-overview__header">
+        <h2 className="quota-overview__title">
+          配额状态
+          <span className="quota-overview__count">{snapshots.length}</span>
+        </h2>
+        <span className="quota-overview__mode">按账号显示</span>
+      </div>
+      <div className="quota-overview__grid">
+        {orderedSnapshots.map((snapshot, i) => (
+          <QuotaAccountCard
+            key={snapshot.providerAuthId ?? `${snapshot.provider}-${snapshot.accountId ?? snapshot.projectId ?? i}`}
+            snapshot={snapshot}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Quota progress bar
+// Quota account card
 // ---------------------------------------------------------------------------
 
-interface QuotaBarProps {
-  provider: string;
-  window: QuotaWindow;
-  source: QuotaSource;
-  capturedAt: number;
-}
-
-function QuotaBar({ provider, window: w, source, capturedAt }: QuotaBarProps): JSX.Element {
-  // The bar is filled by *remaining* quota: a full green bar means
-  // plenty left, an empty bar means nearly exhausted. The color
-  // ramp (`quotaBarClass`) is keyed off the same remaining value.
-  const remaining = w.percentLeft;
-  const barClass = quotaBarClass(remaining);
-  const staleMs = Date.now() - capturedAt;
-  const isStale = staleMs > 10 * 60 * 1000; // > 10 min
+function QuotaAccountCard({ snapshot }: { snapshot: QuotaSnapshot }): JSX.Element {
+  const windows = snapshot.windows
+    .map((window) => ({
+      window,
+      displayName: quotaWindowDisplayName(window.name, snapshot.provider),
+    }))
+    .filter((entry): entry is { window: QuotaWindow; displayName: string } =>
+      entry.displayName !== null,
+    )
+    .sort(
+      (a, b) =>
+        quotaWindowPriority(a.window.name, snapshot.provider) -
+        quotaWindowPriority(b.window.name, snapshot.provider),
+    );
+  const title = snapshotTitle(snapshot);
+  const tone = snapshotStatusTone(snapshot);
 
   return (
-    <div className={`quota-bar ${barClass}`} aria-label={`${provider} ${w.name} 配额`}>
-      <div className="quota-bar__header">
-        <span className="quota-bar__provider">
-          {provider.charAt(0).toUpperCase() + provider.slice(1)}
+    <article
+      className="quota-account-card"
+      data-provider={providerTone(snapshot.provider)}
+      data-status={tone}
+      aria-label={`${providerDisplayName(snapshot.provider)} ${title} 配额`}
+    >
+      <header className="quota-account-card__header">
+        <div className="quota-account-card__identity">
+          <span className="quota-account-card__chip">
+            {providerDisplayName(snapshot.provider)}
+          </span>
+          <div className="quota-account-card__copy">
+            <h3 className="quota-account-card__name" title={title}>{title}</h3>
+            <span className="quota-account-card__meta" title={`刷新 ${formatClock(snapshot.capturedAt)}`}>
+              {snapshotMeta(snapshot)}
+            </span>
+          </div>
+        </div>
+        <span className="quota-account-card__status" data-tone={tone}>
+          {snapshotStatusLabel(snapshot)}
         </span>
-        <span className="quota-bar__window-name">{windowDisplayName(w.name)}</span>
-        <span className="quota-bar__source" title={source === 'remote_api' ? '来自官方 API' : '来自本地日志'}>
-          {source === 'remote_api' ? '●' : '○'}
-        </span>
+      </header>
+
+      {snapshot.rawPlanLabel && (
+        <div className="quota-account-card__plan">
+          <span>{planLabelPrefix(snapshot.provider)}</span>
+          <strong>{snapshot.rawPlanLabel}</strong>
+        </div>
+      )}
+
+      <div className="quota-account-card__windows">
+        {windows.length > 0 ? (
+          windows.map(({ window, displayName }, i) => (
+            <QuotaWindowRow
+              key={`${window.name}-${i}`}
+              window={window}
+              displayName={displayName}
+            />
+          ))
+        ) : (
+          <p className="quota-account-card__empty">暂无可显示额度</p>
+        )}
       </div>
 
-      <div className="quota-bar__track">
+      {snapshot.lastErrorMessage && (
+        <p className="quota-account-card__notice" data-tone={tone}>
+          {snapshot.lastErrorMessage}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function QuotaWindowRow({
+  window: w,
+  displayName,
+}: {
+  window: QuotaWindow;
+  displayName: string;
+}): JSX.Element {
+  const remaining = w.percentLeft;
+  const rowClass = quotaWindowToneClass(remaining);
+
+  return (
+    <div className={`quota-window-row ${rowClass}`} aria-label={`${displayName} 剩余 ${formatPercent(remaining)}`}>
+      <span className="quota-window-row__label" title={displayName}>{displayName}</span>
+      <span className="quota-window-row__numbers">
+        <strong className="quota-window-row__percent">{formatPercent(remaining)}</strong>
+        <span className="quota-window-row__reset">{formatClock(w.resetAt)}</span>
+      </span>
+      <div className="quota-window-row__track">
         <div
-          className="quota-bar__fill"
-          style={{ width: `${Math.min(remaining ?? 0, 100)}%` }}
+          className="quota-window-row__fill"
+          style={{ width: `${clampPercent(remaining)}%` }}
           aria-valuenow={remaining ?? 0}
           aria-valuemin={0}
           aria-valuemax={100}
           role="progressbar"
         />
-      </div>
-
-      <div className="quota-bar__footer">
-        <span className="quota-bar__percent">
-          {w.percentLeft !== null ? `剩余 ${w.percentLeft.toFixed(0)}%` : '未知'}
-        </span>
-        <span className="quota-bar__reset">
-          重置: {formatResetTime(w.resetAt)}
-        </span>
-        {isStale && (
-          <span className="quota-bar__stale" title="数据可能不是最新的">⏱</span>
-        )}
       </div>
     </div>
   );

@@ -8,9 +8,10 @@
 //   • Capability chip ("官方 Quota" / "可用性检查" / "本地用量" / "未支持")
 //   • Two timestamp slots — last validated / last quota fetch
 //   • Status badge derived from `lastErrorCode`
-//   • A refresh button (disabled while a refresh is in-flight, or when
-//     the row is in `auth_expired` state — re-import from CPA is the
-//     only way out per Requirement 2)
+//   • A refresh button (disabled while a refresh is in-flight; most
+//     `auth_expired` rows still require re-import, while Google Code
+//     Assist rows are allowed one retry because CPA exports carry
+//     ambiguous timestamp fields that can be misread as token expiry)
 //   • A delete button
 //
 // Special cases drawn from `requirements.md` Requirements 5.4, 6.5,
@@ -21,10 +22,10 @@
 //     copy "暂无官方 quota 接口，仅做可用性 / 本地统计". This keeps the
 //     UI honest — DeepSeek / Xiaomi / OpenAI-compatible accounts must
 //     never appear as if they were producing first-party quota data.
-//   • For `lastErrorCode === 'auth_expired'` the row shows
-//     "认证已过期，请从 CPA 重新导出 / 导入" and disables the refresh
-//     button. Monitor v1 does not embed any third-party OAuth client
-//     so token refresh is out of scope (Requirement 2).
+//   • For `lastErrorCode === 'auth_expired'` the row shows recovery
+//     copy. Non-Google rows disable refresh; Gemini CLI / Antigravity
+//     rows keep refresh enabled so a stale false-positive expiry can
+//     be retried after CPA/local credentials have changed.
 //
 // Multi-account ordering: rows are stable-sorted by `importedAt` ASC
 // inside the component, mirroring the repository's default ordering.
@@ -312,13 +313,16 @@ function ProviderAuthRow({
 }: ProviderAuthRowProps): JSX.Element {
   const identifier = formatIdentifier(row.accountId, row.projectId);
   const isExpired = row.lastErrorCode === 'auth_expired';
+  const canRetryExpired =
+    isExpired &&
+    (row.provider === 'gemini-cli' || row.provider === 'antigravity');
   const isDisabled = !row.enabled;
 
   // Refresh is blocked when:
   //   - a sibling IPC is in flight (`busy`),
-  //   - the credential expired (re-import is the only fix), or
+  //   - the credential expired and cannot be safely retried, or
   //   - the user paused the account (toggle it back on first).
-  const refreshDisabled = busy || isExpired || isDisabled;
+  const refreshDisabled = busy || (isExpired && !canRetryExpired) || isDisabled;
 
   // Non-`official` capability rows replace the would-be percentage
   // strip with the standard zh-CN explainer copy. Per Requirement
@@ -425,7 +429,9 @@ function ProviderAuthRow({
           data-testid={`provider-auth-list-row-${row.id}-expired-hint`}
         >
           <AlertCircle size={12} strokeWidth={2} aria-hidden="true" />
-          认证已过期，请从 CPA 重新导出 / 导入
+          {canRetryExpired
+            ? '认证状态可能已过期，可先刷新重试；仍失败再从 CPA 重新导出 / 导入'
+            : '认证已过期，请从 CPA 重新导出 / 导入'}
         </p>
       )}
 

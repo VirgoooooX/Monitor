@@ -79,7 +79,7 @@ interface ValidationErrors {
  */
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorMode: 'dark',
-  compactTheme: 'obsidian-glass',
+  compactTheme: 'mint-monitor',
   fontScale: 1,
 };
 
@@ -90,6 +90,38 @@ interface CompactThemeOption {
 }
 
 const COMPACT_THEME_OPTIONS: readonly CompactThemeOption[] = [
+  // v2 design-language presets
+  {
+    id: 'liquid-glass',
+    label: '液态玻璃',
+    description: '浅色半透明玻璃，桌面 widget 般通透。',
+  },
+  {
+    id: 'material-you',
+    label: 'Material You',
+    description: '浅色 MD3 双色块，亲和现代。',
+  },
+  {
+    id: 'soft-neumorph',
+    label: '柔和拟态',
+    description: '浅色凸起外壳与内凹槽，安静低噪。',
+  },
+  {
+    id: 'paper-dashboard',
+    label: '纸感仪表',
+    description: '近白纸面 + 细线分隔，办公低干扰。',
+  },
+  {
+    id: 'mint-monitor',
+    label: '薄荷监控',
+    description: '暗色半透明卡片，参考图风格。',
+  },
+  {
+    id: 'device-oled',
+    label: '硬件 OLED',
+    description: '金属外壳 + 黑色 OLED 屏 + LED 段条。',
+  },
+  // v1 legacy presets (retained for users who preferred them)
   {
     id: 'obsidian-glass',
     label: '黑曜玻璃',

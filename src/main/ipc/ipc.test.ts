@@ -73,7 +73,7 @@ describe('appSettingsPatchSchema', () => {
     const result = appSettingsPatchSchema.safeParse({
       appearance: {
         colorMode: 'light',
-        compactTheme: 'aurora-ring',
+        compactTheme: 'liquid-glass',
       },
     });
     expect(result.success).toBe(true);

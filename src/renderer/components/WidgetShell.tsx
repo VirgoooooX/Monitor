@@ -1,28 +1,34 @@
-// WidgetShell — the compact-window container (redesigned).
+// WidgetShell — the compact-window container.
 //
-// New layout (50/50 split — network + AI quota):
+// Layout (unchanged across themes):
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │  Network section (~50%)                                       │
-//   │   • Left: status + latency, then group · node name            │
-//   │   • Right: sparkline spanning both network rows               │
+//   │ Network slot (~72 px)                                         │
+//   │   • Left: status hero + node group/name                       │
+//   │   • Right: sparkline mini-window                              │
 //   ├──────────────────────────────────────────────────────────────┤
-//   │  AI section (~50%)                                            │
-//   │   • QuotaStrip: one row per quota window (sorted by urgency) │
-//   │   • Token summary: Codex N · Gemini N · OC N                 │
+//   │ Usage slot (remaining)                                        │
+//   │   • QuotaStrip — one row per quota window                     │
+//   │   • Token summary — Codex N · Gemini N · OC N                 │
 //   └──────────────────────────────────────────────────────────────┘
 //
-// The whole shell is clickable → opens expanded window.
+// Theme system
+// ------------
+// `data-compact-theme` on the root drives the visual preset. Each
+// theme is a full design language (material, container, dividers,
+// status pill, sparkline framing, quota row). The DOM splits into
+// three layers so themes can paint material + ornaments without
+// touching the data slots:
 //
-// Theming
-// -------
-// `data-compact-theme` on the root drives the visual preset. The
-// underlying business layout (status hero, sparkline, quota strip,
-// usage summary) is identical across every preset; only the two
-// `aria-hidden` decoration layers (`__fx`, `__chrome`) plus theme
-// tokens change. Decoration layers are absolutely positioned and
-// `pointer-events: none` so they never intercept the click that
-// opens the expanded window.
+//   .compact-frame
+//     ├── .compact-frame__backdrop    — material (glass, paper, …)
+//     ├── .compact-frame__ornaments   — non-layout decoration
+//     └── .compact-frame__content     — slots (z-index: 2)
+//          ├── .compact-network-slot
+//          └── .compact-usage-slot
+//
+// Both decoration layers are `aria-hidden` and `pointer-events: none`
+// so they cannot intercept the click that opens the expanded window.
 //
 // References:
 //   • PLAN.md §UI Implementation Guide §紧凑首页
@@ -70,20 +76,18 @@ export function WidgetShell({ state, appearance }: WidgetShellProps): JSX.Elemen
     }
   };
 
-  // Mirror the live status onto the root so theme CSS (notably
-  // `signal-pulse`) can recolour its decoration without re-rendering.
-  // We also expose the compact theme directly so unit tests can
-  // assert the active preset without a roundtrip through the App
-  // root's data attributes.
+  // Mirror the live status onto the root so theme CSS can recolour
+  // its ornaments and status pill without re-rendering.
   const dataProps = {
     'data-color-mode': appearance?.colorMode ?? 'dark',
-    'data-compact-theme': appearance?.compactTheme ?? 'obsidian-glass',
+    'data-compact-theme': appearance?.compactTheme ?? 'mint-monitor',
     'data-status': state.status,
+    'data-health-status': state.status,
   };
 
   return (
     <div
-      className="widget-shell"
+      className="compact-frame"
       data-testid="widget-shell"
       role="button"
       tabIndex={0}
@@ -99,43 +103,46 @@ export function WidgetShell({ state, appearance }: WidgetShellProps): JSX.Elemen
       {/* Theme decoration layers. Both are aria-hidden +
           pointer-events: none (in CSS) so they never intercept
           clicks targeting the shell or any interior element. */}
-      <div className="widget-shell__fx" aria-hidden="true" />
-      <div className="widget-shell__chrome" aria-hidden="true" />
+      <div className="compact-frame__backdrop" aria-hidden="true" />
+      <div className="compact-frame__ornaments" aria-hidden="true" />
 
-      {/* Foreground content — same business markup as before, just
-          wrapped so the theme layers can sit beneath it without
-          obscuring text or controls. */}
-      <div className="widget-shell__content">
-        {/* ── Network section: two-line copy + two-row sparkline ── */}
-        <div className="widget-shell__network">
-          <div className="widget-shell__network-copy">
+      <div className="compact-frame__content">
+        {/* ── Network slot: status + node copy on the left, sparkline
+              mini-window on the right ──────────────────────────── */}
+        <section className="compact-network-slot" aria-label="网络状态">
+          <div className="compact-network-slot__copy">
             <StatusHero state={state} />
 
-            <span className="widget-shell__node" title={line.tooltip}>
+            <div className="compact-node-rail" title={line.tooltip}>
               {line.secondary && (
-                <span className="widget-shell__node-group">{line.secondary}</span>
+                <span className="compact-node-rail__group">
+                  {line.secondary}
+                </span>
               )}
-              <span className="widget-shell__node-name">{line.primary}</span>
-            </span>
+              <span className="compact-node-rail__name">{line.primary}</span>
+            </div>
           </div>
 
-          <div className="widget-shell__sparkline" aria-hidden="true">
+          <div className="compact-sparkline-box" aria-hidden="true">
             <Sparkline data={state.currentNode.sparkline} />
           </div>
-        </div>
+        </section>
 
-        {/* ── AI section ── */}
-        <div className="widget-shell__ai">
+        {/* ── Usage slot: quota rows + token summary ──────────── */}
+        <section className="compact-usage-slot" aria-label="AI 用量">
           <QuotaStrip />
 
           {(usage.codex > 0 || usage.gemini > 0 || usage.opencode > 0) && (
-            <div className="widget-shell__usage" data-testid="widget-shell-usage">
+            <div
+              className="compact-usage-summary"
+              data-testid="widget-shell-usage"
+            >
               <span>Codex {formatTokens(usage.codex)}</span>
               <span> · Gemini {formatTokens(usage.gemini)}</span>
               <span> · OC {formatTokens(usage.opencode)}</span>
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   );

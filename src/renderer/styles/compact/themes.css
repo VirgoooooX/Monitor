@@ -1,70 +1,1230 @@
 /*
- * Compact widget theme presets and compact-only motion rules.
+ * Compact widget — six theme presets.
+ *
+ * Each theme defines:
+ *   1. Token overrides on `.compact-frame[data-compact-theme='...']`
+ *   2. `.compact-frame__backdrop` paint (material)
+ *   3. `.compact-frame__ornaments` paint (decoration; never layout)
+ *   4. Optional theme-specific tweaks on slot primitives
+ *
+ * Layout is owned by `compact/base.css` and never overridden here.
+ *
+ * Animations are gated by `prefers-reduced-motion: no-preference` so
+ * the widget is calm for users who request reduced motion.
+ *
+ * ──────────────────────────────────────────────────────────────────
+ * Theme 1: liquid-glass
+ *   Light translucent iOS-style glass widget.
+ * Theme 2: material-you
+ *   Light Material You / MD3 tonal surfaces.
+ * Theme 3: soft-neumorph
+ *   Light soft neumorphic — embossed + inset.
+ * Theme 4: paper-dashboard
+ *   Light paper / Notion-style ledger.
+ * Theme 5: mint-monitor
+ *   Dark mint-green monitoring card (reference design).
+ * Theme 6: device-oled
+ *   Dark hardware OLED dashboard with metal bezel.
+ * ──────────────────────────────────────────────────────────────────
  */
 
-/* ── Compact themes ──────────────────────────────────────────────────────
-   Each preset overrides the tokens defined on `.widget-shell` and paints
-   the two decoration layers (`__fx`, `__chrome`). Animations are gated
-   behind `prefers-reduced-motion` at the bottom of this file so the
-   widget stops spinning / pulsing for users who request reduced motion.
-*/
 
-/* obsidian-glass — default, calm dark glass with a cool rim. */
-.widget-shell[data-compact-theme='obsidian-glass'] {
-  --widget-bg:
-    linear-gradient(145deg, #18181c, #0e0e12);
-  --widget-border: rgba(255, 255, 255, 0.07);
-  /* No outer shadow — the widget fills the BrowserWindow so any
-     outer shadow would be clipped by the OS. Lift comes from the
-     inset highlight on `.widget-shell__chrome`. */
-  --widget-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --widget-accent: rgba(165, 180, 252, 0.95);
-  --widget-glow: rgba(165, 180, 252, 0.22);
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 1: liquid-glass — light translucent glass.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='liquid-glass'] {
+  --compact-bg: rgba(255, 255, 255, 0.34);
+  --compact-surface: rgba(255, 255, 255, 0.46);
+  --compact-surface-strong: rgba(255, 255, 255, 0.62);
+  --compact-text: #12201c;
+  --compact-muted: rgba(18, 32, 28, 0.62);
+  --compact-faint: rgba(18, 32, 28, 0.42);
+  --compact-border: rgba(255, 255, 255, 0.62);
+  --compact-border-strong: rgba(255, 255, 255, 0.82);
+  --compact-divider: rgba(120, 160, 200, 0.32);
+  --compact-accent: #10b981;
+  --compact-accent-soft: rgba(16, 185, 129, 0.18);
+  --compact-radius: 26px;
+  --compact-radius-inner: 12px;
+  --compact-shadow: 0 18px 44px rgba(80, 120, 160, 0.22);
+  font-variant-numeric: tabular-nums;
 }
 
-.widget-shell[data-compact-theme='obsidian-glass'] .widget-shell__fx {
+.compact-frame[data-compact-theme='liquid-glass'][data-color-mode='dark'] {
+  --compact-bg: rgba(32, 36, 38, 0.46);
+  --compact-surface: rgba(255, 255, 255, 0.08);
+  --compact-surface-strong: rgba(255, 255, 255, 0.14);
+  --compact-text: #f4fbf8;
+  --compact-muted: rgba(244, 251, 248, 0.64);
+  --compact-faint: rgba(244, 251, 248, 0.42);
+  --compact-border: rgba(255, 255, 255, 0.16);
+  --compact-border-strong: rgba(255, 255, 255, 0.28);
+  --compact-divider: rgba(255, 255, 255, 0.10);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-frame__backdrop {
+  background:
+    radial-gradient(60% 50% at 18% 18%,
+      rgba(255, 255, 255, 0.55), transparent 60%),
+    radial-gradient(80% 60% at 100% 100%,
+      rgba(125, 211, 252, 0.32), transparent 65%),
+    var(--compact-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.35);
+  backdrop-filter: blur(24px) saturate(1.35);
+  box-shadow: var(--compact-shadow);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-frame__ornaments {
+  /* Double glass rim — outer hairline + inner highlight. */
+  box-shadow:
+    inset 0 0 0 1px var(--compact-border),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
+    inset 0 -1px 0 rgba(80, 120, 160, 0.08);
+}
+
+/* Misty fold instead of a hard divider. */
+.compact-frame[data-compact-theme='liquid-glass']
+  .compact-network-slot {
+  border-bottom: 0;
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.72),
+    transparent);
+  background-repeat: no-repeat;
+  background-size: 100% 1px;
+  background-position: 0 100%;
+}
+
+.compact-frame[data-compact-theme='liquid-glass']
+  .compact-usage-summary {
+  border-top: 0;
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.62),
+    transparent);
+  background-repeat: no-repeat;
+  background-size: 100% 1px;
+  background-position: 0 0;
+}
+
+/* Glass droplet status dot — subtle inner highlight. */
+.compact-frame[data-compact-theme='liquid-glass'] .status-hero__dot {
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.32),
+    0 0 12px var(--compact-status-color),
+    inset 0 1px 1px rgba(255, 255, 255, 0.6);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .status-hero__latency {
+  background: rgba(255, 255, 255, 0.55);
+  color: #12201c;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--compact-accent);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-node-rail {
+  background: rgba(255, 255, 255, 0.36);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .quota-strip__track {
+  background: rgba(255, 255, 255, 0.36);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .quota-strip__fill {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.48),
+    0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+/* Slow specular sweep on hover — disabled for reduced-motion users. */
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='liquid-glass'] .compact-frame__ornaments::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      120deg,
+      transparent 35%,
+      rgba(255, 255, 255, 0.42) 50%,
+      transparent 65%);
+    transform: translateX(-100%);
+    opacity: 0;
+    transition: transform 1.2s ease, opacity 0.3s ease;
+  }
+  .compact-frame[data-compact-theme='liquid-glass']:hover .compact-frame__ornaments::before {
+    transform: translateX(100%);
+    opacity: 0.7;
+  }
+
+  .compact-frame[data-compact-theme='liquid-glass'] .status-hero__dot {
+    animation: compact-glass-pulse 3s ease-in-out infinite;
+  }
+}
+
+@keyframes compact-glass-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.32), 0 0 12px var(--compact-status-color), inset 0 1px 1px rgba(255, 255, 255, 0.6); }
+  50%      { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.20), 0 0 18px var(--compact-status-color), inset 0 1px 1px rgba(255, 255, 255, 0.6); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 2: material-you — light tonal MD3 surfaces.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='material-you'] {
+  --md-surface: #fffbfe;
+  --md-primary-container: #d7f8e7;
+  --md-secondary-container: #e7f0ec;
+  --md-on-surface: #1b1d1f;
+  --md-on-muted: #5c6461;
+  --md-outline: rgba(81, 91, 87, 0.18);
+  --md-primary: #0f8f62;
+
+  --compact-bg: var(--md-surface);
+  --compact-surface: rgba(15, 143, 98, 0.08);
+  --compact-surface-strong: var(--md-primary-container);
+  --compact-text: var(--md-on-surface);
+  --compact-muted: var(--md-on-muted);
+  --compact-faint: rgba(81, 91, 87, 0.66);
+  --compact-border: var(--md-outline);
+  --compact-border-strong: rgba(81, 91, 87, 0.36);
+  --compact-divider: transparent;
+  --compact-accent: var(--md-primary);
+  --compact-accent-soft: rgba(15, 143, 98, 0.16);
+  --compact-radius: 24px;
+  --compact-radius-inner: 16px;
+  --compact-shadow: 0 8px 22px rgba(30, 35, 45, 0.12);
+}
+
+.compact-frame[data-compact-theme='material-you'][data-color-mode='dark'] {
+  --md-surface: #141815;
+  --md-primary-container: #153a2c;
+  --md-secondary-container: #1f2b27;
+  --md-on-surface: #eef7f1;
+  --md-on-muted: #a8b8b0;
+  --md-outline: rgba(255, 255, 255, 0.12);
+  --md-primary: #4ade80;
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-frame__backdrop {
+  background: var(--md-surface);
+  box-shadow: var(--compact-shadow);
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-frame__ornaments {
+  box-shadow: inset 0 0 0 1px var(--md-outline);
+}
+
+/* Network slot becomes a primary container; usage slot a secondary
+   container. Use a small gap instead of a divider line. */
+.compact-frame[data-compact-theme='material-you'] .compact-frame__content {
+  padding: 8px;
+  gap: 8px;
+  grid-template-rows: 64px 1fr;
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-network-slot {
+  border-bottom: 0;
+  background: var(--md-primary-container);
+  border-radius: var(--compact-radius-inner);
+  padding: 8px 12px;
+  align-items: center;
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-usage-slot {
+  background: var(--md-secondary-container);
+  border-radius: var(--compact-radius-inner);
+  padding: 8px 12px;
+  border-top: 0;
+}
+
+.compact-frame[data-compact-theme='material-you'] .status-hero {
+  gap: 8px;
+}
+
+.compact-frame[data-compact-theme='material-you'] .status-hero__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-on-surface);
+}
+
+.compact-frame[data-compact-theme='material-you'] .status-hero__latency {
+  background: rgba(15, 143, 98, 0.16);
+  color: var(--md-primary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  border: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-node-rail {
+  background: rgba(255, 255, 255, 0.4);
+  border: 0;
+  border-radius: 12px;
+  padding: 2px 10px;
+}
+.compact-frame[data-compact-theme='material-you'][data-color-mode='dark']
+  .compact-node-rail {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  color: var(--md-primary);
+}
+.compact-frame[data-compact-theme='material-you'][data-color-mode='dark']
+  .compact-sparkline-box {
+  background: transparent;
+}
+
+.compact-frame[data-compact-theme='material-you'] .quota-strip__track {
+  background: rgba(81, 91, 87, 0.16);
+  border: 0;
+  height: 5px;
+}
+.compact-frame[data-compact-theme='material-you'][data-color-mode='dark']
+  .quota-strip__track {
+  background: rgba(255, 255, 255, 0.10);
+}
+.compact-frame[data-compact-theme='material-you'] .quota-strip__percent {
+  color: var(--md-primary);
+}
+
+.compact-frame[data-compact-theme='material-you'] .compact-usage-summary {
+  border-top: 0;
+  color: var(--md-on-muted);
+  font-size: 10.5px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='material-you'] {
+    transition: box-shadow 0.18s ease, transform 0.18s ease;
+  }
+  .compact-frame[data-compact-theme='material-you']:hover .compact-frame__backdrop {
+    box-shadow: 0 14px 30px rgba(30, 35, 45, 0.18);
+  }
+  .compact-frame[data-compact-theme='material-you']:active {
+    transform: scale(0.995);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 3: soft-neumorph — light soft neumorphic.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='soft-neumorph'] {
+  --neo-bg: #e9edf0;
+  --neo-text: #27312f;
+  --neo-muted: #717c79;
+  --neo-highlight: rgba(255, 255, 255, 0.92);
+  --neo-shadow: rgba(150, 160, 170, 0.42);
+  --neo-accent: #26b783;
+
+  --compact-bg: var(--neo-bg);
+  --compact-surface: var(--neo-bg);
+  --compact-surface-strong: #f0f3f6;
+  --compact-text: var(--neo-text);
+  --compact-muted: var(--neo-muted);
+  --compact-faint: rgba(113, 124, 121, 0.7);
+  --compact-border: transparent;
+  --compact-divider: transparent;
+  --compact-accent: var(--neo-accent);
+  --compact-accent-soft: rgba(38, 183, 131, 0.18);
+  --compact-radius: 22px;
+  --compact-radius-inner: 14px;
+  --compact-shadow:
+    10px 10px 24px var(--neo-shadow),
+    -10px -10px 24px var(--neo-highlight);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'][data-color-mode='dark'] {
+  --neo-bg: #252b2d;
+  --neo-text: #edf4f1;
+  --neo-muted: #9aa9a4;
+  --neo-highlight: rgba(255, 255, 255, 0.07);
+  --neo-shadow: rgba(0, 0, 0, 0.5);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-frame__backdrop {
+  background: var(--neo-bg);
+  box-shadow: var(--compact-shadow);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-frame__content {
+  padding: 12px 14px;
+  gap: 10px;
+}
+
+/* Each slot is an inset groove. */
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-network-slot {
+  border-bottom: 0;
+  border-radius: var(--compact-radius-inner);
+  padding: 8px 12px;
+  background: var(--neo-bg);
+  box-shadow:
+    inset 4px 4px 8px var(--neo-shadow),
+    inset -4px -4px 8px var(--neo-highlight);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-usage-slot {
+  border-top: 0;
+  border-radius: var(--compact-radius-inner);
+  padding: 8px 12px;
+  background: var(--neo-bg);
+  box-shadow:
+    inset 4px 4px 8px var(--neo-shadow),
+    inset -4px -4px 8px var(--neo-highlight);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .status-hero__dot {
+  /* Inset LED dot — embedded into the surface rather than glowing on
+     top of it. */
+  width: 8px;
+  height: 8px;
+  background: var(--compact-status-color);
+  box-shadow:
+    inset 1px 1px 2px rgba(0, 0, 0, 0.3),
+    0 0 6px color-mix(in srgb, var(--compact-status-color) 60%, transparent);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .status-hero__label {
+  color: var(--neo-text);
+  font-weight: 600;
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .status-hero__latency {
+  background: var(--neo-bg);
+  color: var(--neo-text);
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 2px 8px;
+  border: 0;
+  box-shadow:
+    inset 2px 2px 4px var(--neo-shadow),
+    inset -2px -2px 4px var(--neo-highlight);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-node-rail {
+  background: var(--neo-bg);
+  border: 0;
+  border-radius: 10px;
+  padding: 3px 10px;
+  box-shadow:
+    inset 2px 2px 4px var(--neo-shadow),
+    inset -2px -2px 4px var(--neo-highlight);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--neo-accent);
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .quota-strip__track {
+  background: var(--neo-bg);
+  border: 0;
+  height: 6px;
+  box-shadow:
+    inset 2px 2px 4px var(--neo-shadow),
+    inset -2px -2px 4px var(--neo-highlight);
+}
+.compact-frame[data-compact-theme='soft-neumorph'] .quota-strip__fill {
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.compact-frame[data-compact-theme='soft-neumorph'] .quota-strip__percent {
+  color: var(--neo-text);
+  font-weight: 700;
+}
+
+.compact-frame[data-compact-theme='soft-neumorph'] .compact-usage-summary {
+  border-top: 0;
+  color: var(--neo-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='soft-neumorph'] {
+    transition: box-shadow 0.2s ease;
+  }
+  .compact-frame[data-compact-theme='soft-neumorph']:hover .compact-frame__backdrop {
+    box-shadow:
+      14px 14px 28px var(--neo-shadow),
+      -14px -14px 28px var(--neo-highlight);
+  }
+  .compact-frame[data-compact-theme='soft-neumorph']:active .compact-frame__backdrop {
+    box-shadow:
+      inset 6px 6px 12px var(--neo-shadow),
+      inset -6px -6px 12px var(--neo-highlight);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 4: paper-dashboard — quiet light paper / Notion ledger.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='paper-dashboard'] {
+  --paper-bg: #fbfaf7;
+  --paper-surface: #f2f3ef;
+  --paper-line: rgba(31, 38, 35, 0.09);
+  --paper-text: #202623;
+  --paper-muted: #68736f;
+  --paper-accent: #159a6b;
+
+  --compact-bg: var(--paper-bg);
+  --compact-surface: var(--paper-surface);
+  --compact-surface-strong: #ebece8;
+  --compact-text: var(--paper-text);
+  --compact-muted: var(--paper-muted);
+  --compact-faint: rgba(104, 115, 111, 0.78);
+  --compact-border: var(--paper-line);
+  --compact-border-strong: rgba(31, 38, 35, 0.18);
+  --compact-divider: var(--paper-line);
+  --compact-accent: var(--paper-accent);
+  --compact-accent-soft: rgba(21, 154, 107, 0.12);
+  --compact-radius: 16px;
+  --compact-radius-inner: 10px;
+  --compact-shadow: 0 10px 28px rgba(40, 45, 50, 0.10);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'][data-color-mode='dark'] {
+  --paper-bg: #202321;
+  --paper-surface: #2a2e2b;
+  --paper-line: rgba(255, 255, 255, 0.08);
+  --paper-text: #f1f3ef;
+  --paper-muted: #a7afa9;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-frame__backdrop {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 6px,
+      rgba(31, 38, 35, 0.018) 6px 7px),
+    var(--paper-bg);
+  box-shadow: var(--compact-shadow);
+}
+.compact-frame[data-compact-theme='paper-dashboard'][data-color-mode='dark']
+  .compact-frame__backdrop {
+  background: var(--paper-bg);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-frame__ornaments {
+  box-shadow: inset 0 0 0 1px var(--paper-line);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-network-slot {
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .status-hero__dot {
+  width: 9px;
+  height: 9px;
+  background: var(--compact-status-color);
+  box-shadow: none;
+  border: 0;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .status-hero__label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--paper-text);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .status-hero__latency {
+  background: transparent;
+  color: var(--paper-muted);
+  border: 1px solid var(--paper-line);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-node-rail {
+  background: var(--paper-surface);
+  border: 1px solid var(--paper-line);
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  color: #2563eb;
+  border-radius: 0;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__row {
+  height: 17px;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__track {
+  background: var(--paper-surface);
+  border: 1px solid var(--paper-line);
+  height: 4px;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__percent {
+  color: var(--paper-text);
+  font-weight: 700;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__provider {
+  color: var(--paper-muted);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-usage-summary {
+  border-top: 1px solid var(--paper-line);
+  color: var(--paper-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='paper-dashboard'] {
+    transition: border-color 0.2s ease;
+  }
+  .compact-frame[data-compact-theme='paper-dashboard']:hover .compact-frame__ornaments {
+    box-shadow:
+      inset 0 0 0 1px var(--compact-border-strong),
+      0 14px 36px rgba(40, 45, 50, 0.14);
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 5: mint-monitor — dark mint-green monitoring card.
+ *  Reference design for the redesigned widget.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='mint-monitor'] {
+  --mint-bg: rgba(15, 19, 20, 0.84);
+  --mint-surface: rgba(255, 255, 255, 0.045);
+  --mint-surface-strong: rgba(255, 255, 255, 0.07);
+  --mint-border: rgba(126, 255, 205, 0.14);
+  --mint-border-strong: rgba(126, 255, 205, 0.26);
+  --mint-text: #f2fbf7;
+  --mint-muted: rgba(210, 232, 224, 0.58);
+  --mint-faint: rgba(210, 232, 224, 0.36);
+  --mint-accent: #34d399;
+  --mint-accent-soft: rgba(52, 211, 153, 0.18);
+
+  --compact-bg: var(--mint-bg);
+  --compact-surface: var(--mint-surface);
+  --compact-surface-strong: var(--mint-surface-strong);
+  --compact-text: var(--mint-text);
+  --compact-muted: var(--mint-muted);
+  --compact-faint: var(--mint-faint);
+  --compact-border: var(--mint-border);
+  --compact-border-strong: var(--mint-border-strong);
+  --compact-divider: rgba(126, 255, 205, 0.10);
+  --compact-accent: var(--mint-accent);
+  --compact-accent-soft: var(--mint-accent-soft);
+  --compact-radius: 20px;
+  --compact-radius-inner: 10px;
+  --compact-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.42),
+    0 0 0 1px var(--mint-border);
+}
+
+/* Light mode for mint-monitor stays dark (this is the theme's
+   identity); we only nudge transparency + border opacity slightly. */
+.compact-frame[data-compact-theme='mint-monitor'][data-color-mode='light'] {
+  --mint-bg: rgba(20, 26, 28, 0.78);
+  --mint-border: rgba(126, 255, 205, 0.22);
+  --mint-border-strong: rgba(126, 255, 205, 0.36);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-frame__backdrop {
+  background:
+    radial-gradient(80% 60% at 100% 0%,
+      rgba(52, 211, 153, 0.06), transparent 65%),
+    linear-gradient(160deg, transparent, transparent 60%,
+      rgba(52, 211, 153, 0.04) 100%),
+    var(--mint-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.42),
+    0 0 32px rgba(52, 211, 153, 0.08);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-frame__ornaments {
+  /* Faint grid plus border. */
+  background:
+    linear-gradient(rgba(126, 255, 205, 0.04) 1px, transparent 1px) 0 0 / 100% 24px,
+    linear-gradient(90deg, rgba(126, 255, 205, 0.04) 1px, transparent 1px) 0 0 / 24px 100%;
+  opacity: 0.55;
+  box-shadow: inset 0 0 0 1px var(--mint-border);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .status-hero__dot {
+  width: 9px;
+  height: 9px;
+  box-shadow:
+    0 0 8px var(--compact-status-color),
+    0 0 0 2px rgba(255, 255, 255, 0.04);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .status-hero__label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .status-hero__latency {
+  background: var(--mint-accent-soft);
+  color: var(--mint-accent);
+  border: 1px solid var(--mint-border);
+  font-weight: 800;
+  font-size: 11px;
+  padding: 1px 9px;
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-node-rail {
+  background: var(--mint-surface);
+  border-color: var(--mint-border);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--mint-accent);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .quota-strip__track {
+  background: var(--mint-surface);
+  border-color: var(--mint-border);
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .quota-strip__percent {
+  color: var(--mint-accent);
+  font-weight: 800;
+  font-size: 11px;
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-usage-summary {
+  border-top: 1px solid var(--compact-divider);
+  color: var(--mint-faint);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='mint-monitor'] .status-hero__dot {
+    animation: compact-mint-breath 2.6s ease-in-out infinite;
+  }
+  .compact-frame[data-compact-theme='mint-monitor'] {
+    transition: box-shadow 0.2s ease;
+  }
+  .compact-frame[data-compact-theme='mint-monitor']:hover .compact-frame__ornaments {
+    box-shadow: inset 0 0 0 1px var(--mint-border-strong);
+  }
+  .compact-frame[data-compact-theme='mint-monitor']:hover .compact-sparkline-box {
+    filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.32));
+  }
+}
+
+@keyframes compact-mint-breath {
+  0%, 100% { box-shadow: 0 0 6px var(--compact-status-color), 0 0 0 2px rgba(255, 255, 255, 0.04); }
+  50%      { box-shadow: 0 0 12px var(--compact-status-color), 0 0 0 3px rgba(255, 255, 255, 0.06); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme 6: device-oled — hardware OLED dashboard with metal bezel.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='device-oled'] {
+  --oled-shell: #202426;
+  --oled-bevel: #343a3d;
+  --oled-screen: #050807;
+  --oled-text: #dfffee;
+  --oled-muted: rgba(190, 230, 210, 0.52);
+  --oled-green: #35f2a0;
+  --oled-amber: #f4c95d;
+  --oled-red: #ff5f6d;
+
+  --compact-bg: var(--oled-shell);
+  --compact-surface: rgba(53, 242, 160, 0.08);
+  --compact-surface-strong: rgba(53, 242, 160, 0.16);
+  --compact-text: var(--oled-text);
+  --compact-muted: var(--oled-muted);
+  --compact-faint: rgba(190, 230, 210, 0.32);
+  --compact-border: rgba(53, 242, 160, 0.18);
+  --compact-border-strong: rgba(53, 242, 160, 0.32);
+  --compact-divider: rgba(53, 242, 160, 0.18);
+  --compact-accent: var(--oled-green);
+  --compact-accent-soft: rgba(53, 242, 160, 0.14);
+  --compact-radius: 18px;
+  --compact-radius-inner: 8px;
+  --compact-font: 'Cascadia Mono', 'JetBrains Mono', 'Consolas', 'Microsoft YaHei UI', monospace;
+}
+
+/* Light mode flips the bezel to a light brushed-metal look but keeps
+   the inner OLED screen dark. */
+.compact-frame[data-compact-theme='device-oled'][data-color-mode='light'] {
+  --oled-shell: #c8ccd0;
+  --oled-bevel: #e0e3e6;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-frame__backdrop {
+  background:
+    linear-gradient(160deg, var(--oled-bevel), var(--oled-shell));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 8px 22px rgba(0, 0, 0, 0.45);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-frame__ornaments {
+  /* Inner bezel rim + corner screw pinholes. */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 2px 0 rgba(255, 255, 255, 0.05);
+}
+
+.compact-frame[data-compact-theme='device-oled'][data-color-mode='light']
+  .compact-frame__ornaments {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.10),
+    inset 0 2px 0 rgba(255, 255, 255, 0.6);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-frame__content {
+  /* Inset OLED screen — dark background regardless of color mode. */
+  padding: 6px;
+  gap: 4px;
+  grid-template-rows: 70px 1fr;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-network-slot,
+.compact-frame[data-compact-theme='device-oled'] .compact-usage-slot {
+  background: var(--oled-screen);
+  border-radius: var(--compact-radius-inner);
+  padding: 8px 10px;
+  box-shadow:
+    inset 0 0 0 1px rgba(53, 242, 160, 0.10),
+    inset 0 1px 0 rgba(0, 0, 0, 0.6),
+    inset 0 -1px 0 rgba(53, 242, 160, 0.08);
+  border-bottom: 0;
+  border-top: 0;
+  color: var(--oled-text);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .status-hero__dot {
+  width: 7px;
+  height: 7px;
+  box-shadow:
+    0 0 4px var(--compact-status-color),
+    0 0 8px var(--compact-status-color),
+    inset 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .status-hero__label {
+  color: var(--oled-text);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .status-hero__latency {
+  background: transparent;
+  color: var(--oled-green);
+  border: 1px solid rgba(53, 242, 160, 0.32);
+  border-radius: 4px;
+  font-family: var(--compact-font);
+  font-weight: 700;
+  font-size: 11px;
+  padding: 0 6px;
+  letter-spacing: 0.06em;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-node-rail {
+  background: rgba(53, 242, 160, 0.04);
+  border: 0;
+  border-radius: 0;
+  padding: 0 0;
+  font-family: var(--compact-font);
+  font-size: 10px;
+  color: var(--oled-muted);
+  letter-spacing: 0.04em;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-node-rail__name {
+  color: var(--oled-text);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-sparkline-box {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--oled-green);
+}
+
+/* Segmented LED bars for the quota track. We reproduce the segmented
+   look by layering a repeating-linear-gradient on top of the fill. */
+.compact-frame[data-compact-theme='device-oled'] .quota-strip__track {
+  background: rgba(53, 242, 160, 0.08);
+  border: 1px solid rgba(53, 242, 160, 0.18);
+  border-radius: 2px;
+  height: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+.compact-frame[data-compact-theme='device-oled'] .quota-strip__fill {
+  border-radius: 0;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      var(--compact-accent) 0 5px,
+      rgba(0, 0, 0, 0.4) 5px 6px);
+  background-color: var(--compact-accent);
+}
+
+.compact-frame[data-compact-theme='device-oled']
+  .quota-strip__fill--warn {
+  background-color: var(--oled-amber);
+}
+.compact-frame[data-compact-theme='device-oled']
+  .quota-strip__fill--critical {
+  background-color: var(--oled-red);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .quota-strip__percent {
+  font-family: var(--compact-font);
+  color: var(--oled-green);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.compact-frame[data-compact-theme='device-oled']
+  .quota-strip__row[data-urgency='warn'] .quota-strip__percent {
+  color: var(--oled-amber);
+}
+.compact-frame[data-compact-theme='device-oled']
+  .quota-strip__row[data-urgency='critical'] .quota-strip__percent {
+  color: var(--oled-red);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .quota-strip__window-label {
+  font-family: var(--compact-font);
+  color: var(--oled-muted);
+}
+
+.compact-frame[data-compact-theme='device-oled'] .compact-usage-summary {
+  border-top: 1px solid rgba(53, 242, 160, 0.14);
+  font-family: var(--compact-font);
+  color: var(--oled-muted);
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='device-oled'] .status-hero__dot {
+    animation: compact-oled-breath 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes compact-oled-breath {
+  0%, 100% { box-shadow: 0 0 4px var(--compact-status-color), 0 0 8px var(--compact-status-color), inset 0 0 1px rgba(255, 255, 255, 0.4); }
+  50%      { box-shadow: 0 0 6px var(--compact-status-color), 0 0 14px var(--compact-status-color), inset 0 0 1px rgba(255, 255, 255, 0.6); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Legacy theme system v1 — kept as additional options.
+ * Ported from the original `.widget-shell[data-compact-theme=...]`
+ * rules onto the new `.compact-frame` layered DOM. Each theme below
+ * fills the frame edge-to-edge (legacy widgets had no margin) by
+ * overriding `width / height / margin` so the look matches v1.
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* Shared overrides for v1 themes — they paint on the frame itself
+   (no inset card), expect dark text, and share a slimmer radius.
+   These themes also REVERT the new compact layout (sparkline card,
+   node rail pill, generous padding) back to the original v1
+   structure: inline node line, bare sparkline, tighter rows. */
+.compact-frame[data-compact-theme='obsidian-glass'],
+.compact-frame[data-compact-theme='aurora-ring'],
+.compact-frame[data-compact-theme='holo-grid'],
+.compact-frame[data-compact-theme='liquid-metal'],
+.compact-frame[data-compact-theme='signal-pulse'] {
+  /* Edge-to-edge — v1 themes never had a 6 px gutter because the
+     compact window is `transparent: true` and any margin shows the
+     wallpaper. */
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  --compact-radius: 12px;
+  --compact-radius-inner: 8px;
+  --compact-text: #f5f5f7;
+  --compact-muted: rgba(245, 245, 247, 0.55);
+  --compact-faint: rgba(245, 245, 247, 0.40);
+  --compact-divider: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Original v1 layout (shared) ──
+   Restored from the pre-v2 `.widget-shell*` rules so legacy themes
+   reproduce the exact density and structure of the original widget:
+   no sparkline card, no node-rail pill, inline two-line copy, tighter
+   gaps. The new compact-frame DOM is preserved; only the theme-scoped
+   layout values change. */
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-frame__content,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-frame__content,
+.compact-frame[data-compact-theme='holo-grid'] .compact-frame__content,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-frame__content,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-frame__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 10px 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-network-slot,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-network-slot,
+.compact-frame[data-compact-theme='holo-grid'] .compact-network-slot,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-network-slot,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-network-slot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  align-items: center;
+  column-gap: 10px;
+  padding: 0 0 7px 0;
+  border-bottom: 1px solid var(--compact-divider);
+  min-height: 0;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-network-slot__copy,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-network-slot__copy,
+.compact-frame[data-compact-theme='holo-grid'] .compact-network-slot__copy,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-network-slot__copy,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-network-slot__copy {
+  gap: 5px;
+}
+
+/* Inline node line — no card, no border, just text on the surface. */
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-node-rail,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-node-rail,
+.compact-frame[data-compact-theme='holo-grid'] .compact-node-rail,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-node-rail,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-node-rail {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--compact-muted);
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-node-rail__group,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-node-rail__group,
+.compact-frame[data-compact-theme='holo-grid'] .compact-node-rail__group,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-node-rail__group,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-node-rail__group {
+  max-width: 82px;
+  color: var(--compact-faint);
+  font-size: 10px;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-node-rail__name,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-node-rail__name,
+.compact-frame[data-compact-theme='holo-grid'] .compact-node-rail__name,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-node-rail__name,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-node-rail__name {
+  color: rgba(245, 245, 247, 0.72);
+  font-weight: 400;
+}
+
+/* Bare sparkline — no card, no border, no background. */
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-sparkline-box,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-sparkline-box,
+.compact-frame[data-compact-theme='holo-grid'] .compact-sparkline-box,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-sparkline-box,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-sparkline-box {
+  width: 92px;
+  height: 34px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  align-self: stretch;
+  justify-content: flex-end;
+  color: rgba(245, 245, 247, 0.7);
+}
+
+/* Original status hero density — drag-handle, smaller text, no pill
+   container around the latency. */
+.compact-frame[data-compact-theme='obsidian-glass'] .status-hero,
+.compact-frame[data-compact-theme='aurora-ring'] .status-hero,
+.compact-frame[data-compact-theme='holo-grid'] .status-hero,
+.compact-frame[data-compact-theme='liquid-metal'] .status-hero,
+.compact-frame[data-compact-theme='signal-pulse'] .status-hero {
+  gap: 6px;
+  -webkit-app-region: drag;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .status-hero__dot,
+.compact-frame[data-compact-theme='aurora-ring'] .status-hero__dot,
+.compact-frame[data-compact-theme='holo-grid'] .status-hero__dot,
+.compact-frame[data-compact-theme='liquid-metal'] .status-hero__dot,
+.compact-frame[data-compact-theme='signal-pulse'] .status-hero__dot {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 6px var(--compact-status-color);
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .status-hero__label,
+.compact-frame[data-compact-theme='aurora-ring'] .status-hero__label,
+.compact-frame[data-compact-theme='holo-grid'] .status-hero__label,
+.compact-frame[data-compact-theme='liquid-metal'] .status-hero__label,
+.compact-frame[data-compact-theme='signal-pulse'] .status-hero__label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  max-width: none;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .status-hero__latency,
+.compact-frame[data-compact-theme='aurora-ring'] .status-hero__latency,
+.compact-frame[data-compact-theme='holo-grid'] .status-hero__latency,
+.compact-frame[data-compact-theme='liquid-metal'] .status-hero__latency,
+.compact-frame[data-compact-theme='signal-pulse'] .status-hero__latency {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(245, 245, 247, 0.72);
+}
+
+/* Usage slot — no card, original spacing, dashed-style top divider
+   replaced with the v1 solid hairline. */
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-usage-slot,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-usage-slot,
+.compact-frame[data-compact-theme='holo-grid'] .compact-usage-slot,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-usage-slot,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-usage-slot {
+  background: transparent;
+  border-radius: 0;
+  padding: 8px 0 0 0;
+  gap: 6px;
+  flex: 1;
+  box-shadow: none;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-usage-summary,
+.compact-frame[data-compact-theme='aurora-ring'] .compact-usage-summary,
+.compact-frame[data-compact-theme='holo-grid'] .compact-usage-summary,
+.compact-frame[data-compact-theme='liquid-metal'] .compact-usage-summary,
+.compact-frame[data-compact-theme='signal-pulse'] .compact-usage-summary {
+  font-size: 11px;
+  color: var(--compact-muted);
+  padding-top: 2px;
+  border-top: 1px solid var(--compact-divider);
+  border-top-style: solid;
+}
+
+/* Quota strip — original tight rows + thin track. */
+.compact-frame[data-compact-theme='obsidian-glass'] .quota-strip__track,
+.compact-frame[data-compact-theme='aurora-ring'] .quota-strip__track,
+.compact-frame[data-compact-theme='holo-grid'] .quota-strip__track,
+.compact-frame[data-compact-theme='liquid-metal'] .quota-strip__track,
+.compact-frame[data-compact-theme='signal-pulse'] .quota-strip__track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 0;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .quota-strip__percent,
+.compact-frame[data-compact-theme='aurora-ring'] .quota-strip__percent,
+.compact-frame[data-compact-theme='holo-grid'] .quota-strip__percent,
+.compact-frame[data-compact-theme='liquid-metal'] .quota-strip__percent,
+.compact-frame[data-compact-theme='signal-pulse'] .quota-strip__percent {
+  color: rgba(245, 245, 247, 0.72);
+  font-weight: 500;
+  font-size: 10px;
+  min-width: 30px;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .quota-strip__window-label,
+.compact-frame[data-compact-theme='aurora-ring'] .quota-strip__window-label,
+.compact-frame[data-compact-theme='holo-grid'] .quota-strip__window-label,
+.compact-frame[data-compact-theme='liquid-metal'] .quota-strip__window-label,
+.compact-frame[data-compact-theme='signal-pulse'] .quota-strip__window-label {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--compact-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  flex: 0 0 20px;
+}
+
+/* obsidian-glass — calm dark glass with cool rim. */
+.compact-frame[data-compact-theme='obsidian-glass'] {
+  --compact-bg: linear-gradient(145deg, #18181c, #0e0e12);
+  --compact-surface: rgba(255, 255, 255, 0.05);
+  --compact-surface-strong: rgba(255, 255, 255, 0.10);
+  --compact-border: rgba(255, 255, 255, 0.07);
+  --compact-border-strong: rgba(165, 180, 252, 0.22);
+  --compact-accent: #a5b4fc;
+  --compact-accent-soft: rgba(165, 180, 252, 0.22);
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-frame__backdrop {
   background:
     radial-gradient(120% 80% at 0% 0%,
-      rgba(99, 102, 241, 0.10),
-      transparent 55%),
+      rgba(99, 102, 241, 0.10), transparent 55%),
     radial-gradient(110% 70% at 100% 100%,
-      rgba(255, 255, 255, 0.04),
-      transparent 55%);
+      rgba(255, 255, 255, 0.04), transparent 55%),
+    linear-gradient(145deg, #18181c, #0e0e12);
 }
 
-.widget-shell[data-compact-theme='obsidian-glass'] .widget-shell__chrome {
+.compact-frame[data-compact-theme='obsidian-glass'] .compact-frame__ornaments {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-.widget-shell[data-compact-theme='obsidian-glass']:focus-visible
-  .widget-shell__chrome,
-.widget-shell[data-compact-theme='obsidian-glass']:hover
-  .widget-shell__chrome {
+.compact-frame[data-compact-theme='obsidian-glass']:hover
+  .compact-frame__ornaments,
+.compact-frame[data-compact-theme='obsidian-glass']:focus-visible
+  .compact-frame__ornaments {
   box-shadow:
     inset 0 0 0 1px rgba(165, 180, 252, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 24px var(--widget-glow);
+    0 0 24px rgba(165, 180, 252, 0.22);
 }
 
-/* aurora-ring — slow conic-gradient ring around the edge. The inner
-   surface is dimmed so foreground text always wins over the colour
-   wash; status colour mixes into the ring on bad / warn states. */
-.widget-shell[data-compact-theme='aurora-ring'] {
-  --widget-bg: #0a0a0e;
-  --widget-border: transparent;
-  /* No outer shadow / glow — clipped by the OS at the BrowserWindow
-     edge. The conic-gradient ring on `.widget-shell__fx` provides
-     the colour wash; lift comes from the inset chrome highlight. */
-  --widget-shadow: none;
-  --widget-glow: rgba(165, 180, 252, 0.35);
+/* aurora-ring — slow conic-gradient ring around the edge. */
+.compact-frame[data-compact-theme='aurora-ring'] {
+  --compact-bg: #0a0a0e;
+  --compact-surface: rgba(255, 255, 255, 0.05);
+  --compact-border: rgba(255, 255, 255, 0.05);
+  --compact-accent: #a5b4fc;
+  --compact-accent-soft: rgba(165, 180, 252, 0.22);
 }
 
-.widget-shell[data-compact-theme='aurora-ring'] .widget-shell__fx {
-  /* The ring lives in `__fx`; the inner darkening lives in `__chrome`
-     so the click target reads as a solid surface even mid-rotation. */
+.compact-frame[data-compact-theme='aurora-ring'] .compact-frame__backdrop {
+  /* The conic ring lives on the backdrop; we then shrink-wrap it
+     with an inset darkener via `__ornaments` so foreground text
+     never fights the colour wash. */
   background:
     conic-gradient(
       from 0deg,
@@ -76,41 +1236,36 @@
     );
   filter: blur(16px) saturate(1.05);
   opacity: 0.55;
-  animation: widget-aurora-spin 22s linear infinite;
 }
 
-/* Status-driven palette swaps for aurora — surface a bad/warn state
-   without letting a green ring claim the user's attention. */
-.widget-shell[data-compact-theme='aurora-ring'][data-status='partial_outage']
-  .widget-shell__fx {
+.compact-frame[data-compact-theme='aurora-ring'][data-health-status='partial_outage']
+  .compact-frame__backdrop {
   background:
     conic-gradient(
       from 0deg,
       rgba(245, 158, 11, 0.55) 0deg,
-      rgba(245, 158, 11, 0.3) 120deg,
+      rgba(245, 158, 11, 0.30) 120deg,
       rgba(245, 158, 11, 0.55) 240deg,
-      rgba(245, 158, 11, 0.55) 360deg
-    );
+      rgba(245, 158, 11, 0.55) 360deg);
 }
 
-.widget-shell[data-compact-theme='aurora-ring'][data-status='openclash_unreachable']
-  .widget-shell__fx,
-.widget-shell[data-compact-theme='aurora-ring'][data-status='node_down']
-  .widget-shell__fx,
-.widget-shell[data-compact-theme='aurora-ring'][data-status='home_down']
-  .widget-shell__fx {
+.compact-frame[data-compact-theme='aurora-ring'][data-health-status='openclash_unreachable']
+  .compact-frame__backdrop,
+.compact-frame[data-compact-theme='aurora-ring'][data-health-status='node_down']
+  .compact-frame__backdrop,
+.compact-frame[data-compact-theme='aurora-ring'][data-health-status='home_down']
+  .compact-frame__backdrop {
   background:
     conic-gradient(
       from 0deg,
       rgba(239, 68, 68, 0.55) 0deg,
-      rgba(239, 68, 68, 0.3) 120deg,
+      rgba(239, 68, 68, 0.30) 120deg,
       rgba(239, 68, 68, 0.55) 240deg,
-      rgba(239, 68, 68, 0.55) 360deg
-    );
+      rgba(239, 68, 68, 0.55) 360deg);
 }
 
-.widget-shell[data-compact-theme='aurora-ring'] .widget-shell__chrome {
-  /* Inset darkener — keeps text crisp despite the colour ring. */
+.compact-frame[data-compact-theme='aurora-ring'] .compact-frame__ornaments {
+  /* Inset darkener so the ring frames the inner surface. */
   inset: 1px;
   background: linear-gradient(160deg, #0a0a0e, #08080c);
   border-radius: 11px;
@@ -119,33 +1274,37 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-@keyframes widget-aurora-spin {
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='aurora-ring'] .compact-frame__backdrop {
+    animation: compact-aurora-spin 22s linear infinite;
+  }
+}
+
+@keyframes compact-aurora-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
 
-/* holo-grid — HUD-style grid + slow scanning line. Decoration is built
-   from layered linear-gradients so we never hit the disk for assets. */
-.widget-shell[data-compact-theme='holo-grid'] {
-  --widget-bg: linear-gradient(180deg, #080e12, #060a0e);
-  --widget-border: rgba(56, 189, 248, 0.18);
-  /* No outer shadow — clipped by the OS. The cyan inner glow stays
-     because it's `inset` and so paints inside the rounded surface. */
-  --widget-shadow:
-    inset 0 0 24px rgba(56, 189, 248, 0.06);
-  --widget-accent: rgba(125, 211, 252, 0.95);
-  --widget-glow: rgba(56, 189, 248, 0.28);
+/* holo-grid — HUD-style grid + slow scanning line. */
+.compact-frame[data-compact-theme='holo-grid'] {
+  --compact-bg: linear-gradient(180deg, #080e12, #060a0e);
+  --compact-surface: rgba(56, 189, 248, 0.06);
+  --compact-border: rgba(56, 189, 248, 0.18);
+  --compact-border-strong: rgba(56, 189, 248, 0.32);
+  --compact-accent: #7dd3fc;
+  --compact-accent-soft: rgba(56, 189, 248, 0.22);
+  --compact-divider: rgba(56, 189, 248, 0.12);
 }
 
-.widget-shell[data-compact-theme='holo-grid'] .widget-shell__fx {
+.compact-frame[data-compact-theme='holo-grid'] .compact-frame__backdrop {
   background:
     linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px) 0 0 / 100% 16px,
-    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px) 0 0 / 16px 100%;
-  opacity: 0.8;
+    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px) 0 0 / 16px 100%,
+    linear-gradient(180deg, #080e12, #060a0e);
+  box-shadow: inset 0 0 24px rgba(56, 189, 248, 0.06);
 }
 
-.widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome {
-  /* Scanning line as a thin gradient stripe + corner accents. */
+.compact-frame[data-compact-theme='holo-grid'] .compact-frame__ornaments {
   background:
     linear-gradient(180deg,
       transparent 0%,
@@ -153,7 +1312,7 @@
       transparent 100%);
   background-size: 100% 24%;
   background-repeat: no-repeat;
-  animation: widget-holo-scan 6s linear infinite;
+  background-position: 0% -25%;
   box-shadow:
     inset 0 0 0 1px rgba(56, 189, 248, 0.14),
     inset 8px 8px 0 -7px rgba(125, 211, 252, 0.5),
@@ -162,31 +1321,38 @@
     inset -8px -8px 0 -7px rgba(125, 211, 252, 0.5);
 }
 
-@keyframes widget-holo-scan {
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='holo-grid'] .compact-frame__ornaments {
+    animation: compact-holo-scan 6s linear infinite;
+  }
+}
+
+@keyframes compact-holo-scan {
   0%   { background-position: 0% -25%; }
   100% { background-position: 0% 125%; }
 }
 
-/* liquid-metal — graphite gradient with a slow specular sweep. The
-   sweep lives in `__fx` so it travels behind text. */
-.widget-shell[data-compact-theme='liquid-metal'] {
-  --widget-bg:
-    linear-gradient(150deg,
-      #1c1f26 0%,
-      #11141a 45%,
-      #0c0f14 100%);
-  --widget-border: rgba(220, 230, 240, 0.10);
-  /* No outer shadow — clipped by the OS. Specular highlight + dark
-     bevel come from the two `inset` shadows below. */
-  --widget-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.10),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
-  --widget-accent: rgba(186, 230, 253, 0.92);
-  --widget-glow: rgba(186, 230, 253, 0.22);
-  --widget-divider: rgba(220, 230, 240, 0.07);
+/* liquid-metal — graphite gradient with a slow specular sweep. */
+.compact-frame[data-compact-theme='liquid-metal'] {
+  --compact-bg:
+    linear-gradient(150deg, #1c1f26 0%, #11141a 45%, #0c0f14 100%);
+  --compact-surface: rgba(220, 230, 240, 0.05);
+  --compact-border: rgba(220, 230, 240, 0.10);
+  --compact-border-strong: rgba(220, 230, 240, 0.22);
+  --compact-accent: #bae6fd;
+  --compact-accent-soft: rgba(186, 230, 253, 0.22);
+  --compact-divider: rgba(220, 230, 240, 0.07);
 }
 
-.widget-shell[data-compact-theme='liquid-metal'] .widget-shell__fx {
+.compact-frame[data-compact-theme='liquid-metal'] .compact-frame__backdrop {
+  background:
+    linear-gradient(150deg, #1c1f26 0%, #11141a 45%, #0c0f14 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.compact-frame[data-compact-theme='liquid-metal'] .compact-frame__ornaments {
   background:
     linear-gradient(110deg,
       transparent 35%,
@@ -196,83 +1362,87 @@
       transparent 65%);
   background-size: 220% 100%;
   background-position: 100% 0;
-  animation: widget-metal-sweep 14s ease-in-out infinite;
   mix-blend-mode: screen;
   opacity: 0.85;
-}
-
-.widget-shell[data-compact-theme='liquid-metal'] .widget-shell__chrome {
   box-shadow:
     inset 0 0 0 1px rgba(220, 230, 240, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 -1px 0 rgba(0, 0, 0, 0.4);
 }
 
-@keyframes widget-metal-sweep {
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='liquid-metal'] .compact-frame__ornaments {
+    animation: compact-metal-sweep 14s ease-in-out infinite;
+  }
+}
+
+@keyframes compact-metal-sweep {
   0%   { background-position: 100% 0; }
   50%  { background-position: -10% 0; }
   100% { background-position: 100% 0; }
 }
 
-/* signal-pulse — concentric pulse colored by the live status. The
-   pulse is centered on the status dot's left edge so it reads as
-   "this signal is alive". */
-.widget-shell[data-compact-theme='signal-pulse'] {
-  --widget-bg:
+/* signal-pulse — concentric pulse coloured by the live status. */
+.compact-frame[data-compact-theme='signal-pulse'] {
+  --compact-bg:
     radial-gradient(120% 100% at 0% 0%,
-      rgba(34, 197, 94, 0.06),
-      transparent 55%),
+      rgba(34, 197, 94, 0.06), transparent 55%),
     linear-gradient(160deg, #101216, #0a0c10);
-  --widget-border: rgba(255, 255, 255, 0.06);
-  /* No outer shadow — clipped by the OS. The pulse ring comes from
-     the animated `.widget-shell__fx` layer. */
-  --widget-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --compact-surface: rgba(255, 255, 255, 0.05);
+  --compact-border: rgba(255, 255, 255, 0.06);
+  --compact-accent: #34d399;
+  --compact-accent-soft: rgba(52, 211, 153, 0.22);
 }
 
-.widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
+.compact-frame[data-compact-theme='signal-pulse'] .compact-frame__backdrop {
   background:
-    radial-gradient(circle at 18px 22px,
-      var(--widget-status) 0%,
-      transparent 4%),
-    radial-gradient(circle at 18px 22px,
-      rgba(255, 255, 255, 0) 0%,
-      var(--widget-status) 6%,
-      transparent 10%);
-  opacity: 0;
-  animation: widget-pulse 2.8s ease-out infinite;
+    radial-gradient(120% 100% at 0% 0%,
+      rgba(34, 197, 94, 0.06), transparent 55%),
+    linear-gradient(160deg, #101216, #0a0c10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.widget-shell[data-compact-theme='signal-pulse'] .widget-shell__chrome {
+.compact-frame[data-compact-theme='signal-pulse'] .compact-frame__ornaments {
   background:
     radial-gradient(220px 120px at 0% 0%,
-      color-mix(in srgb, var(--widget-status) 18%, transparent) 0%,
+      color-mix(in srgb, var(--compact-status-color) 18%, transparent) 0%,
       transparent 70%);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    inset 0 0 24px color-mix(in srgb, var(--widget-status) 12%, transparent);
+    inset 0 0 24px color-mix(in srgb, var(--compact-status-color) 12%, transparent);
 }
 
-@keyframes widget-pulse {
+.compact-frame[data-compact-theme='signal-pulse'] .compact-frame__ornaments::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 22px 22px,
+      var(--compact-status-color) 0%,
+      transparent 4%),
+    radial-gradient(circle at 22px 22px,
+      rgba(255, 255, 255, 0) 0%,
+      var(--compact-status-color) 6%,
+      transparent 10%);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .compact-frame[data-compact-theme='signal-pulse'] .compact-frame__ornaments::after {
+    animation: compact-pulse 2.8s ease-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-frame[data-compact-theme='signal-pulse'] .compact-frame__ornaments::after {
+    opacity: 0.18;
+  }
+}
+
+@keyframes compact-pulse {
   0%   { opacity: 0.55; transform: scale(0.95); }
   60%  { opacity: 0;    transform: scale(1.6); }
   100% { opacity: 0;    transform: scale(1.6); }
-}
-
-/* Reduced-motion fallback — every theme stops moving when the user
-   asks for less motion. We retain static glow / chrome so the preset
-   is still recognisable, just calm. */
-@media (prefers-reduced-motion: reduce) {
-  .widget-shell[data-compact-theme='aurora-ring'] .widget-shell__fx,
-  .widget-shell[data-compact-theme='liquid-metal'] .widget-shell__fx,
-  .widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome,
-  .widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
-    animation: none;
-  }
-  .widget-shell[data-compact-theme='holo-grid'] .widget-shell__chrome {
-    background: none;
-  }
-  .widget-shell[data-compact-theme='signal-pulse'] .widget-shell__fx {
-    opacity: 0.18;
-  }
 }

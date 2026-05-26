@@ -1,51 +1,51 @@
 // Local AI auth-file auto-discovery.
 //
-// Scans the user's well-known per-provider credential paths
-// (`~/.codex/auth.json`, `~/.claude/.credentials.json`,
-// `~/.gemini/oauth_creds.json`, …), parses the matching JSON via
-// the same {@link parseAuthFile} function the manual import flow
-// uses, and registers any newly-found credential as a fresh
-// `provider_auth` row with `enabled: true`.
+// Scans well-known per-CLI credential paths and registers any
+// previously-unknown account as a fresh `provider_auth` row with
+// `enabled: true`.
 //
-// Why this lives in its own module:
+// Covered CLIs:
+//   - Codex CLI       : `~/.codex/auth.json`
+//   - Claude Code     : `~/.claude/.credentials.json`
+//   - Gemini CLI      : `~/.gemini/oauth_creds.json`
+//   - Antigravity     : `~/.antigravity/oauth_creds.json`
+//                        + legacy `~/.gemini/antigravity/oauth_creds.json`
 //
-//   - The discovery step is fire-and-forget at boot. It is allowed to
-//     fail silently (a user without Codex installed should not see a
-//     boot error); putting it next to `provider_auth.service` would
-//     blur the strict "secrets-only" focus of that module.
-//   - The path list is platform-conditioned. On Windows the Codex
-//     auth file may live under `%USERPROFILE%\.codex\auth.json`; on
-//     macOS Claude Code stores its credential blob inside the
-//     keychain rather than a JSON file. We keep the list small and
-//     practical: only the locations Codex / Claude Code / Gemini CLI
-//     / Antigravity actually write today on any platform we support.
-//   - Idempotency: each scan compares the parsed `accessToken` /
-//     `apiKey` against the secrets already attached to live
-//     `provider_auth` rows. Re-running the scan after a previous
-//     import is a no-op — the user never gets duplicate accounts.
+// OpenCode is intentionally NOT discovered: OpenCode (sst/opencode)
+// has no native usage / quota API, and its `~/.config/opencode/auth.json`
+// is a credential bundle for OTHER providers (anthropic, openai,
+// google, deepseek). Any anthropic OAuth token in there is the same
+// account a user already has in `~/.claude/.credentials.json`, so
+// importing it would add a duplicate row pointing at the same upstream
+// account without any quota visibility we don't already get from the
+// Claude Code path.
 //
-// Security model:
-//
-//   - The discovery service decrypts NO secrets it did not just
-//     read. It is allowed to call `secrets.get` against rows it
-//     created (or rows it is checking against) because the
-//     auto-import path is main-only and the renderer never sees
-//     the raw token.
-//   - Read failures (missing file, EACCES, malformed JSON) are
-//     swallowed individually. A bad Codex auth file MUST NOT
-//     prevent Claude Code from being discovered.
-//   - The label always carries an `(自动发现)` suffix so the user
-//     can tell auto-imported accounts apart from manual imports
-//     in the settings list.
+// Idempotency / dedup:
+//   - Every existing `provider_auth` row contributes a set of
+//     fingerprints derived from its decrypted secret payload:
+//     `(provider, accountId)`, `(provider, accessToken)`,
+//     `(provider, apiKey)`, plus retained metadata email when present.
+//   - Newly-discovered candidates are matched against the same set
+//     before insert. The accountId / email fingerprints are the
+//     stable ones; token fingerprints are a fallback for credentials
+//     whose source file does not surface an account identity.
 
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import type { ProviderAuthRepository } from '../store/repositories';
+import type {
+  ProviderAuthRepository,
+  ProviderAuthRow,
+  ProviderAuthUpdatePatch,
+} from '../store/repositories';
 import type { SecretsAdmin } from '../security/secrets.admin';
 import type { ProviderAuthSecretPayload, ProviderId } from '../types';
 import { PROVIDER_DEFAULT_CAPABILITY } from '../types';
-import { parseAuthFile, ProviderAuthError } from './auth-file.parser';
+import {
+  parseAuthFile,
+  ProviderAuthError,
+  type ParseResult,
+} from './auth-file.parser';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -54,9 +54,7 @@ import { parseAuthFile, ProviderAuthError } from './auth-file.parser';
 /**
  * One auto-discovery probe entry. Each entry pairs a `ProviderId`
  * with the absolute path to the credential file we expect that
- * provider to drop on disk. The first existing path per provider
- * wins; later entries for the same provider are silently skipped
- * once a row has been registered.
+ * provider to drop on disk.
  */
 export interface DiscoveryProbe {
   readonly provider: ProviderId;
@@ -90,21 +88,11 @@ export interface AuthFileDiscoveryDeps {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the default probe list from the user's home directory + the
- * platform-specific application-data root. Kept inside a function so
- * the list is computed lazily — `os.homedir()` is cheap but the
- * default is regenerated on every boot, and tests inject a static
- * list anyway.
+ * Build the default probe list from the user's home directory. Kept
+ * inside a function so tests can stub `os.homedir()` via the deps.
  *
- * Path coverage:
- *   - Codex CLI               : `~/.codex/auth.json`
- *   - Claude Code              : `~/.claude/.credentials.json`
- *   - Gemini CLI / Antigravity : `~/.gemini/oauth_creds.json`
- *
- * Only the providers that store a JSON credential blob outside the
- * OS keychain are listed; manually-typed API keys (DeepSeek /
- * Xiaomi / OpenAI-compatible) have no canonical local file and
- * stay on the manual-entry path.
+ * Manual-only providers (DeepSeek, Xiaomi, OpenAI-compatible) have
+ * no canonical local file; users add them through the API-key form.
  */
 export function defaultDiscoveryProbes(): DiscoveryProbe[] {
   const home = os.homedir();
@@ -120,13 +108,20 @@ export function defaultDiscoveryProbes(): DiscoveryProbe[] {
     },
     {
       provider: 'antigravity',
-      filePath: path.join(home, '.antigravity', 'auth.json'),
+      filePath: path.join(home, '.antigravity', 'oauth_creds.json'),
+    },
+    // Antigravity legacy / alternative location used by some
+    // builds. Kept after the canonical path so the canonical one
+    // wins the same-scan dedup when both exist.
+    {
+      provider: 'antigravity',
+      filePath: path.join(home, '.gemini', 'antigravity', 'oauth_creds.json'),
     },
   ];
 }
 
 // ---------------------------------------------------------------------------
-// Internals
+// I/O helpers (overridable in tests)
 // ---------------------------------------------------------------------------
 
 const MAX_FILE_SIZE_BYTES = 1024 * 1024; // 1 MiB — same bound as importFromFile.
@@ -153,59 +148,107 @@ async function defaultFileExists(p: string): Promise<boolean> {
   }
 }
 
-/**
- * Build the set of `(provider, accessToken|apiKey)` fingerprints
- * already represented by live `provider_auth` rows.
- *
- * The fingerprint is intentionally narrow: a user who imports the
- * same Codex auth file twice via different paths (manual import vs
- * auto-discovery) MUST end up with one row. Two accounts that
- * happen to share an `accountId` but have distinct tokens stay
- * distinct.
- *
- * Decryption failures are non-fatal — if a row's secret cannot be
- * read for any reason we treat it as "not in the fingerprint set"
- * so the auto-import path produces the new row regardless. The
- * worst case is a duplicate account, which is recoverable through
- * the delete button; the alternative (silently skipping the import)
- * would be much harder to debug.
- */
-function buildExistingFingerprints(
-  repo: ProviderAuthRepository,
-  secrets: SecretsAdmin,
-): Set<string> {
-  const set = new Set<string>();
-  for (const row of repo.list()) {
-    let payload: ProviderAuthSecretPayload | null = null;
-    try {
-      const ciphertext = secrets.get(row.secretKey);
-      if (ciphertext === null) continue;
-      payload = JSON.parse(ciphertext) as ProviderAuthSecretPayload;
-    } catch {
-      continue;
-    }
-    if (typeof payload.accessToken === 'string' && payload.accessToken.length > 0) {
-      set.add(`${row.provider}::token::${payload.accessToken}`);
-    }
-    if (typeof payload.apiKey === 'string' && payload.apiKey.length > 0) {
-      set.add(`${row.provider}::key::${payload.apiKey}`);
-    }
-  }
-  return set;
-}
+// ---------------------------------------------------------------------------
+// Fingerprinting
+// ---------------------------------------------------------------------------
 
-/** Compute the fingerprint for a parsed payload, or `null` if unknown. */
-function payloadFingerprint(
-  provider: ProviderId,
-  payload: ProviderAuthSecretPayload,
-): string | null {
+/**
+ * Fingerprint dimensions an existing `provider_auth` row contributes
+ * to the dedup set. The accountId / email dimensions are stable
+ * across token rotation; the token dimensions are a last-resort
+ * fallback.
+ */
+function fingerprintsFor(payload: ProviderAuthSecretPayload, provider: ProviderId): string[] {
+  const out: string[] = [];
+  if (typeof payload.accountId === 'string' && payload.accountId.length > 0) {
+    out.push(`${provider}::account::${payload.accountId}`);
+  }
   if (typeof payload.accessToken === 'string' && payload.accessToken.length > 0) {
-    return `${provider}::token::${payload.accessToken}`;
+    out.push(`${provider}::token::${payload.accessToken}`);
   }
   if (typeof payload.apiKey === 'string' && payload.apiKey.length > 0) {
-    return `${provider}::key::${payload.apiKey}`;
+    out.push(`${provider}::key::${payload.apiKey}`);
+  }
+  const email = emailFromPayload(payload);
+  if (email !== null) {
+    out.push(`${provider}::email::${email.toLowerCase()}`);
+  }
+  return out;
+}
+
+function emailFromPayload(payload: ProviderAuthSecretPayload): string | null {
+  for (const block of [payload.rawMetadata, payload.rawAttributes]) {
+    if (block === undefined) continue;
+    const email = block['email'];
+    if (typeof email === 'string' && email.trim().length > 0) {
+      return email.trim();
+    }
   }
   return null;
+}
+
+function fingerprintsForCandidate(
+  provider: ProviderId,
+  parsed: ParseResult,
+): string[] {
+  const out = fingerprintsFor(parsed.payload, provider);
+  // `parsed.email` is not on the secret payload (we don't store it
+  // on the row) — feed it in directly so two files for the same
+  // Google account dedupe even when only one of them carries an
+  // accountId.
+  if (parsed.email !== null && parsed.email.length > 0) {
+    out.push(`${provider}::email::${parsed.email.toLowerCase()}`);
+  }
+  if (parsed.accountId !== null && parsed.accountId.length > 0) {
+    out.push(`${provider}::account::${parsed.accountId}`);
+  }
+  return out;
+}
+
+interface FingerprintEntry {
+  readonly row: ProviderAuthRow;
+  readonly payloadJson: string | null;
+}
+
+function addFingerprint(
+  index: Map<string, FingerprintEntry>,
+  fingerprint: string,
+  entry: FingerprintEntry,
+): void {
+  if (!index.has(fingerprint)) {
+    index.set(fingerprint, entry);
+  }
+}
+
+function buildExistingFingerprintIndex(
+  repo: ProviderAuthRepository,
+  secrets: SecretsAdmin,
+): Map<string, FingerprintEntry> {
+  const index = new Map<string, FingerprintEntry>();
+  for (const row of repo.list()) {
+    let payload: ProviderAuthSecretPayload | null = null;
+    let payloadJson: string | null = null;
+    try {
+      payloadJson = secrets.get(row.secretKey);
+      if (payloadJson !== null) {
+        payload = JSON.parse(payloadJson) as ProviderAuthSecretPayload;
+      }
+    } catch {
+      payload = null;
+      payloadJson = null;
+    }
+
+    const entry: FingerprintEntry = { row, payloadJson };
+    if (row.accountId !== null && row.accountId.length > 0) {
+      addFingerprint(index, `${row.provider}::account::${row.accountId}`, entry);
+    }
+    if (payload !== null) {
+      for (const fp of fingerprintsFor(payload, row.provider)) {
+        addFingerprint(index, fp, entry);
+      }
+    }
+  }
+  return index;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,13 +259,8 @@ function payloadFingerprint(
  * Scan every probe and import any unknown credential as a fresh
  * `provider_auth` row.
  *
- * The function is `async` so individual file I/O happens in
- * parallel; the report aggregates per-provider outcomes so callers
- * can log a one-line summary at boot ("auto-discovery: imported
- * 2, skipped 1, missing 5").
- *
- * Errors from any single probe are logged-and-swallowed; this
- * function never throws.
+ * Errors from any single probe are aggregated into the report and
+ * never escape the function.
  */
 export async function runDiscovery(
   deps: AuthFileDiscoveryDeps,
@@ -231,71 +269,83 @@ export async function runDiscovery(
   const readFile = deps.readFile ?? defaultReadFile;
   const fileExists = deps.fileExists ?? defaultFileExists;
 
-  const fingerprints = buildExistingFingerprints(
+  const fingerprints = buildExistingFingerprintIndex(
     deps.providerAuthRepo,
     deps.secrets,
   );
+  const refreshedIdsThisScan = new Set<string>();
 
   let imported = 0;
   let skipped = 0;
   let failed = 0;
   let missing = 0;
 
-  // Collect outcomes via Promise.allSettled so a slow / hanging
-  // disk read on one probe does not stall the others.
-  const outcomes = await Promise.allSettled(
-    probes.map(async (probe) => {
+  // Phase 1: read + parse every probe in parallel.
+  type Outcome =
+    | { kind: 'missing' }
+    | { kind: 'failed' }
+    | { kind: 'parsed'; provider: ProviderId; parsed: ParseResult };
+
+  const outcomes: Outcome[] = await Promise.all(
+    probes.map<Promise<Outcome>>(async (probe) => {
       if (!(await fileExists(probe.filePath))) {
-        return { kind: 'missing' as const };
+        return { kind: 'missing' };
       }
       let raw: string;
       try {
         raw = await readFile(probe.filePath);
       } catch {
-        return { kind: 'failed' as const };
+        return { kind: 'failed' };
       }
-      let parsed;
       try {
-        parsed = parseAuthFile(probe.provider, raw);
+        const parsed = parseAuthFile(probe.provider, raw);
+        return { kind: 'parsed', provider: probe.provider, parsed };
       } catch {
-        return { kind: 'failed' as const };
+        return { kind: 'failed' };
       }
-      const fp = payloadFingerprint(probe.provider, parsed.payload);
-      if (fp !== null && fingerprints.has(fp)) {
-        return { kind: 'skipped' as const };
-      }
-      // Avoid creating two rows from two probes that resolve to
-      // the same fingerprint within a single scan (e.g. a user
-      // with two probe paths whose contents are byte-identical).
-      if (fp !== null) fingerprints.add(fp);
-      return { kind: 'import' as const, probe, parsed };
     }),
   );
 
-  // Apply the imports serially so SQLite doesn't see two concurrent
-  // transactions writing rows + secrets — `provider_auth.service`
-  // owns the txn boundary, and serial execution keeps the wiring
-  // boringly correct.
+  // Phase 2: dedup + import serially so SQLite txns don't overlap.
   for (const outcome of outcomes) {
-    if (outcome.status === 'rejected') {
-      failed += 1;
-      continue;
-    }
-    const value = outcome.value;
-    if (value.kind === 'missing') {
+    if (outcome.kind === 'missing') {
       missing += 1;
       continue;
     }
-    if (value.kind === 'failed') {
+    if (outcome.kind === 'failed') {
       failed += 1;
       continue;
     }
-    if (value.kind === 'skipped') {
-      skipped += 1;
+    const fps = fingerprintsForCandidate(outcome.provider, outcome.parsed);
+    const collision = firstCollision(fingerprints, fps);
+    if (collision !== null) {
+      if (refreshedIdsThisScan.has(collision.row.id)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const refreshed = refreshExistingDiscoveredAccount(
+          deps,
+          collision,
+          outcome.parsed,
+        );
+        for (const fp of fps) {
+          fingerprints.set(fp, {
+            row: refreshed.row,
+            payloadJson: refreshed.payloadJson,
+          });
+        }
+        refreshedIdsThisScan.add(collision.row.id);
+        skipped += 1;
+      } catch {
+        failed += 1;
+      }
       continue;
     }
     try {
-      registerDiscoveredAccount(deps, value.probe, value.parsed);
+      const row = registerDiscoveredAccount(deps, outcome.provider, outcome.parsed);
+      const payloadJson = JSON.stringify(outcome.parsed.payload);
+      for (const fp of fps) fingerprints.set(fp, { row, payloadJson });
       imported += 1;
     } catch {
       failed += 1;
@@ -305,26 +355,26 @@ export async function runDiscovery(
   return { imported, skipped, failed, missing };
 }
 
+function firstCollision(
+  fingerprints: Map<string, FingerprintEntry>,
+  candidates: readonly string[],
+): FingerprintEntry | null {
+  for (const fp of candidates) {
+    const entry = fingerprints.get(fp);
+    if (entry !== undefined) return entry;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Lower-level: register one account
 // ---------------------------------------------------------------------------
 
-/**
- * Insert a fresh `provider_auth` row + matching secret for an
- * auto-discovered credential.
- *
- * We bypass `ProviderAuthService.importFromFile` because that
- * helper is wired to the OS file dialog; the auto-discovery path
- * already has the parsed payload in hand and writes through the
- * repository directly using the same atomic-secret-then-row
- * pattern. The label always carries the `(自动发现)` suffix so the
- * user can tell auto-imports apart at a glance.
- */
 function registerDiscoveredAccount(
   deps: AuthFileDiscoveryDeps,
-  probe: DiscoveryProbe,
-  parsed: ReturnType<typeof parseAuthFile>,
-): void {
+  provider: ProviderId,
+  parsed: ParseResult,
+): ProviderAuthRow {
   const uuid = deps.uuid ?? (() => globalThis.crypto.randomUUID());
   const now = deps.now ?? (() => Date.now());
 
@@ -334,12 +384,12 @@ function registerDiscoveredAccount(
 
   const row = {
     id,
-    provider: probe.provider,
+    provider,
     label: `${parsed.label} (自动发现)`,
     source: 'cpa-auth-file' as const,
     accountId: parsed.accountId,
     projectId: parsed.projectId,
-    quotaCapability: PROVIDER_DEFAULT_CAPABILITY[probe.provider],
+    quotaCapability: PROVIDER_DEFAULT_CAPABILITY[provider],
     importedAt,
     updatedAt: importedAt,
     lastValidatedAt: importedAt,
@@ -364,4 +414,49 @@ function registerDiscoveredAccount(
     }
     throw err;
   }
+  return row;
+}
+
+function refreshExistingDiscoveredAccount(
+  deps: AuthFileDiscoveryDeps,
+  entry: FingerprintEntry,
+  parsed: ParseResult,
+): FingerprintEntry {
+  const now = deps.now ?? (() => Date.now());
+  const payloadJson = JSON.stringify(parsed.payload);
+  const row = entry.row;
+  const secretChanged = entry.payloadJson !== payloadJson;
+
+  if (secretChanged) {
+    deps.secrets.set(row.secretKey, payloadJson);
+  }
+
+  const nextAccountId = row.accountId ?? parsed.accountId;
+  const nextProjectId = row.projectId ?? parsed.projectId;
+  const shouldPatch =
+    secretChanged ||
+    nextAccountId !== row.accountId ||
+    nextProjectId !== row.projectId ||
+    row.lastErrorCode !== null ||
+    row.lastErrorMessage !== null;
+
+  let nextRow = row;
+  if (shouldPatch) {
+    const timestamp = now();
+    const patch: ProviderAuthUpdatePatch = {
+      accountId: nextAccountId,
+      projectId: nextProjectId,
+      updatedAt: timestamp,
+      lastValidatedAt: timestamp,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    };
+    deps.providerAuthRepo.update(row.id, patch);
+    nextRow = {
+      ...row,
+      ...patch,
+    };
+  }
+
+  return { row: nextRow, payloadJson };
 }

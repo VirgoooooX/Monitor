@@ -1,31 +1,27 @@
-// Antigravity provider adapter — Foundation Phase placeholder.
-//
-// v1 returns a fixed `unsupported` snapshot. v1.1 will issue the
-// Antigravity quota call against `daily-cloudcode-pa.googleapis.com`
-// using the imported account's `access_token` + `project_id`; see
-// cpa-quota-import/design.md §v1.1 Follow-up.
-
+import {
+  createGoogleCodeAssistAdapter,
+  type GoogleCodeAssistAdapterDeps,
+} from './google-code-assist';
 import type { ProviderAdapter } from './types';
 
-export const antigravityAdapter: ProviderAdapter = {
-  provider: 'antigravity',
-  capability: 'official',
-  async refresh({ account, now }) {
-    return {
+export function createAntigravityAdapter(
+  deps: GoogleCodeAssistAdapterDeps = {},
+): ProviderAdapter {
+  return createGoogleCodeAssistAdapter(
+    {
       provider: 'antigravity',
-      capturedAt: now,
-      source: 'imported_auth',
-      windows: [],
-      providerAuthId: account.id,
-      accountLabel: account.label,
-      accountId: account.accountId,
-      projectId: account.projectId,
-      kind: 'quota',
-      status: 'unsupported',
-      rawPlanLabel: null,
-      modelGroup: null,
-      lastErrorCode: 'unsupported',
-      lastErrorMessage: 'adapter not implemented in v1',
-    };
-  },
-};
+      bases: [
+        'https://daily-cloudcode-pa.googleapis.com',
+        'https://daily-cloudcode-pa.sandbox.googleapis.com',
+        'https://cloudcode-pa.googleapis.com',
+      ],
+      ideType: 'ANTIGRAVITY',
+      userAgent: 'antigravity',
+      xGoogApiClient: 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+      actions: ['fetchAvailableModels', 'loadCodeAssist'],
+    },
+    deps,
+  );
+}
+
+export const antigravityAdapter: ProviderAdapter = createAntigravityAdapter();

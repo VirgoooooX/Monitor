@@ -55,6 +55,7 @@ import type {
   ProviderAdapter,
   ProviderAdapterRefreshInput,
 } from './quota/adapters';
+import { isProviderAuthErrorCode } from './quota/adapters/common';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -215,7 +216,22 @@ function classifyError(err: unknown): {
         message: 'secret payload could not be decrypted',
       };
     }
+    const maybeCoded = err as Error & { code?: unknown };
+    if (isProviderAuthErrorCode(maybeCoded.code)) {
+      return { code: maybeCoded.code, message: bound(err.message) };
+    }
     return { code: 'network_error', message: bound(err.message) };
+  }
+  if (
+    err !== null &&
+    typeof err === 'object' &&
+    isProviderAuthErrorCode((err as { code?: unknown }).code)
+  ) {
+    const message = (err as { message?: unknown }).message;
+    return {
+      code: (err as { code: ProviderAuthErrorCode }).code,
+      message: bound(typeof message === 'string' ? message : String((err as { code: ProviderAuthErrorCode }).code)),
+    };
   }
   return { code: 'network_error', message: 'adapter rejected' };
 }

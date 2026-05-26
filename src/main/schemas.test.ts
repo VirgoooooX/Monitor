@@ -68,7 +68,7 @@ function validBase(): AppSettings {
     },
     appearance: {
       colorMode: 'dark',
-      compactTheme: 'obsidian-glass',
+      compactTheme: 'mint-monitor',
       fontScale: 1,
     },
   };
@@ -355,7 +355,7 @@ describe('appSettingsSchema (Property 11)', () => {
 // ---------------------------------------------------------------------------
 //
 // The theme system adds an `appearance` block to `AppSettings` with a
-// closed-set `colorMode` (dark | light), `compactTheme` (one of five
+// closed-set `colorMode` (dark | light), `compactTheme` (one of six
 // presets), and bounded `fontScale`. The schema must:
 //   - accept every default colorMode / compactTheme combination
 //   - reject any unknown literal in either field
@@ -365,6 +365,14 @@ describe('appSettingsSchema (Property 11)', () => {
 describe('appSettingsSchema appearance (theme system)', () => {
   const VALID_COLOR_MODES = ['dark', 'light'] as const;
   const VALID_COMPACT_THEMES = [
+    // v2 design-language presets
+    'liquid-glass',
+    'material-you',
+    'soft-neumorph',
+    'paper-dashboard',
+    'mint-monitor',
+    'device-oled',
+    // v1 legacy presets retained as additional options
     'obsidian-glass',
     'aurora-ring',
     'holo-grid',
@@ -392,7 +400,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
       ...base,
       appearance: {
         colorMode: 'sepia',
-        compactTheme: 'obsidian-glass',
+        compactTheme: 'mint-monitor',
         fontScale: 1,
       },
     };
@@ -420,7 +428,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
       ...base,
       appearance: {
         colorMode: 'dark',
-        compactTheme: 'obsidian-glass',
+        compactTheme: 'mint-monitor',
         fontScale: 1,
         accent: '#ff0000',
       },
@@ -435,7 +443,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         ...validBase(),
         appearance: {
           colorMode: 'dark',
-          compactTheme: 'obsidian-glass',
+          compactTheme: 'mint-monitor',
           fontScale,
         },
       };
@@ -449,7 +457,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         ...validBase(),
         appearance: {
           colorMode: 'dark',
-          compactTheme: 'obsidian-glass',
+          compactTheme: 'mint-monitor',
           fontScale,
         },
       };

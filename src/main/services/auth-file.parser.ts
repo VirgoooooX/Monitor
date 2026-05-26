@@ -80,6 +80,14 @@ export interface ParseResult {
   label: string;
   accountId: string | null;
   projectId: string | null;
+  /**
+   * User-readable email address when the source file carries one
+   * (CPA `metadata.email`, raw OAuth tokens with an `email` claim,
+   * etc.). NOT persisted on the `provider_auth` row directly — the
+   * auto-discovery layer uses it as a fingerprint to deduplicate
+   * "the same Google account imported via two different files".
+   */
+  email: string | null;
   payload: ProviderAuthSecretPayload;
 }
 
@@ -365,6 +373,7 @@ export function parseAuthFile(provider: ProviderId, raw: string): ParseResult {
     label,
     accountId: accountId,
     projectId: projectId,
+    email,
     payload,
   };
 }

@@ -17,6 +17,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .quota-strip__provider {
@@ -68,13 +69,17 @@
   align-items: center;
   gap: 6px;
   height: 16px;
+  min-width: 0;
 }
 
 .quota-strip__window-label {
-  flex: 0 0 20px;
+  flex: 0 0 42px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 9px;
   font-weight: 500;
   color: var(--color-text-muted);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -137,5 +142,17 @@
   flex: 0 0 auto;
   font-size: 10px;
   line-height: 1;
+}
+
+.quota-strip__more {
+  align-self: flex-end;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 

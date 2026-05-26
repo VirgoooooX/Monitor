@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import type { QuotaSnapshot, QuotaStatus, QuotaWindow } from '../lib/types';
+import { quotaWindowCompactLabel, quotaWindowPriority } from '../lib/quota-display';
 import { ProviderIcon } from './ProviderIcon';
 
 // ---------------------------------------------------------------------------
@@ -12,9 +13,20 @@ import { ProviderIcon } from './ProviderIcon';
 // ---------------------------------------------------------------------------
 
 interface ProviderGroup {
+  key: string;
   provider: string;
+  accountLabel: string | null;
   windows: QuotaWindow[];
 }
+
+interface CompactQuotaEntry {
+  key: string;
+  provider: string;
+  accountLabel: string | null;
+  window: QuotaWindow;
+}
+
+const MAX_COMPACT_ROWS = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,24 +43,84 @@ function formatResetCompact(resetAt: number | null): string {
   return `${minutes}m`;
 }
 
-function windowLabel(name: string): string {
-  switch (name) {
-    case '5h': return '5h';
-    case 'weekly': return '周';
-    case 'monthly': return '月';
-    case 'daily': return '日';
-    default: return name;
+function providerPriority(provider: string): number {
+  switch (provider) {
+    case 'codex': return 0;
+    case 'claude-code': return 1;
+    case 'gemini-cli': return 2;
+    case 'antigravity': return 3;
+    default: return 10;
   }
 }
 
-function windowPriority(name: string): number {
-  switch (name) {
-    case '5h': return 0;
-    case 'daily': return 1;
-    case 'weekly': return 2;
-    case 'monthly': return 3;
-    default: return 4;
+function snapshotKey(snapshot: QuotaSnapshot, index: number): string {
+  return (
+    snapshot.providerAuthId ??
+    snapshot.accountId ??
+    snapshot.projectId ??
+    `${snapshot.provider}-${index}`
+  );
+}
+
+function entryPriority(entry: CompactQuotaEntry): number {
+  if (entry.window.percentLeft === null) return 101;
+  return entry.window.percentLeft;
+}
+
+function buildCompactGroups(snapshots: QuotaSnapshot[]): {
+  groups: ProviderGroup[];
+  hiddenCount: number;
+} {
+  const entries = snapshots.flatMap((snapshot, snapshotIndex): CompactQuotaEntry[] => {
+    const key = snapshotKey(snapshot, snapshotIndex);
+    return snapshot.windows.flatMap((window): CompactQuotaEntry[] => {
+      const label = quotaWindowCompactLabel(window.name, snapshot.provider);
+      if (label === null) return [];
+      return [{
+        key,
+        provider: snapshot.provider,
+        accountLabel: snapshot.accountLabel,
+        window,
+      }];
+    });
+  });
+
+  const orderedEntries = [...entries].sort((a, b) => {
+    const urgency = entryPriority(a) - entryPriority(b);
+    if (urgency !== 0) return urgency;
+
+    const providerOrder = providerPriority(a.provider) - providerPriority(b.provider);
+    if (providerOrder !== 0) return providerOrder;
+
+    const windowOrder =
+      quotaWindowPriority(a.window.name, a.provider) -
+      quotaWindowPriority(b.window.name, b.provider);
+    if (windowOrder !== 0) return windowOrder;
+
+    return a.window.name.localeCompare(b.window.name, 'zh-CN');
+  });
+
+  const visibleEntries = orderedEntries.slice(0, MAX_COMPACT_ROWS);
+  const grouped = new Map<string, ProviderGroup>();
+
+  for (const entry of visibleEntries) {
+    const existing = grouped.get(entry.key);
+    if (existing) {
+      existing.windows.push(entry.window);
+    } else {
+      grouped.set(entry.key, {
+        key: entry.key,
+        provider: entry.provider,
+        accountLabel: entry.accountLabel,
+        windows: [entry.window],
+      });
+    }
   }
+
+  return {
+    groups: [...grouped.values()],
+    hiddenCount: Math.max(0, orderedEntries.length - visibleEntries.length),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +129,7 @@ function windowPriority(name: string): number {
 
 export function QuotaStrip(): JSX.Element | null {
   const [groups, setGroups] = useState<ProviderGroup[]>([]);
+  const [hiddenCount, setHiddenCount] = useState(0);
 
   useEffect(() => {
     const desktop = window.desktop;
@@ -68,15 +141,9 @@ export function QuotaStrip(): JSX.Element | null {
       desktop.getQuotaStatus().then((status: QuotaStatus) => {
         if (cancelled) return;
 
-        // Group by provider, sort windows within each
-        const grouped: ProviderGroup[] = status.snapshots.map((snapshot) => ({
-          provider: snapshot.provider,
-          windows: [...snapshot.windows].sort(
-            (a, b) => windowPriority(a.name) - windowPriority(b.name),
-          ),
-        }));
-
-        setGroups(grouped);
+        const compact = buildCompactGroups(status.snapshots);
+        setGroups(compact.groups);
+        setHiddenCount(compact.hiddenCount);
       }).catch(() => {});
     };
 
@@ -94,17 +161,27 @@ export function QuotaStrip(): JSX.Element | null {
   return (
     <div className="quota-strip" data-testid="quota-strip">
       {groups.map((group) => (
-        <div key={group.provider} className="quota-strip__group">
-          <span className="quota-strip__provider" title={group.provider}>
+        <div key={group.key} className="quota-strip__group">
+          <span
+            className="quota-strip__provider"
+            title={group.accountLabel ? `${group.provider} · ${group.accountLabel}` : group.provider}
+          >
             <ProviderIcon provider={group.provider} size={20} />
           </span>
           <div className="quota-strip__windows">
             {group.windows.map((w, i) => (
-              <QuotaRowItem key={`${w.name}-${i}`} window={w} />
+              <QuotaRowItem
+                key={`${w.name}-${i}`}
+                window={w}
+                provider={group.provider}
+              />
             ))}
           </div>
         </div>
       ))}
+      {hiddenCount > 0 && (
+        <span className="quota-strip__more">另 {hiddenCount} 项</span>
+      )}
     </div>
   );
 }
@@ -113,10 +190,17 @@ export function QuotaStrip(): JSX.Element | null {
 // Single quota row (no provider name — shown by parent group)
 // ---------------------------------------------------------------------------
 
-function QuotaRowItem({ window: w }: { window: QuotaWindow }): JSX.Element {
+function QuotaRowItem({
+  window: w,
+  provider,
+}: {
+  window: QuotaWindow;
+  provider: string;
+}): JSX.Element {
   const remaining = w.percentLeft ?? 100;
   const isWarn = w.percentLeft !== null && w.percentLeft < 50;
   const isCritical = w.percentLeft !== null && w.percentLeft < 20;
+  const label = quotaWindowCompactLabel(w.name, provider) ?? w.name;
 
   let barColorClass = 'quota-strip__fill--ok';
   if (isCritical) barColorClass = 'quota-strip__fill--critical';
@@ -135,7 +219,7 @@ function QuotaRowItem({ window: w }: { window: QuotaWindow }): JSX.Element {
       className="quota-strip__row"
       data-urgency={isCritical ? 'critical' : isWarn ? 'warn' : 'ok'}
     >
-      <span className="quota-strip__window-label">{windowLabel(w.name)}</span>
+      <span className="quota-strip__window-label" title={w.name}>{label}</span>
       <div className="quota-strip__track">
         <div
           className={`quota-strip__fill ${barColorClass}`}

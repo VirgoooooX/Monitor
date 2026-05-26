@@ -78,6 +78,10 @@
   border-bottom: 1px solid var(--ex-border);
 }
 
+.ex .quota-overview__header {
+  margin-bottom: 2px;
+}
+
 .ex .quota-overview__title {
   font-family: var(--ex-display-font);
   font-size: var(--type-sm);
@@ -85,27 +89,43 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ex-text-mute);
-  margin-bottom: 12px;
 }
 
-.ex .quota-bar {
+.ex .quota-overview__mode {
+  background: var(--ex-surface);
+  border-color: var(--ex-border);
+  color: var(--ex-text-mute);
+}
+
+.ex .quota-account-card {
   background: var(--ex-surface);
   border: 1px solid var(--ex-border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 12px 14px;
 }
 
-.ex .quota-bar__provider {
+.ex .quota-account-card__chip,
+.ex .quota-account-card__status {
   font-family: var(--ex-display-font);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.ex .quota-bar__window-name {
+.ex .quota-account-card__name,
+.ex .quota-window-row__label {
+  font-family: var(--ex-ui-font);
+}
+
+.ex .quota-account-card__meta,
+.ex .quota-account-card__plan,
+.ex .quota-window-row__reset {
   font-size: var(--type-xs);
   color: var(--ex-text-mute);
+}
+
+.ex .quota-window-row__percent {
+  font-family: var(--ex-ui-font);
+  font-variant-numeric: tabular-nums;
 }
 
 .ex .usage-totals {

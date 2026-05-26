@@ -456,6 +456,14 @@ export const quotaSnapshotSchema = z.object({
 const colorModeSchema = z.enum(['dark', 'light']);
 
 const compactThemeSchema = z.enum([
+  // v2 design-language presets
+  'liquid-glass',
+  'material-you',
+  'soft-neumorph',
+  'paper-dashboard',
+  'mint-monitor',
+  'device-oled',
+  // v1 legacy presets (retained as additional options)
   'obsidian-glass',
   'aurora-ring',
   'holo-grid',

@@ -1,193 +1,230 @@
 /*
- * Compact widget base layout and shared compact primitives.
+ * Compact widget — base layout and shared slot primitives.
+ *
+ * The compact (floating) window is 360 × 240, frameless, transparent,
+ * always-on-top. Every theme paints its own material inside the
+ * `.compact-frame` so the rounded corners read correctly over the
+ * desktop wallpaper.
+ *
+ * Layered architecture (matches `WidgetShell.tsx`):
+ *
+ *   .compact-frame                  — size, click target, isolation
+ *     ├── .compact-frame__backdrop  — material (glass, paper, OLED)
+ *     ├── .compact-frame__ornaments — non-layout decoration
+ *     └── .compact-frame__content   — slots (z-index: 2)
+ *          ├── .compact-network-slot
+ *          │    ├── .compact-network-slot__copy
+ *          │    │    ├── .compact-status (StatusHero re-skin)
+ *          │    │    └── .compact-node-rail
+ *          │    └── .compact-sparkline-box
+ *          └── .compact-usage-slot
+ *               ├── .quota-strip (uses .compact-quota__* via theme)
+ *               └── .compact-usage-summary
+ *
+ * The two decoration layers carry `pointer-events: none` so they never
+ * intercept the click that opens the expanded window.
+ *
+ * Themes overload only the visual tokens declared on
+ * `.compact-frame[data-compact-theme='…']`; layout & spacing live
+ * here and are not theme-specific.
  */
 
-/* Compact widget shell ---------------------------------------------------- */
-/*
- * The compact (floating) window is transparent and frameless. Each
- * `data-compact-theme` preset paints its own surface inside the
- * `.widget-shell`, never on `<body>` — bleeding through is what makes
- * the rounded corners look correct over the desktop wallpaper.
- *
- * Layered architecture:
- *   1. `.widget-shell`            — base: size, padding, layout, tokens
- *   2. `.widget-shell__fx`        — animated decoration (aurora ring,
- *                                   scanning grid, pulse, ...)
- *   3. `.widget-shell__chrome`    — static decoration (border highlight,
- *                                   inner glow, corner accents)
- *   4. `.widget-shell__content`   — the actual UI tree, lifted above
- *                                   decoration via `z-index`
- *
- * Decoration layers are absolutely positioned and `pointer-events:
- * none` so they cannot intercept the click that opens the expanded
- * window.
- */
+/* ── Frame base ─────────────────────────────────────────────────── */
 
-.widget-shell {
-  /* ── Base tokens (overridden by `[data-compact-theme]` rules below)
-        Keep them grouped at the top so each theme block stays small and
-        focused on what actually changes. */
-  --widget-bg:
-    linear-gradient(145deg, #18181c, #101012);
-  --widget-border: rgba(255, 255, 255, 0.06);
-  /*
-   * No outer drop shadow.
-   *
-   * With the widget filling the BrowserWindow edge-to-edge, any
-   * outer shadow would paint past the window bounds and be
-   * clipped by the OS — wasting paint cycles for an effect the
-   * user can never see. Visual lift comes from the inset highlight
-   * painted by `.widget-shell__chrome` instead.
-   */
-  --widget-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --widget-text: var(--color-text-primary);
-  --widget-text-muted: var(--color-text-muted);
-  --widget-accent: rgba(165, 180, 252, 0.95);
-  --widget-glow: rgba(165, 180, 252, 0.28);
-  --widget-divider: rgba(255, 255, 255, 0.04);
-
-  /* Status-driven accent — drives `signal-pulse` and the badge
-     dots; defaults to neutral so unknown states fall back gracefully. */
-  --widget-status: var(--color-ok);
+.compact-frame {
+  /* Default tokens — every theme block re-declares these. The defaults
+     keep the widget readable even before a theme stylesheet loads. */
+  --compact-bg: rgba(20, 20, 22, 0.92);
+  --compact-surface: rgba(255, 255, 255, 0.06);
+  --compact-surface-strong: rgba(255, 255, 255, 0.10);
+  --compact-text: #f4fbf8;
+  --compact-muted: rgba(244, 251, 248, 0.62);
+  --compact-faint: rgba(244, 251, 248, 0.40);
+  --compact-border: rgba(255, 255, 255, 0.08);
+  --compact-border-strong: rgba(255, 255, 255, 0.18);
+  --compact-divider: rgba(255, 255, 255, 0.06);
+  --compact-accent: #34d399;
+  --compact-accent-soft: rgba(52, 211, 153, 0.22);
+  --compact-radius: 18px;
+  --compact-radius-inner: 12px;
+  --compact-status-color: var(--color-ok);
+  --compact-shadow: 0 14px 38px rgba(0, 0, 0, 0.32);
+  --compact-font: var(--ui-font-family, 'Inter', system-ui, sans-serif);
 
   box-sizing: border-box;
-  /*
-   * Fill the BrowserWindow edge-to-edge.
-   *
-   * The compact window is `transparent: true`, so anything painted
-   * in a margin ring around the widget falls onto the desktop
-   * wallpaper as a visible halo — drop shadows, corner
-   * anti-aliasing leaks, OS DWM artifacts. Removing the margin
-   * means the widget bounds match the BrowserWindow bounds; the
-   * four rectangular corners outside the rounded shape stay fully
-   * transparent (the border-radius mask and the transparent
-   * BrowserWindow agree), and any clipped drop shadow has no
-   * margin to leak into.
-   *
-   * The window itself is sized 360 × 240; the widget therefore
-   * occupies that exact rectangle minus the rounded corners.
-   */
-  height: 100%;
-  width: 100%;
-  margin: 0;
-  padding: 10px 14px;
-
   position: relative;
   isolation: isolate;
   overflow: hidden;
-
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-
-  background: var(--widget-bg);
-  color: var(--widget-text);
-  border-radius: 12px;
-  /* No outer border. The visible rim is owned by the
-     `.widget-shell__chrome` inset highlight; an additional outer
-     `border: 1px solid` reads as a hard grey hairline against the
-     transparent BrowserWindow chrome and double-stacks with the
-     chrome layer. Themes that want a different rim treatment do it
-     in their own `__chrome` block (see `aurora-ring`, `holo-grid`). */
-  border: 0;
-  box-shadow: var(--widget-shadow);
-  font-size: 13px;
-  line-height: 1.4;
   cursor: pointer;
   user-select: none;
   outline: none;
   -webkit-app-region: no-drag;
-  /*
-   * No `backdrop-filter`.
-   *
-   * On Windows, `backdrop-filter: blur(...)` on a transparent
-   * frameless BrowserWindow leaks past the `border-radius` mask:
-   * Chromium computes the blur in the element's rectangular
-   * bounding box and the rounded clip is applied imperfectly at
-   * the corners, leaving a faint rectangular halo of blurred
-   * wallpaper in the 6 px margin around the widget — most visible
-   * over saturated/translucent wallpapers (e.g. the mint-green
-   * capture in the bug report).
-   *
-   * Each theme paints its own surface gradient + transparency
-   * directly in `--widget-bg`, which already reads as "frosted"
-   * without the OS-level blur. If a future theme wants real
-   * backdrop blur it should be opted in locally, after isolating
-   * the rounded shape on its own compositor layer (e.g. via
-   * `clip-path` rather than `border-radius`).
-   */
-  backdrop-filter: none;
+
+  /* Outer shell margin — every theme that wants a true card look
+     leaves a 6 px gutter so its border + glow can paint without
+     being clipped by the BrowserWindow. Themes that want to fill
+     edge-to-edge override `.compact-frame { inset: 0; margin: 0 }`
+     locally. */
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+  margin: 6px;
+
+  border-radius: var(--compact-radius);
+  background: transparent;
+  color: var(--compact-text);
+  font-family: var(--compact-font);
+  font-size: 13px;
+  line-height: 1.4;
+
+  /* No drop shadow on the frame itself — most themes paint their
+     shadow inside `.compact-frame__backdrop` instead so the
+     BrowserWindow can never clip it. */
+  box-shadow: none;
 }
 
-.widget-shell:focus-visible {
-  /* Accent ring only. No outer drop shadow — the widget fills the
-     BrowserWindow so the OS would clip it anyway. */
-  box-shadow:
-    inset 0 0 0 2px rgba(99, 102, 241, 0.6);
+.compact-frame:focus-visible {
+  outline: 2px solid var(--compact-accent);
+  outline-offset: 1px;
 }
 
-/* Status → status colour token. The widget shell mirrors `state.status`
-   onto `[data-status]`; theme-fx layers (notably `signal-pulse`) read
-   the status colour to drive their motion. */
-.widget-shell[data-status='healthy'],
-.widget-shell[data-status='node_slow'] {
-  --widget-status: var(--color-ok);
+/* Health → CSS-var palette. Themes read `--compact-status-color`
+   from any element. */
+.compact-frame[data-health-status='healthy'] {
+  --compact-status-color: #22c55e;
 }
-.widget-shell[data-status='partial_outage'] {
-  --widget-status: var(--color-warn);
+.compact-frame[data-health-status='node_slow'],
+.compact-frame[data-health-status='partial_outage'] {
+  --compact-status-color: #f59e0b;
 }
-.widget-shell[data-status='openclash_unreachable'],
-.widget-shell[data-status='node_down'],
-.widget-shell[data-status='home_down'] {
-  --widget-status: var(--color-bad);
+.compact-frame[data-health-status='home_down'],
+.compact-frame[data-health-status='openclash_unreachable'],
+.compact-frame[data-health-status='node_down'] {
+  --compact-status-color: #ef4444;
 }
 
-/* Decoration + content layering ------------------------------------------- */
+/* ── Decoration + content layers ───────────────────────────────── */
 
-.widget-shell__fx,
-.widget-shell__chrome {
+.compact-frame__backdrop,
+.compact-frame__ornaments {
   position: absolute;
   inset: 0;
   pointer-events: none;
   border-radius: inherit;
-  z-index: 0;
 }
 
-.widget-shell__chrome {
+.compact-frame__backdrop {
+  z-index: 0;
+  background: var(--compact-bg);
+}
+
+.compact-frame__ornaments {
   z-index: 1;
 }
 
-.widget-shell__content {
+.compact-frame__content {
   position: relative;
   z-index: 2;
-  display: flex;
-  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 72px 1fr;
+  padding: 10px 14px;
+  box-sizing: border-box;
   gap: 0;
-  flex: 1;
   min-height: 0;
 }
 
-/* Network section (top: two text rows + right-side trend) */
-.widget-shell__network {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px;
+/* ── Network slot ──────────────────────────────────────────────── */
+
+.compact-network-slot {
+  display: flex;
   align-items: center;
   column-gap: 10px;
-  padding-bottom: 7px;
-  border-bottom: 1px solid var(--widget-divider);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--compact-divider);
+  min-height: 0;
+}
+
+.compact-network-slot__copy {
+  /* Grows into the slack when the node name is short, shrinks when
+     it's long so the sparkline yields rather than clipping the pill. */
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.compact-sparkline-box {
+  /* No frame — the sparkline reads as a free-floating trace and the
+     network slot stops feeling like two stacked cards. */
+  flex: 0 1 130px;
+  min-width: 50px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  color: var(--compact-accent);
   -webkit-app-region: no-drag;
 }
 
-.widget-shell__network-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
+.compact-sparkline-box .sparkline {
+  width: 100%;
+  height: 100%;
+  display: block;
+  color: inherit;
 }
 
-/* AI section (bottom half) */
-.widget-shell__ai {
+/* Node rail — one line, group + name. Width hugs its content so the
+   pill is only as wide as the text needs; capped at 100% of the
+   network-slot copy column so a very long node name still ellipses
+   instead of overflowing into the sparkline box. */
+.compact-node-rail {
+  display: inline-flex;
+  align-items: baseline;
+  align-self: flex-start;
+  width: max-content;
+  max-width: 100%;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--compact-muted);
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--compact-surface);
+  border: 1px solid var(--compact-border);
+}
+
+.compact-node-rail__group {
+  flex: 0 1 auto;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--compact-faint);
+  font-size: 10px;
+}
+
+.compact-node-rail__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--compact-text);
+  font-weight: 500;
+}
+
+/* ── Usage slot ────────────────────────────────────────────────── */
+
+.compact-usage-slot {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -197,76 +234,170 @@
   -webkit-app-region: no-drag;
 }
 
-/* The node name (in line 2) */
-.widget-shell__node {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--widget-text-muted);
+.compact-usage-summary {
+  font-size: 10.5px;
+  color: var(--compact-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-top: 4px;
+  border-top: 1px dashed var(--compact-divider);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── StatusHero re-skin (compact) ──────────────────────────────── */
+/* StatusHero ships .status-hero / .status-hero__dot / __label /
+   __latency / __fails. We restyle them to match the compact theme
+   tokens; the expanded view keeps its own .status-hero look via
+   foundation.css + StatusHero base styles loaded later. */
+
+.compact-frame .status-hero {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.compact-frame .status-hero__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--compact-status-color);
+  box-shadow: 0 0 0 0 var(--compact-status-color);
+  flex: 0 0 auto;
+}
+
+.compact-frame .status-hero__label {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--compact-text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.compact-frame .status-hero__latency {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--compact-accent-soft);
+  color: var(--compact-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.compact-frame .status-hero__fails {
+  font-size: 10px;
+  color: #ef4444;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── QuotaStrip re-skin (compact) ──────────────────────────────── */
+/* QuotaStrip ships .quota-strip + __group + __row + __track + __fill
+   + __percent + __reset. We theme them via the shared compact tokens
+   so each preset gets a consistent look without the component
+   needing to know which theme is active. The component-level CSS in
+   components/quota-strip.css still loads first; rules below override
+   only inside `.compact-frame`. */
+
+.compact-frame .quota-strip {
+  gap: 4px;
+  flex: 1;
+}
+
+.compact-frame .quota-strip__group {
+  gap: 8px;
   min-width: 0;
 }
 
-.widget-shell__node-group {
-  flex: 0 1 auto;
-  max-width: 82px;
+.compact-frame .quota-strip__provider {
+  width: 22px;
+  min-width: 22px;
+  color: var(--compact-muted);
+}
+
+.compact-frame .quota-strip__windows {
+  gap: 3px;
+}
+
+.compact-frame .quota-strip__row {
+  align-items: center;
+  height: 16px;
+  gap: 7px;
+  min-width: 0;
+}
+
+.compact-frame .quota-strip__window-label {
+  flex: 0 0 46px;
+  min-width: 0;
   overflow: hidden;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--compact-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-overflow: ellipsis;
-  color: var(--widget-text-muted);
+  white-space: nowrap;
+}
+
+.compact-frame .quota-strip__track {
+  flex: 1 1 auto;
+  height: 5px;
+  background: var(--compact-surface);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--compact-border);
+}
+
+.compact-frame .quota-strip__fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease-out;
+}
+
+.compact-frame .quota-strip__fill--ok { background: var(--compact-accent); }
+.compact-frame .quota-strip__fill--warn { background: #f59e0b; }
+.compact-frame .quota-strip__fill--critical { background: #ef4444; }
+
+.compact-frame .quota-strip__percent {
+  flex: 0 0 auto;
+  min-width: 30px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--compact-accent);
+  text-align: right;
+}
+
+.compact-frame .quota-strip__row[data-urgency='critical'] .quota-strip__percent {
+  color: #ef4444;
+}
+.compact-frame .quota-strip__row[data-urgency='warn'] .quota-strip__percent {
+  color: #f59e0b;
+}
+
+.compact-frame .quota-strip__reset {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  color: var(--compact-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 28px;
+}
+
+.compact-frame .quota-strip__warn-icon {
   font-size: 10px;
 }
 
-.widget-shell__node-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--color-text-secondary);
-}
-
-.sparkline {
-  width: 100%;
-  height: 100%;
-  display: block;
-  /* `currentColor` lets the polyline + gradient pick up the surrounding
-     text colour. The compact widget owns its own dark surface so a calm
-     near-white reads well; the expanded window's light-mode override
-     swaps to a cool indigo so the line stays visible against the light
-     surface. */
-  color: rgba(245, 245, 247, 0.7);
-}
-
-[data-color-mode='light'] .ex .sparkline,
-[data-color-mode='light'].ex .sparkline {
-  color: rgba(79, 70, 229, 0.62);
-}
-
-.widget-shell__sparkline {
-  width: 92px;
-  height: 34px;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  -webkit-app-region: no-drag;
-}
-
-.widget-shell__usage {
-  font-size: 11px;
-  color: var(--widget-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-top: 2px;
-  border-top: 1px solid var(--widget-divider);
-  -webkit-app-region: no-drag;
-}
-
-.widget-shell__usage-prefix {
-  color: var(--widget-text-muted);
-  margin-right: 4px;
+.compact-frame .quota-strip__more {
+  align-self: flex-end;
+  background: var(--compact-surface);
+  border: 1px solid var(--compact-border);
+  color: var(--compact-faint);
+  font-size: 9px;
 }

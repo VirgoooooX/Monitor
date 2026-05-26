@@ -1,17 +1,14 @@
 // Auto-discovery unit tests.
 //
-// Validates the contract laid out in `auth-file.discovery.ts`:
+// Validates:
 //
 //   - Probes that find a parseable credential get a fresh
 //     `provider_auth` row inserted with `enabled: true` and the
 //     `(自动发现)` label suffix.
-//   - Probes whose file is missing increment the `missing` counter
-//     and never write rows.
-//   - Probes whose file is unparseable increment `failed` without
+//   - Missing files / unparseable files are aggregated without
 //     stopping the rest of the scan.
-//   - Probes whose credential matches an existing row's secret
-//     fingerprint are silently skipped — re-running the scan after
-//     a previous import is a no-op.
+//   - Fingerprint dedup matches on accountId, then accessToken /
+//     apiKey — re-running the scan is a no-op.
 
 import { describe, it, expect } from 'vitest';
 
@@ -68,34 +65,18 @@ function createMemSecrets(): SecretsAdmin {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const CODEX_AUTH = JSON.stringify({
-  metadata: {
-    access_token: 'sk-codex-AAA',
-    account_id: 'codex-account-1',
-  },
-});
-
 const CODEX_NATIVE_AUTH = JSON.stringify({
-  // Mirrors the on-disk shape Codex CLI writes to `~/.codex/auth.json`.
   OPENAI_API_KEY: null,
   tokens: {
     id_token: 'id-jwt',
     access_token: 'sk-codex-NATIVE',
     refresh_token: 'rt-codex-NATIVE',
-    account_id: 'codex-account-native',
+    account_id: 'codex-account-1',
   },
   last_refresh: '2025-01-01T00:00:00.000Z',
 });
 
-const CLAUDE_AUTH = JSON.stringify({
-  metadata: {
-    access_token: 'sk-ant-BBB',
-  },
-});
-
 const CLAUDE_NATIVE_AUTH = JSON.stringify({
-  // Mirrors the on-disk shape Claude Code writes to
-  // `~/.claude/.credentials.json`.
   claudeAiOauth: {
     accessToken: 'sk-ant-oat01-NATIVE',
     refreshToken: 'sk-ant-ort01-NATIVE',
@@ -104,23 +85,26 @@ const CLAUDE_NATIVE_AUTH = JSON.stringify({
   },
 });
 
-const MALFORMED_AUTH = '{not actually json';
+const MALFORMED = '{not actually json';
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('runDiscovery', () => {
+describe('runDiscovery — happy path', () => {
   it('imports new credentials with enabled=true and a (自动发现) label', async () => {
     const repo = createMemRepo();
     const secrets = createMemSecrets();
     const probes = [
-      { provider: 'codex' as ProviderId, filePath: '/fake/codex.json' },
-      { provider: 'claude-code' as ProviderId, filePath: '/fake/claude.json' },
+      { provider: 'codex' as ProviderId, filePath: '/h/.codex/auth.json' },
+      {
+        provider: 'claude-code' as ProviderId,
+        filePath: '/h/.claude/.credentials.json',
+      },
     ];
     const files = new Map<string, string>([
-      ['/fake/codex.json', CODEX_AUTH],
-      ['/fake/claude.json', CLAUDE_AUTH],
+      ['/h/.codex/auth.json', CODEX_NATIVE_AUTH],
+      ['/h/.claude/.credentials.json', CLAUDE_NATIVE_AUTH],
     ]);
 
     let n = 0;
@@ -129,25 +113,24 @@ describe('runDiscovery', () => {
       secrets,
       probes,
       fileExists: async (p) => files.has(p),
-      readFile: async (p) => {
-        const v = files.get(p);
-        if (v === undefined) throw new Error('missing');
-        return v;
-      },
+      readFile: async (p) => files.get(p) ?? '',
       uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`,
       now: () => 1_700_000_000_000,
     });
 
     expect(report).toEqual({ imported: 2, skipped: 0, failed: 0, missing: 0 });
-    const rows = repo.list();
-    expect(rows).toHaveLength(2);
+    const rows = repo.list().sort((a, b) =>
+      a.provider.localeCompare(b.provider),
+    );
+    expect(rows.map((r) => r.provider)).toEqual(['claude-code', 'codex']);
     for (const r of rows) {
       expect(r.enabled).toBe(true);
-      expect(r.source).toBe('cpa-auth-file');
       expect(r.label.endsWith('(自动发现)')).toBe(true);
     }
   });
+});
 
+describe('runDiscovery — error & missing-file handling', () => {
   it('counts missing files without writing rows', async () => {
     const repo = createMemRepo();
     const secrets = createMemSecrets();
@@ -177,8 +160,8 @@ describe('runDiscovery', () => {
       { provider: 'claude-code' as ProviderId, filePath: '/good/claude.json' },
     ];
     const files = new Map<string, string>([
-      ['/bad/codex.json', MALFORMED_AUTH],
-      ['/good/claude.json', CLAUDE_AUTH],
+      ['/bad/codex.json', MALFORMED],
+      ['/good/claude.json', CLAUDE_NATIVE_AUTH],
     ]);
 
     const report = await runDiscovery({
@@ -193,28 +176,27 @@ describe('runDiscovery', () => {
 
     expect(report.failed).toBe(1);
     expect(report.imported).toBe(1);
-    const rows = repo.list();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.provider).toBe('claude-code');
+    expect(repo.list()).toHaveLength(1);
+    expect(repo.list()[0]!.provider).toBe('claude-code');
   });
+});
 
-  it('skips a probe whose credential matches an existing row', async () => {
+describe('runDiscovery — fingerprint deduplication', () => {
+  it('skips a candidate whose token matches an existing row', async () => {
     const repo = createMemRepo();
     const secrets = createMemSecrets();
-    // Pre-seed the repo + secrets with a Codex row that already
-    // carries the same access token as the probe will yield.
     const existingId = '00000000-0000-4000-8000-eeeeeeeeeeee';
     const existingKey = `cpaAuth.providerAuth.${existingId}`;
     secrets.set(
       existingKey,
-      JSON.stringify({ accessToken: 'sk-codex-AAA' }),
+      JSON.stringify({ accessToken: 'sk-codex-NATIVE' }),
     );
     repo.insert({
       id: existingId,
       provider: 'codex',
       label: 'codex:existing',
       source: 'cpa-auth-file',
-      accountId: 'codex-account-1',
+      accountId: null,
       projectId: null,
       quotaCapability: 'official',
       importedAt: 1,
@@ -228,9 +210,11 @@ describe('runDiscovery', () => {
     });
 
     const probes = [
-      { provider: 'codex' as ProviderId, filePath: '/fake/codex.json' },
+      { provider: 'codex' as ProviderId, filePath: '/h/.codex/auth.json' },
     ];
-    const files = new Map<string, string>([['/fake/codex.json', CODEX_AUTH]]);
+    const files = new Map<string, string>([
+      ['/h/.codex/auth.json', CODEX_NATIVE_AUTH],
+    ]);
 
     const report = await runDiscovery({
       providerAuthRepo: repo,
@@ -246,18 +230,79 @@ describe('runDiscovery', () => {
     expect(repo.list()).toHaveLength(1);
   });
 
+  it('updates the existing secret when accountId matches but token rotated', async () => {
+    // Same Codex account refreshed independently in two CLIs would
+    // carry different access tokens but the same account_id. The
+    // accountId fingerprint MUST win.
+    const repo = createMemRepo();
+    const secrets = createMemSecrets();
+    repo.insert({
+      id: 'existing-id',
+      provider: 'codex',
+      label: 'codex:existing',
+      source: 'cpa-auth-file',
+      accountId: 'codex-account-1',
+      projectId: null,
+      quotaCapability: 'official',
+      importedAt: 1,
+      updatedAt: 1,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: 'auth_expired',
+      lastErrorMessage: 'old token expired',
+      enabled: true,
+      secretKey: 'cpaAuth.providerAuth.existing-id',
+    });
+    secrets.set(
+      'cpaAuth.providerAuth.existing-id',
+      JSON.stringify({ accessToken: 'old-token-XYZ', accountId: 'codex-account-1' }),
+    );
+
+    const probes = [
+      { provider: 'codex' as ProviderId, filePath: '/h/.codex/auth.json' },
+    ];
+    const files = new Map<string, string>([
+      ['/h/.codex/auth.json', CODEX_NATIVE_AUTH],
+    ]);
+
+    const report = await runDiscovery({
+      providerAuthRepo: repo,
+      secrets,
+      probes,
+      fileExists: async (p) => files.has(p),
+      readFile: async (p) => files.get(p) ?? '',
+      uuid: () => 'new-id',
+      now: () => 1_700_000_000_000,
+    });
+
+    expect(report).toEqual({ imported: 0, skipped: 1, failed: 0, missing: 0 });
+    const rows = repo.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.id).toBe('existing-id');
+    expect(rows[0]!.updatedAt).toBe(1_700_000_000_000);
+    expect(rows[0]!.lastValidatedAt).toBe(1_700_000_000_000);
+    expect(rows[0]!.lastErrorCode).toBeNull();
+    expect(rows[0]!.lastErrorMessage).toBeNull();
+    const payload = JSON.parse(
+      secrets.get('cpaAuth.providerAuth.existing-id') ?? '{}',
+    ) as { accessToken?: string; refreshToken?: string; accountId?: string };
+    expect(payload).toMatchObject({
+      accessToken: 'sk-codex-NATIVE',
+      refreshToken: 'rt-codex-NATIVE',
+      accountId: 'codex-account-1',
+    });
+  });
+
   it('deduplicates two probes that resolve to the same fingerprint within one scan', async () => {
     const repo = createMemRepo();
     const secrets = createMemSecrets();
-    // Two probe paths, byte-identical content. Only one row
-    // should be written.
     const probes = [
       { provider: 'codex' as ProviderId, filePath: '/a/auth.json' },
       { provider: 'codex' as ProviderId, filePath: '/b/auth.json' },
     ];
     const files = new Map<string, string>([
-      ['/a/auth.json', CODEX_AUTH],
-      ['/b/auth.json', CODEX_AUTH],
+      ['/a/auth.json', CODEX_NATIVE_AUTH],
+      ['/b/auth.json', CODEX_NATIVE_AUTH],
     ]);
 
     let n = 0;
@@ -271,52 +316,8 @@ describe('runDiscovery', () => {
       now: () => 1_700_000_000_000,
     });
 
-    // Both probes parse successfully; one wins, the other is
-    // recognised as a duplicate within the same scan and counted
-    // as skipped.
     expect(report.imported).toBe(1);
     expect(report.skipped).toBe(1);
     expect(repo.list()).toHaveLength(1);
-  });
-
-  it('imports native CLI on-disk credentials (Codex + Claude Code)', async () => {
-    // Regression guard for the bug where the auto-discovery scan
-    // silently failed on `~/.codex/auth.json` and
-    // `~/.claude/.credentials.json` because the parser priority
-    // table only knew the CPA-wrapped shapes. With the native paths
-    // wired in (`tokens.access_token`, `claudeAiOauth.accessToken`)
-    // both files MUST surface as new rows on a fresh scan.
-    const repo = createMemRepo();
-    const secrets = createMemSecrets();
-    const probes = [
-      { provider: 'codex' as ProviderId, filePath: '/h/.codex/auth.json' },
-      {
-        provider: 'claude-code' as ProviderId,
-        filePath: '/h/.claude/.credentials.json',
-      },
-    ];
-    const files = new Map<string, string>([
-      ['/h/.codex/auth.json', CODEX_NATIVE_AUTH],
-      ['/h/.claude/.credentials.json', CLAUDE_NATIVE_AUTH],
-    ]);
-
-    let n = 0;
-    const report = await runDiscovery({
-      providerAuthRepo: repo,
-      secrets,
-      probes,
-      fileExists: async (p) => files.has(p),
-      readFile: async (p) => files.get(p) ?? '',
-      uuid: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`,
-      now: () => 1_700_000_000_000,
-    });
-
-    expect(report).toEqual({ imported: 2, skipped: 0, failed: 0, missing: 0 });
-    const rows = repo.list().sort((a, b) => a.provider.localeCompare(b.provider));
-    expect(rows.map((r) => r.provider)).toEqual(['claude-code', 'codex']);
-    for (const r of rows) {
-      expect(r.enabled).toBe(true);
-      expect(r.label.endsWith('(自动发现)')).toBe(true);
-    }
   });
 });

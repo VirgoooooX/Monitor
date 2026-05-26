@@ -680,19 +680,39 @@ export interface ManagementInterfaceSettings {
 export type ColorMode = 'dark' | 'light';
 
 /**
- * One of five hand-tuned visual presets for the compact (floating)
- * widget. Each preset only changes decoration (background, edge
- * lighting, motion); the underlying layout — status hero,
- * sparkline, quota strip, usage summary — stays identical so users
- * can swap presets without re-learning where information lives.
+ * Hand-tuned visual presets for the compact (floating) widget.
  *
- *   - obsidian-glass : default; black-glass surface with a cool rim.
- *   - aurora-ring    : slow conic-gradient aurora hugging the edge.
- *   - holo-grid      : HUD-style grid + scanning line.
- *   - liquid-metal   : graphite + slow specular sweep, cool highlights.
- *   - signal-pulse   : status-driven concentric pulse around the dot.
+ * Six new design-language presets (from theme system v2) plus five
+ * legacy presets retained as additional options for users who
+ * preferred the v1 looks. The underlying data slots (network
+ * status + sparkline up top, AI quota + token summary below) are
+ * identical across every preset so users can swap themes without
+ * re-learning where information lives.
+ *
+ * v2 design-language presets:
+ *   - liquid-glass    : light translucent iOS-style glass widget.
+ *   - material-you    : light Material You / MD3 tonal surfaces.
+ *   - soft-neumorph   : light soft neumorphic, embossed + inset.
+ *   - paper-dashboard : light paper / Notion-style ledger.
+ *   - mint-monitor    : dark mint-green monitoring card (default
+ *                       reference design — semi-transparent surface
+ *                       with status pill and sparkline mini-window).
+ *   - device-oled     : dark hardware OLED dashboard with metal bezel.
+ *
+ * v1 legacy presets:
+ *   - obsidian-glass  : calm dark glass with a cool rim.
+ *   - aurora-ring     : slow conic-gradient aurora hugging the edge.
+ *   - holo-grid       : HUD-style grid + scanning line.
+ *   - liquid-metal    : graphite + slow specular sweep.
+ *   - signal-pulse    : status-driven concentric pulse.
  */
 export type CompactTheme =
+  | 'liquid-glass'
+  | 'material-you'
+  | 'soft-neumorph'
+  | 'paper-dashboard'
+  | 'mint-monitor'
+  | 'device-oled'
   | 'obsidian-glass'
   | 'aurora-ring'
   | 'holo-grid'

@@ -164,7 +164,8 @@ body.mode-expanded[data-color-mode='light'] {
 [data-color-mode='light'] .ex .node-table__card-source,
 [data-color-mode='light'] .ex .usage-panel-v2__title,
 [data-color-mode='light'] .ex .quota-overview__title,
-[data-color-mode='light'] .ex .quota-bar__provider,
+[data-color-mode='light'] .ex .quota-account-card__chip,
+[data-color-mode='light'] .ex .quota-account-card__status,
 [data-color-mode='light'] .ex .usage-totals__label,
 [data-color-mode='light'] .ex .provider-card__name,
 [data-color-mode='light'] .ex .provider-card__badge,
@@ -346,14 +347,56 @@ body.mode-expanded[data-color-mode='light'] {
 }
 
 [data-color-mode='light'] .ex .usage-panel-v2__tab,
-[data-color-mode='light'] .ex .quota-bar__window-name,
-[data-color-mode='light'] .ex .quota-bar__footer,
+[data-color-mode='light'] .ex .quota-overview__mode,
+[data-color-mode='light'] .ex .quota-account-card__meta,
+[data-color-mode='light'] .ex .quota-account-card__plan,
+[data-color-mode='light'] .ex .quota-window-row__reset,
 [data-color-mode='light'] .ex .usage-totals__mini,
 [data-color-mode='light'] .ex .token-row__value,
 [data-color-mode='light'] .ex .provider-card__reason,
 [data-color-mode='light'] .ex .provider-card__hint {
   color: var(--ex-text-mute);
   font-weight: 600;
+}
+
+[data-color-mode='light'] .ex .quota-account-card[data-provider='codex'] .quota-account-card__chip {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4f46e5;
+}
+
+[data-color-mode='light'] .ex .quota-account-card[data-provider='claude-code'] .quota-account-card__chip {
+  background: rgba(245, 158, 11, 0.16);
+  color: #92400e;
+}
+
+[data-color-mode='light'] .ex .quota-account-card[data-provider='gemini-cli'] .quota-account-card__chip {
+  background: rgba(59, 130, 246, 0.13);
+  color: #1d4ed8;
+}
+
+[data-color-mode='light'] .ex .quota-account-card[data-provider='antigravity'] .quota-account-card__chip {
+  background: rgba(20, 184, 166, 0.14);
+  color: #0f766e;
+}
+
+[data-color-mode='light'] .ex .quota-account-card__status[data-tone='ok'] {
+  background: rgba(34, 197, 94, 0.14);
+  color: #047857;
+}
+
+[data-color-mode='light'] .ex .quota-account-card__status[data-tone='warn'] {
+  background: rgba(245, 158, 11, 0.18);
+  color: #92400e;
+}
+
+[data-color-mode='light'] .ex .quota-account-card__status[data-tone='bad'] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+[data-color-mode='light'] .ex .quota-account-card__status[data-tone='neutral'] {
+  background: rgba(107, 114, 128, 0.14);
+  color: #4b5563;
 }
 
 [data-color-mode='light'] .ex .provider-card__badge--ok {

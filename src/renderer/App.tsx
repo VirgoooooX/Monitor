@@ -51,7 +51,7 @@ import type {
 // that never reaches the bridge still produces a coherent UI.
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorMode: 'dark',
-  compactTheme: 'obsidian-glass',
+  compactTheme: 'mint-monitor',
   fontScale: 1,
 };
 

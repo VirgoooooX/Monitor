@@ -20,7 +20,11 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import * as http from 'node:http';
 
-import type { QuotaSnapshot, QuotaWindow } from '../../types';
+import type {
+  ProviderAuthErrorCode,
+  QuotaSnapshot,
+  QuotaWindow,
+} from '../../types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +60,26 @@ interface WhamUsageResponse {
     secondary_window?: RateLimitWindow;
   };
   rate_limits?: WhamUsageResponse['rate_limit'];
+  code_review_rate_limit?: WhamUsageResponse['rate_limit'];
+  additional_rate_limits?: unknown;
+}
+
+export class CodexRemoteQuotaError extends Error {
+  override readonly name = 'CodexRemoteQuotaError';
+
+  constructor(
+    public readonly code: ProviderAuthErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface CodexRemoteQuotaAuth {
+  readonly accessToken: string;
+  readonly accountId: string;
+  readonly capturedAt?: number;
+  readonly signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +152,7 @@ export async function parseLocalRateLimits(): Promise<QuotaSnapshot | null> {
   return null;
 }
 
-function extractRateLimitsFromRecord(record: unknown): QuotaWindow[] | null {
+export function extractRateLimitsFromRecord(record: unknown): QuotaWindow[] | null {
   if (!record || typeof record !== 'object') return null;
 
   // Navigate into nested structures:
@@ -149,23 +173,20 @@ function extractRateLimitsFromRecord(record: unknown): QuotaWindow[] | null {
 
   const windows: QuotaWindow[] = [];
   const obj = rateLimitsObj as Record<string, unknown>;
+  appendStandardRateLimitWindows(windows, obj, '');
 
-  // Try to extract 5h window
-  const fiveHour = findWindow(obj, [
-    'five_hour', 'five_hour_limit', 'five_hour_rate_limit',
-    'primary', 'primary_window',
-  ]);
-  if (fiveHour) {
-    windows.push({ name: '5h', ...fiveHour });
+  const codeReviewRateLimit = deepGet(record, 'code_review_rate_limit');
+  if (codeReviewRateLimit && typeof codeReviewRateLimit === 'object') {
+    appendStandardRateLimitWindows(
+      windows,
+      codeReviewRateLimit as Record<string, unknown>,
+      'code_review:',
+    );
   }
 
-  // Try to extract weekly window
-  const weekly = findWindow(obj, [
-    'weekly', 'weekly_limit', 'weekly_rate_limit',
-    'secondary', 'secondary_window',
-  ]);
-  if (weekly) {
-    windows.push({ name: 'weekly', ...weekly });
+  const additionalRateLimits = deepGet(record, 'additional_rate_limits');
+  if (additionalRateLimits !== undefined) {
+    appendAdditionalRateLimitWindows(windows, additionalRateLimits, 'additional');
   }
 
   // If we only got one window, try to infer its type from window_seconds
@@ -176,7 +197,61 @@ function extractRateLimitsFromRecord(record: unknown): QuotaWindow[] | null {
     }
   }
 
-  return windows.length > 0 ? windows : null;
+  return windows.length > 0 ? dedupeQuotaWindows(windows) : null;
+}
+
+function appendStandardRateLimitWindows(
+  windows: QuotaWindow[],
+  obj: Record<string, unknown>,
+  prefix: string,
+): void {
+  // Try to extract 5h window
+  const fiveHour = findWindow(obj, [
+    'five_hour', 'five_hour_limit', 'five_hour_rate_limit',
+    'primary', 'primary_window',
+  ]);
+  if (fiveHour) {
+    windows.push({ name: `${prefix}5h`, ...fiveHour });
+  }
+
+  // Try to extract weekly window
+  const weekly = findWindow(obj, [
+    'weekly', 'weekly_limit', 'weekly_rate_limit',
+    'secondary', 'secondary_window',
+  ]);
+  if (weekly) {
+    windows.push({ name: `${prefix}weekly`, ...weekly });
+  }
+}
+
+function appendAdditionalRateLimitWindows(
+  windows: QuotaWindow[],
+  value: unknown,
+  nameHint: string,
+): void {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      appendAdditionalRateLimitWindows(windows, value[i], `${nameHint}:${i + 1}`);
+    }
+    return;
+  }
+
+  if (!value || typeof value !== 'object') return;
+  const obj = value as Record<string, unknown>;
+  const direct = windowFromObject(obj);
+  if (direct) {
+    const explicitName =
+      stringField(obj, 'name') ??
+      stringField(obj, 'model') ??
+      stringField(obj, 'bucket') ??
+      nameHint;
+    windows.push({ name: explicitName, ...direct });
+  }
+
+  for (const [key, child] of Object.entries(obj)) {
+    if (key === 'name' || key === 'model' || key === 'bucket') continue;
+    appendAdditionalRateLimitWindows(windows, child, `${nameHint}:${key}`);
+  }
 }
 
 function findWindow(
@@ -186,17 +261,22 @@ function findWindow(
   for (const key of keys) {
     const val = obj[key];
     if (val && typeof val === 'object') {
-      const w = val as Record<string, unknown>;
-      const percentLeft = getPercentLeft(w);
-      const resetAt = getResetAt(w);
-      const windowSeconds = typeof w['limit_window_seconds'] === 'number'
-        ? w['limit_window_seconds'] as number
-        : null;
-
-      if (percentLeft !== null || resetAt !== null) {
-        return { percentLeft, resetAt, windowSeconds };
-      }
+      const parsed = windowFromObject(val as Record<string, unknown>);
+      if (parsed !== null) return parsed;
     }
+  }
+  return null;
+}
+
+function windowFromObject(w: Record<string, unknown>): Omit<QuotaWindow, 'name'> | null {
+  const percentLeft = getPercentLeft(w);
+  const resetAt = getResetAt(w);
+  const windowSeconds = typeof w['limit_window_seconds'] === 'number'
+    ? w['limit_window_seconds'] as number
+    : null;
+
+  if (percentLeft !== null || resetAt !== null || windowSeconds !== null) {
+    return { percentLeft, resetAt, windowSeconds };
   }
   return null;
 }
@@ -234,6 +314,31 @@ function deepGet(obj: unknown, ...keys: string[]): unknown {
     current = (current as Record<string, unknown>)[key];
   }
   return current;
+}
+
+function stringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function dedupeQuotaWindows(windows: readonly QuotaWindow[]): QuotaWindow[] {
+  const out = new Map<string, QuotaWindow>();
+  for (const window of windows) {
+    const existing = out.get(window.name);
+    if (!existing) {
+      out.set(window.name, window);
+      continue;
+    }
+    out.set(window.name, {
+      name: window.name,
+      percentLeft: existing.percentLeft ?? window.percentLeft,
+      resetAt: existing.resetAt ?? window.resetAt,
+      windowSeconds: existing.windowSeconds ?? window.windowSeconds,
+    });
+  }
+  return Array.from(out.values());
 }
 
 async function findMostRecentJsonl(sessionsRoot: string): Promise<string | null> {
@@ -290,6 +395,68 @@ async function safeReaddir(dir: string): Promise<string[]> {
 
 /**
  * Query the official ChatGPT usage endpoint for precise quota status.
+ * This helper is credential-source agnostic: callers hand in the
+ * already-imported token/account id, so ProviderAuth adapters never
+ * need to read `~/.codex/auth.json` themselves.
+ */
+export async function fetchRemoteQuotaForAuth(
+  auth: CodexRemoteQuotaAuth,
+): Promise<QuotaSnapshot> {
+  const capturedAt = auth.capturedAt ?? Date.now();
+  const accessToken = auth.accessToken.trim();
+  const accountId = auth.accountId.trim();
+
+  if (accessToken.length === 0 || accountId.length === 0) {
+    throw new CodexRemoteQuotaError('auth_missing', 'Codex auth token is missing');
+  }
+  if (isJwtExpired(accessToken, capturedAt)) {
+    throw new CodexRemoteQuotaError('auth_expired', 'Codex auth token expired');
+  }
+
+  let data: WhamUsageResponse;
+  try {
+    data = await httpGet<WhamUsageResponse>(
+      'https://chatgpt.com/backend-api/wham/usage',
+      {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'ChatGPT-Account-Id': accountId,
+        Origin: 'https://chatgpt.com',
+        Referer: 'https://chatgpt.com/',
+        'User-Agent': 'Monitor/0.1.0',
+      },
+      auth.signal,
+    );
+  } catch (err) {
+    if (err instanceof CodexRemoteQuotaError) throw err;
+    throw new CodexRemoteQuotaError('network_error', 'Codex quota request failed');
+  }
+
+  const windows = extractRateLimitsFromRecord(data);
+  if (!windows || windows.length === 0) {
+    throw new CodexRemoteQuotaError('upstream_changed', 'Codex quota response changed');
+  }
+
+  return {
+    provider: 'codex',
+    capturedAt,
+    source: 'remote_api',
+    windows,
+    providerAuthId: null,
+    accountLabel: null,
+    accountId: null,
+    projectId: null,
+    kind: 'quota',
+    status: 'ok',
+    rawPlanLabel: null,
+    modelGroup: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+  };
+}
+
+/**
+ * Legacy local-wrapper for callers that predate ProviderAuth.
  * Reads credentials from `~/.codex/auth.json`.
  *
  * Returns null if auth file is missing, expired, or the request fails.
@@ -310,44 +477,8 @@ export async function fetchRemoteQuota(): Promise<QuotaSnapshot | null> {
 
   if (!accessToken || !accountId) return null;
 
-  // Check if token is expired (JWT decode)
-  if (isJwtExpired(accessToken)) return null;
-
   try {
-    const data = await httpGet<WhamUsageResponse>(
-      'https://chatgpt.com/backend-api/wham/usage',
-      {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'ChatGPT-Account-Id': accountId,
-        Origin: 'https://chatgpt.com',
-        Referer: 'https://chatgpt.com/',
-        'User-Agent': 'Monitor/0.1.0',
-      },
-    );
-
-    const rateLimitsObj = data.rate_limits ?? data.rate_limit;
-    if (!rateLimitsObj) return null;
-
-    const windows = extractRateLimitsFromRecord({ rate_limits: rateLimitsObj });
-    if (!windows || windows.length === 0) return null;
-
-    return {
-      provider: 'codex',
-      capturedAt: Date.now(),
-      source: 'remote_api',
-      windows,
-      providerAuthId: null,
-      accountLabel: null,
-      accountId: null,
-      projectId: null,
-      kind: 'quota',
-      status: 'ok',
-      rawPlanLabel: null,
-      modelGroup: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-    };
+    return await fetchRemoteQuotaForAuth({ accessToken, accountId });
   } catch {
     return null;
   }
@@ -374,12 +505,37 @@ export async function getCodexQuotaSnapshot(): Promise<QuotaSnapshot | null> {
 // HTTP utility
 // ---------------------------------------------------------------------------
 
-function httpGet<T>(url: string, headers: Record<string, string>): Promise<T> {
+function httpGet<T>(
+  url: string,
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const mod = parsed.protocol === 'https:' ? https : http;
+    let settled = false;
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const succeed = (value: T): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    let req: http.ClientRequest;
+    const abort = (): void => {
+      req.destroy();
+      fail(new CodexRemoteQuotaError('network_error', 'Codex quota request aborted'));
+    };
+    const cleanup = (): void => {
+      signal?.removeEventListener('abort', abort);
+    };
 
-    const req = mod.get(
+    req = mod.get(
       {
         hostname: parsed.hostname,
         port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
@@ -390,7 +546,12 @@ function httpGet<T>(url: string, headers: Record<string, string>): Promise<T> {
       (res) => {
         if (res.statusCode !== 200) {
           res.resume();
-          reject(new Error(`HTTP ${res.statusCode}`));
+          fail(
+            new CodexRemoteQuotaError(
+              codexHttpStatusToErrorCode(res.statusCode ?? 0),
+              `Codex quota returned HTTP ${res.statusCode ?? 0}`,
+            ),
+          );
           return;
         }
 
@@ -399,19 +560,26 @@ function httpGet<T>(url: string, headers: Record<string, string>): Promise<T> {
         res.on('end', () => {
           try {
             const body = Buffer.concat(chunks).toString('utf-8');
-            resolve(JSON.parse(body) as T);
+            succeed(JSON.parse(body) as T);
           } catch (e) {
-            reject(e);
+            fail(new CodexRemoteQuotaError('upstream_changed', 'Codex quota response was not JSON'));
           }
         });
       },
     );
 
-    req.on('error', reject);
+    req.on('error', () => {
+      fail(new CodexRemoteQuotaError('network_error', 'Codex quota request failed'));
+    });
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Request timeout'));
+      fail(new CodexRemoteQuotaError('network_error', 'Codex quota request timeout'));
     });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
   });
 }
 
@@ -419,9 +587,16 @@ function httpGet<T>(url: string, headers: Record<string, string>): Promise<T> {
 // JWT expiry check
 // ---------------------------------------------------------------------------
 
-function isJwtExpired(token: string): boolean {
+function codexHttpStatusToErrorCode(status: number): ProviderAuthErrorCode {
+  if (status === 401 || status === 403) return 'upstream_unauthorized';
+  if (status === 429) return 'rate_limited';
+  if (status >= 500) return 'network_error';
+  return 'upstream_changed';
+}
+
+function isJwtExpired(token: string, now = Date.now()): boolean {
   const parts = token.split('.');
-  if (parts.length !== 3) return true;
+  if (parts.length !== 3) return false;
 
   try {
     const payload = parts[1]!;
@@ -429,7 +604,7 @@ function isJwtExpired(token: string): boolean {
     const decoded = JSON.parse(Buffer.from(padded, 'base64url').toString('utf-8'));
     const exp = decoded?.exp;
     if (typeof exp !== 'number') return false; // Can't determine — assume valid
-    return exp * 1000 <= Date.now();
+    return exp * 1000 <= now;
   } catch {
     return false; // Can't decode — assume valid and let the server reject
   }
