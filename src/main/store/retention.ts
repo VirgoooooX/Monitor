@@ -5,10 +5,10 @@
 //   - PLAN.md §SQLite Schema (retention)
 //
 // Design notes:
-//   - Only the four sample/event tables are pruned. `settings`,
+//   - Only the five sample/event tables are pruned. `settings`,
 //     `secrets`, and `collector_health` are explicitly NOT touched —
 //     this is half of the §Property 9 contract.
-//   - All four `DELETE` statements run inside a single transaction so
+//   - All five `DELETE` statements run inside a single transaction so
 //     a crash or an exception leaves the DB in either the pre- or
 //     post-cleanup state, never half-pruned.
 //   - After committing we run `PRAGMA wal_checkpoint(TRUNCATE)` so the
@@ -50,11 +50,12 @@ export interface RetentionRemovedCounts {
   openclashSnapshots: number;
   nodeSamples: number;
   usageEvents: number;
+  openclashConfigChanges: number;
 }
 
 /** Return shape of {@link cleanup}; useful for diagnostics and tests. */
 export interface RetentionCleanupResult {
-  /** Epoch ms boundary used by the four `DELETE` statements. */
+  /** Epoch ms boundary used by the five `DELETE` statements. */
   cutoff: number;
   /** Number of rows deleted from each pruned table. */
   removed: RetentionRemovedCounts;
@@ -71,11 +72,12 @@ function resolveRetentionDays(value: number | undefined): number {
 }
 
 /**
- * Prune the four sample/event tables to a rolling window.
+ * Prune the five sample/event tables to a rolling window.
  *
  * Postconditions (design.md §Property 9):
  *   - No surviving row in `network_samples`, `openclash_snapshots`,
- *     `node_samples`, or `usage_events` has `timestamp < cutoff`.
+ *     `node_samples`, `usage_events`, or `openclash_config_changes`
+ *     has `timestamp < cutoff`.
  *   - Rows in `settings`, `secrets`, and `collector_health` are
  *     unchanged.
  *   - The WAL file has been checkpointed and truncated.
@@ -107,15 +109,19 @@ export function cleanup(
   const deleteUsageEvents = db.prepare<[number]>(
     'DELETE FROM usage_events WHERE timestamp < ?',
   );
+  const deleteOpenClashConfigChanges = db.prepare<[number]>(
+    'DELETE FROM openclash_config_changes WHERE timestamp < ?',
+  );
 
-  // Single transaction — all four deletes commit or roll back together.
-  // The four tables that must remain untouched (settings, secrets,
+  // Single transaction — all five deletes commit or roll back together.
+  // The three tables that must remain untouched (settings, secrets,
   // collector_health) are simply absent from this block.
   const removed: RetentionRemovedCounts = {
     networkSamples: 0,
     openclashSnapshots: 0,
     nodeSamples: 0,
     usageEvents: 0,
+    openclashConfigChanges: 0,
   };
 
   const runDeletes = db.transaction((boundary: number) => {
@@ -123,6 +129,8 @@ export function cleanup(
     removed.openclashSnapshots = deleteOpenClashSnapshots.run(boundary).changes;
     removed.nodeSamples = deleteNodeSamples.run(boundary).changes;
     removed.usageEvents = deleteUsageEvents.run(boundary).changes;
+    removed.openclashConfigChanges =
+      deleteOpenClashConfigChanges.run(boundary).changes;
   });
   runDeletes(cutoff);
 

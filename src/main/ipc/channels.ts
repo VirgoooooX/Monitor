@@ -49,6 +49,14 @@ export const DESKTOP_INVOKE_CHANNELS = {
   updateSecret: 'desktop:updateSecret',
   getDiagnostics: 'desktop:getDiagnostics',
   openExpanded: 'desktop:openExpanded',
+  // Network Quick Actions panel (network-quick-actions spec, task 10.1).
+  // The handlers, schemas, and `DesktopApi` method signatures are wired
+  // up in tasks 10.2..10.5; this entry is the single source of truth
+  // for the channel names used by both the preload bridge and the
+  // main-process handler registry.
+  getNetworkQuickActions: 'desktop:getNetworkQuickActions',
+  switchOpenClashConfig: 'desktop:switchOpenClashConfig',
+  clearManagementCredentials: 'desktop:clearManagementCredentials',
 } as const;
 
 /** Compile-time union of every supported invoke method name. */

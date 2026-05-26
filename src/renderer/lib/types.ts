@@ -29,6 +29,13 @@ export type {
   SwitchNodeResult,
   SwitchNodeInput,
 
+  // Network Quick Actions
+  ManagementErrorCode,
+  QuickNodeCandidate,
+  NetworkQuickActions,
+  ConfigSwitchResult,
+  SwitchOpenClashConfigInput,
+
   // Capability detection
   CapabilityResult,
 
@@ -54,7 +61,10 @@ export type {
   RouterHealthSettings,
   RefreshIntervalSettings,
   CollectorToggle,
+  CliProxySettings,
   AppSettings,
+  ManagementInterfaceSettings,
+  ManagementConfigFileEntry,
 
   // Diagnostics
   CollectorHealthRow,

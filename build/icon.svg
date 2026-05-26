@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0.00%" stop-color="#4ade80"/>
+      <stop offset="55.00%" stop-color="#10b981"/>
+      <stop offset="100.00%" stop-color="#0891b2"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background squircle -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bg)"/>
+
+  <!-- Subtle inner highlight -->
+  <rect x="0.75" y="0.75"
+        width="254.5" height="254.5"
+        rx="55.25" ry="55.25"
+        fill="none"
+        stroke="#ffffff" stroke-opacity="0.18"
+        stroke-width="1.5"/>
+
+  <!-- Ambient glow behind the pulse (drawn before rings) -->
+  <circle cx="128" cy="128" r="116" fill="url(#glow)"/>
+
+  <!-- Pulse rings -->
+  <circle cx="128" cy="128" r="60" fill="none" stroke="#ffffff" stroke-width="7" stroke-opacity="0.85"/>
+  <circle cx="128" cy="128" r="100" fill="none" stroke="#ffffff" stroke-width="7" stroke-opacity="0.4"/>
+
+  <!-- Core dot -->
+  <circle cx="128" cy="128" r="22" fill="#ffffff" fill-opacity="1"/>
+</svg>

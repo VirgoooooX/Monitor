@@ -44,6 +44,7 @@
 //   the average leg of the OR — the rate leg can still trigger.
 
 import type { HealthInputs, HealthStatus, ProbeResult } from '../types';
+import type { SwitchLock } from './switch.lock';
 
 /** Priority 1: how many leading `false` entries are required for `home_down`. */
 const HOME_DOWN_CONSECUTIVE_THRESHOLD = 2;
@@ -213,4 +214,173 @@ export function evaluate(inputs: HealthInputs): HealthStatus {
 
   // Priority 6 — healthy.
   return 'healthy';
+}
+
+// ---------------------------------------------------------------------------
+// Verify-window flap suppression (Requirement 5.10, design.md §Property 8)
+// ---------------------------------------------------------------------------
+//
+// The pure `evaluate` above stays I/O-free per Property 2. The wrapper
+// below adds the **only** state-aware tweak the requirements impose:
+// during an in-flight Config_Switch the OpenClash controller is
+// expected to flap (LuCI's `/etc/init.d/openclash restart` knocks the
+// API offline for a few seconds). Promoting that flap to
+// `openclash_unreachable` would scare the user with a transient error
+// during a normal switch.
+//
+// Requirement 5.10:
+//   WHEN Config_Switch 期间 Controller_API 短暂不可达且持续时间不超过
+//   Config_Switch_Verify_Window_Ms, THE System SHALL 不把该状态升级为
+//   `openclash_unreachable`; 超出该窗口仍不可达时方按既有规则升级.
+//
+// The check is intentionally narrow:
+//   1. Only `openclash_unreachable` is suppressed. Every other status
+//      flows through unchanged — `home_down` still wins (the router
+//      is unrelated to Config_Switch), and once the wrapper decides
+//      "do not escalate" we re-run the pure evaluator with a synthetic
+//      "controller is fine" view of the inputs so it can still surface
+//      `partial_outage` / `node_slow` / `node_down` based on the rest
+//      of the evidence.
+//   2. The suppression window is keyed off the lock's `acquiredAt`
+//      timestamp (the moment `acquire('config', _)` returned a token).
+//      That stamp is the exact "switch start time" Requirement 5.10
+//      refers to — using it sidesteps having to thread a separate
+//      down-streak start through the inputs and keeps `evaluate`
+//      pure.
+//   3. Once `now() - acquiredAt >= configSwitchVerifyWindowMs`, the
+//      switch has dragged on too long; we resume normal escalation.
+//      A subsequent watchdog force-release (Property 7) is independent
+//      of this branch — by the time the watchdog fires the lock is
+//      already gone, so `snapshot()` reports `config: null` and the
+//      wrapper trivially short-circuits to `evaluate(inputs)`.
+
+/**
+ * Construction-time dependencies for {@link createHealthService}.
+ *
+ * Every dependency is optional so callers (notably `dashboard.service`)
+ * can construct a partially-wired service while later tasks land their
+ * pieces. With **no** deps the wrapper is observationally equivalent to
+ * the pure {@link evaluate}, which keeps backwards compatibility for
+ * the cold-boot path.
+ */
+export interface HealthServiceDeps {
+  /**
+   * Read-only view onto the global switch lock. The wrapper only
+   * inspects `snapshot().config`; it never acquires or releases.
+   * Defaults to "no config switch in flight" when omitted, which is
+   * the correct fallback before task 10.4 wires the lock at the
+   * application root.
+   */
+  switchLock?: Pick<SwitchLock, 'snapshot'>;
+  /**
+   * Live read of `AppSettings.configSwitchVerifyWindowMs`. Read on
+   * every `evaluate` call so user edits in Settings (task 9.1) take
+   * effect immediately. Defaults to `8_000` (the design.md Q4
+   * resolution) when omitted.
+   */
+  getConfigSwitchVerifyWindowMs?: () => number;
+  /**
+   * Wall clock. Defaults to `Date.now`. Tests inject a virtual clock
+   * so the property test in 12.2 can drive deterministic timing.
+   */
+  now?: () => number;
+}
+
+/**
+ * Stateful façade around {@link evaluate}. The pure function is still
+ * the source of truth — this wrapper only intervenes on the single
+ * branch called out by Requirement 5.10.
+ */
+export interface HealthService {
+  /**
+   * Evaluate the health status from a snapshot of the latest sample
+   * window, applying verify-window flap suppression when a
+   * Config_Switch is in flight. Pure {@link evaluate} fallback is
+   * used whenever the suppression conditions are not all met.
+   */
+  evaluate(inputs: HealthInputs): HealthStatus;
+}
+
+/**
+ * Default `configSwitchVerifyWindowMs` used when the dep accessor is
+ * omitted. Matches `buildDefaultAppSettings()` in `app.ts` — kept in
+ * sync by hand because lifting the constant out of `app.ts` would
+ * pull a runtime dependency into this otherwise-pure module.
+ */
+const DEFAULT_CONFIG_SWITCH_VERIFY_WINDOW_MS = 8_000;
+
+/**
+ * Build a {@link HealthService}. Every dep is optional; the resulting
+ * object is safe to call from the very first tick after boot, even
+ * before the switch lock has been wired (task 10.4).
+ */
+export function createHealthService(
+  deps?: HealthServiceDeps,
+): HealthService {
+  const switchLock = deps?.switchLock ?? null;
+  const getVerifyWindowMs =
+    deps?.getConfigSwitchVerifyWindowMs ??
+    ((): number => DEFAULT_CONFIG_SWITCH_VERIFY_WINDOW_MS);
+  const now = deps?.now ?? Date.now;
+
+  return {
+    evaluate(inputs: HealthInputs): HealthStatus {
+      // Fast path: when no `'config'` lock is held there is nothing
+      // to suppress. The pure evaluator decides every status,
+      // including `openclash_unreachable`.
+      const baseline = evaluate(inputs);
+      if (switchLock === null) {
+        return baseline;
+      }
+
+      // The suppression branch only fires when the pure evaluator
+      // already wants to escalate. Any other status (including
+      // `home_down`, which has higher priority than
+      // `openclash_unreachable`) is forwarded verbatim.
+      if (baseline !== 'openclash_unreachable') {
+        return baseline;
+      }
+
+      // Read the lock state. `snapshot()` returns fresh copies — the
+      // call is O(1) for the common case (zero or one config token).
+      const lockState = switchLock.snapshot();
+      const configToken = lockState.config;
+      if (configToken === null) {
+        // No Config_Switch in flight — Requirement 5.10's premise
+        // ("WHEN Config_Switch 期间…") is not satisfied, so the
+        // pure evaluator's verdict stands.
+        return baseline;
+      }
+
+      // Compute the elapsed time since the switch started. We compare
+      // against the **live** verify window so changing the setting
+      // mid-switch (allowed by the schema) takes effect immediately.
+      const verifyWindowMs = getVerifyWindowMs();
+      const elapsed = now() - configToken.acquiredAt;
+      if (elapsed >= verifyWindowMs) {
+        // The switch has dragged past the window. Per Requirement
+        // 5.10 ("超出该窗口仍不可达时方按既有规则升级") we resume
+        // normal escalation behaviour.
+        return baseline;
+      }
+
+      // Suppression active: re-run the pure evaluator with a
+      // synthetic view of the inputs that pretends the controller is
+      // healthy. This lets every lower-priority status (node_down,
+      // partial_outage, node_slow) still surface based on the rest
+      // of the evidence — only the controller-half of the priority
+      // ladder is silenced.
+      //
+      // We deliberately do NOT touch the router-history half: a
+      // genuinely unreachable router still trips `home_down`, which
+      // already short-circuited above (it is higher priority than
+      // `openclash_unreachable`).
+      const suppressed: HealthInputs = {
+        ...inputs,
+        openclashTcpReachable: true,
+        openclashApiOk: true,
+      };
+      return evaluate(suppressed);
+    },
+  };
 }

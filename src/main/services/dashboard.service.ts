@@ -146,6 +146,16 @@ export interface DashboardServiceDeps {
    * to make `compute()` deterministic.
    */
   now?: () => number;
+  /**
+   * Health evaluator. Defaults to the pure {@link evaluate} from
+   * `health.service.ts`. `app.ts` injects a wrapped evaluator built
+   * by `createHealthService(...)` that adds verify-window flap
+   * suppression during a Config_Switch (Requirement 5.10). Kept as
+   * an injectable function rather than a service object so existing
+   * callers (notably `dashboard.service.test.ts`) continue to work
+   * without re-wiring.
+   */
+  evaluateHealth?: (inputs: HealthInputs) => HealthStatus;
 }
 
 /**
@@ -185,6 +195,7 @@ export function createDashboardService(
 ): DashboardService {
   const repos = deps.repositories;
   const now = deps.now ?? Date.now;
+  const evaluateHealth = deps.evaluateHealth ?? evaluate;
 
   // ----- Mutable state ------------------------------------------------------
 
@@ -348,7 +359,7 @@ export function createDashboardService(
       recentSuccessRate,
       consecutiveProbeFailures,
     };
-    const status = evaluate(inputs);
+    const status = evaluateHealth(inputs);
 
     return {
       status,

@@ -4,6 +4,8 @@
 // References:
 //   - design.md §`diagnostics.export`, §Property 11
 //   - PLAN.md §Data Protection
+//   - network-quick-actions/design.md §Diagnostics (Requirement 8.4,
+//     Requirement 12.4)
 //
 // Key invariants:
 //   - No secret value (from the `secrets` table) appears in the
@@ -11,17 +13,29 @@
 //   - Any key matching `/secret|token|key|cookie|authorization/i` has
 //     its value replaced with `"<redacted>"`.
 //   - Embedded credentials in URLs are stripped.
+//   - `recentConfigSwitches` exposes at most the last 10 `'end'` rows
+//     from `openclash_config_changes`, projected to a small audit
+//     summary; `'start'` rows (which carry no `result_code` /
+//     `duration_ms`) are filtered out.
+//   - `managementInterface.url` is run through `stripUrlCredentials`
+//     before redaction (defence in depth — the settings schema
+//     already rejects URLs with embedded userinfo).
 
 import type {
+  AppSettings,
   CapabilityResult,
   CollectorHealthRow,
   DiagnosticsReport,
+  ManagementInterfaceDiagnosticsSummary,
+  RecentConfigSwitchEntry,
 } from '../types';
 import type {
   CollectorHealthRepository,
+  OpenClashConfigChangesRepository,
   SettingsRepository,
 } from '../store/repositories';
 import { readCapabilityResults } from '../collectors/usage/Collector';
+import { APP_SETTINGS_KEY } from '../store/repositories';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -30,6 +44,14 @@ import { readCapabilityResults } from '../collectors/usage/Collector';
 export interface DiagnosticsServiceDeps {
   settings: SettingsRepository;
   collectorHealth: CollectorHealthRepository;
+  /**
+   * Source for the `recentConfigSwitches` summary
+   * (network-quick-actions Requirement 8.4). Optional so existing
+   * tests / callers that only care about the legacy fields keep
+   * compiling; when omitted, `recentConfigSwitches` falls back to an
+   * empty array.
+   */
+  openClashConfigChanges?: OpenClashConfigChangesRepository;
   /** Returns all known secret plaintext values (used for value-based redaction). */
   getSecretValues: () => string[];
 }
@@ -44,6 +66,7 @@ export interface DiagnosticsService {
 
 const SENSITIVE_KEY_RE = /secret|token|key|cookie|authorization/i;
 const REDACTED = '<redacted>';
+const RECENT_CONFIG_SWITCHES_LIMIT = 10;
 
 /**
  * Strip `username` and `password` from a URL string.
@@ -69,7 +92,7 @@ function stripUrlCredentials(raw: string): string {
  * Rules:
  *  1. If a leaf string equals one of `secretValues` → `"<redacted>"`
  *  2. If the *key* matches SENSITIVE_KEY_RE → value becomes `"<redacted>"`
- *  3. If the key is `controllerUrl` → strip embedded credentials
+ *  3. If the key is `controllerUrl` or `url` → strip embedded credentials
  *
  * Handles circular references defensively via a `Set<object>` guard.
  */
@@ -119,8 +142,11 @@ function redactObject(
       continue;
     }
 
-    // Special handling for controllerUrl.
-    if (k === 'controllerUrl' && typeof val === 'string') {
+    // Special handling for URL-bearing fields. Both `controllerUrl`
+    // and the management interface's `url` may carry embedded
+    // credentials in pathological inputs (the schema rejects them on
+    // write, but the report acts as a defense-in-depth seam).
+    if ((k === 'controllerUrl' || k === 'url') && typeof val === 'string') {
       record[k] = stripUrlCredentials(val);
       continue;
     }
@@ -137,6 +163,74 @@ function redactObject(
   return record;
 }
 
+/**
+ * Project the last 10 `'end'` rows from `openclash_config_changes`
+ * into the small {@link RecentConfigSwitchEntry} shape exposed by the
+ * diagnostics report.
+ *
+ * Only rows whose `status === 'end'` and whose `resultCode` is
+ * non-null are surfaced — the orchestrator always writes an `'end'`
+ * row before releasing the switch lock (network-quick-actions
+ * Property 6), so a `null` result code would imply a corrupt row and
+ * is defensively filtered out.
+ *
+ * The repository's `recent(limit)` already returns rows ordered
+ * newest-first; we over-fetch a small multiple of the surfaced limit
+ * so the post-filter still has 10 entries when many `'start'` rows
+ * preceded the `'end'` rows in the recent past.
+ */
+function buildRecentConfigSwitches(
+  repo: OpenClashConfigChangesRepository | undefined,
+): RecentConfigSwitchEntry[] {
+  if (!repo) {
+    return [];
+  }
+  const rows = repo.recent(RECENT_CONFIG_SWITCHES_LIMIT * 2);
+  const result: RecentConfigSwitchEntry[] = [];
+  for (const row of rows) {
+    if (row.status !== 'end') {
+      continue;
+    }
+    if (row.resultCode === null) {
+      continue;
+    }
+    result.push({
+      targetPath: row.targetPath,
+      resultCode: row.resultCode,
+      timestamp: row.timestamp,
+      durationMs: row.durationMs,
+    });
+    if (result.length >= RECENT_CONFIG_SWITCHES_LIMIT) {
+      break;
+    }
+  }
+  return result;
+}
+
+/**
+ * Build the redacted {@link ManagementInterfaceDiagnosticsSummary}
+ * from the live `AppSettings`. Falls back to safe defaults when the
+ * settings blob is missing or only partially populated so the report
+ * never throws on a fresh install.
+ */
+function buildManagementInterfaceSummary(
+  appSettings: Partial<AppSettings> | undefined,
+): ManagementInterfaceDiagnosticsSummary {
+  const mgmt = appSettings?.managementInterface;
+  const rawUrl = typeof mgmt?.url === 'string' ? mgmt.url : '';
+  const url = stripUrlCredentials(rawUrl);
+  const requestTimeoutMs =
+    typeof mgmt?.requestTimeoutMs === 'number' ? mgmt.requestTimeoutMs : 0;
+  const whitelist = Array.isArray(mgmt?.configFileWhitelist)
+    ? mgmt.configFileWhitelist
+    : [];
+  return {
+    url,
+    requestTimeoutMs,
+    configFileWhitelistCount: whitelist.length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -144,7 +238,12 @@ function redactObject(
 export function createDiagnosticsService(
   deps: DiagnosticsServiceDeps,
 ): DiagnosticsService {
-  const { settings, collectorHealth, getSecretValues } = deps;
+  const {
+    settings,
+    collectorHealth,
+    openClashConfigChanges,
+    getSecretValues,
+  } = deps;
 
   return {
     export(): DiagnosticsReport {
@@ -153,25 +252,47 @@ export function createDiagnosticsService(
       const lastCapability: Record<string, CapabilityResult> =
         readCapabilityResults(settings);
 
-      // 2. Read the controllerUrl from settings (if present).
-      const appSettings = settings.get<{ controllerUrl?: string }>('app.settings');
-      const rawUrl = appSettings?.controllerUrl ?? '';
-      const redactedControllerUrl = stripUrlCredentials(rawUrl);
+      // 2. Read the canonical AppSettings blob (if present) for both
+      //    the controllerUrl redaction and the management interface
+      //    summary.
+      const appSettings = settings.get<AppSettings>(APP_SETTINGS_KEY);
+      const rawControllerUrl =
+        typeof appSettings?.controllerUrl === 'string'
+          ? appSettings.controllerUrl
+          : '';
+      const redactedControllerUrl = stripUrlCredentials(rawControllerUrl);
 
-      // 3. Build the report.
+      // 3. Project the last 10 `'end'` rows from
+      //    `openclash_config_changes` into the diagnostics summary
+      //    (network-quick-actions Requirement 8.4).
+      const recentConfigSwitches = buildRecentConfigSwitches(
+        openClashConfigChanges,
+      );
+
+      // 4. Build the redacted management interface summary
+      //    (network-quick-actions Requirement 12.4).
+      const managementInterface = buildManagementInterfaceSummary(appSettings);
+
+      // 5. Build the report.
       const report: DiagnosticsReport = {
         generatedAt: Date.now(),
         collectors,
         lastCapability,
         redactedControllerUrl,
+        recentConfigSwitches,
+        managementInterface,
         schemaVersion: 1,
       };
 
-      // 4. Load secret values for value-based redaction.
+      // 6. Load secret values for value-based redaction.
       const secretVals = getSecretValues();
       const secretSet = new Set(secretVals.filter((v) => v.length > 0));
 
-      // 5. Deep-redact the entire report.
+      // 7. Deep-redact the entire report. The redaction sieve walks
+      //    every nested object and array so the new
+      //    `recentConfigSwitches` and `managementInterface` blocks
+      //    are also covered (no secret value can survive as a
+      //    substring after this pass).
       redactObject(report, secretSet);
 
       return report;

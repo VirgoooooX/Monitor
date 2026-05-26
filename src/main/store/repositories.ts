@@ -963,6 +963,229 @@ export function createCollectorHealthRepository(
 }
 
 // ---------------------------------------------------------------------------
+// OpenClash config-change audit (network-quick-actions)
+// ---------------------------------------------------------------------------
+//
+// Records start + end rows for every Config_Switch initiated through
+// the Quick Actions panel. See:
+//   - design.md §`openclash_config_changes` Table
+//   - design.md §`openclash.config.audit.ts` — Config Switch Audit Writer
+//   - requirements.md Requirement 8 (audit & observability)
+//
+// Invariants enforced here:
+//   - `confirmed` is always stored as `1` (Requirement 6 guarantees
+//     every flow that reaches the audit writer was user-confirmed).
+//   - `final_path`, `result_code`, `duration_ms` are NULL on `'start'`
+//     rows (the start row is written immediately after lock acquisition,
+//     before any management-client call).
+//   - `duration_ms` is clamped to the closed interval `[0, 3_600_000]`
+//     in `insertEnd` so a runaway clock or watchdog cannot persist a
+//     wildly inflated value.
+//
+// This repository is the only writer for the `openclash_config_changes`
+// table; payload bodies and credentials are never read or written here.
+
+/** `'start'` is logged immediately after lock acquisition; `'end'` just
+ *  before lock release (Property 6 in design.md §Correctness Properties). */
+export type ConfigChangeStatus = 'start' | 'end';
+
+/**
+ * Closed set of result codes that may land in `result_code` on `'end'`
+ * rows. Mirrors `ManagementErrorCode | 'ok'` from
+ * design.md §`openclash.management.service.ts`; `switch_in_progress` is
+ * deliberately excluded because the orchestrator returns it before the
+ * audit writer is invoked (no `'start'` row is ever written for it).
+ */
+export type ConfigChangeResultCode =
+  | 'ok'
+  | 'auth_error'
+  | 'http_error'
+  | 'network_error'
+  | 'verify_timeout'
+  | 'verify_mismatch'
+  | 'not_supported';
+
+/** Hard cap on persisted `duration_ms`. One hour is far longer than any
+ *  legitimate switch (verify window <= 30s, request timeout <= 30s). */
+export const MAX_CONFIG_CHANGE_DURATION_MS = 3_600_000;
+
+export interface ConfigChangeStartInput {
+  timestamp: number;
+  /** Active config at the time of click; `null` when management couldn't read it. */
+  startPath: string | null;
+  targetPath: string;
+  /** Always `true`; threaded through to make the invariant explicit at the call site. */
+  confirmed: true;
+}
+
+export interface ConfigChangeEndInput {
+  timestamp: number;
+  startPath: string | null;
+  targetPath: string;
+  /** Active config after verify; `null` when verify never observed a path. */
+  finalPath: string | null;
+  resultCode: ConfigChangeResultCode;
+  /** Wall-clock ms from start to end. Clamped into `[0, 3_600_000]` on insert. */
+  durationMs: number;
+  /** Always `true`. */
+  confirmed: true;
+}
+
+export interface OpenClashConfigChangeRow {
+  id: number;
+  timestamp: number;
+  status: ConfigChangeStatus;
+  startPath: string | null;
+  targetPath: string;
+  /** `null` on `'start'` rows. */
+  finalPath: string | null;
+  /** `null` on `'start'` rows; one of {@link ConfigChangeResultCode} on `'end'`. */
+  resultCode: ConfigChangeResultCode | null;
+  /** `null` on `'start'` rows. */
+  durationMs: number | null;
+  /** Always `true` in v1; surfaced here so audit consumers do not special-case absence. */
+  confirmed: boolean;
+}
+
+interface OpenClashConfigChangeRawRow {
+  id: number;
+  timestamp: number;
+  status: ConfigChangeStatus;
+  start_path: string | null;
+  target_path: string;
+  final_path: string | null;
+  result_code: ConfigChangeResultCode | null;
+  duration_ms: number | null;
+  confirmed: number;
+}
+
+const mapConfigChangeRow = (
+  row: OpenClashConfigChangeRawRow,
+): OpenClashConfigChangeRow => ({
+  id: row.id,
+  timestamp: row.timestamp,
+  status: row.status,
+  startPath: row.start_path,
+  targetPath: row.target_path,
+  finalPath: row.final_path,
+  resultCode: row.result_code,
+  durationMs: row.duration_ms,
+  confirmed: fromBoolInt(row.confirmed),
+});
+
+/**
+ * Clamp a raw duration into `[0, MAX_CONFIG_CHANGE_DURATION_MS]`.
+ * Non-finite or negative inputs collapse to `0` so SQLite never sees
+ * a NaN or `-Infinity` value.
+ */
+function clampDurationMs(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  if (value > MAX_CONFIG_CHANGE_DURATION_MS) {
+    return MAX_CONFIG_CHANGE_DURATION_MS;
+  }
+  return Math.trunc(value);
+}
+
+export interface OpenClashConfigChangesRepository {
+  /**
+   * Insert a `'start'` row. `final_path`, `result_code`, `duration_ms`
+   * are stored as NULL; `confirmed` is stored as `1`.
+   * Returns the freshly assigned row id.
+   */
+  insertStart(input: ConfigChangeStartInput): number;
+  /**
+   * Insert an `'end'` row. `duration_ms` is clamped to
+   * `[0, 3_600_000]` (see {@link MAX_CONFIG_CHANGE_DURATION_MS}).
+   */
+  insertEnd(input: ConfigChangeEndInput): void;
+  /** Most recent N rows (newest first). */
+  recent(limit: number): OpenClashConfigChangeRow[];
+  /** Most recent row regardless of status, or `undefined` when the table is empty. */
+  latest(): OpenClashConfigChangeRow | undefined;
+}
+
+export function createOpenClashConfigChangesRepository(
+  db: MonitorDatabase,
+): OpenClashConfigChangesRepository {
+  // `'start'` rows always carry NULL for the trailing three columns;
+  // separating the two prepared statements keeps the contract visible
+  // at the SQL level instead of relying on caller discipline.
+  const insertStartStmt = db.prepare<
+    [number, string | null, string, 0 | 1]
+  >(
+    `INSERT INTO openclash_config_changes
+       (timestamp, status, start_path, target_path,
+        final_path, result_code, duration_ms, confirmed)
+     VALUES (?, 'start', ?, ?, NULL, NULL, NULL, ?)`,
+  );
+  const insertEndStmt = db.prepare<
+    [
+      number,
+      string | null,
+      string,
+      string | null,
+      ConfigChangeResultCode,
+      number,
+      0 | 1,
+    ]
+  >(
+    `INSERT INTO openclash_config_changes
+       (timestamp, status, start_path, target_path,
+        final_path, result_code, duration_ms, confirmed)
+     VALUES (?, 'end', ?, ?, ?, ?, ?, ?)`,
+  );
+  const recentStmt = db.prepare<[number], OpenClashConfigChangeRawRow>(
+    `SELECT id, timestamp, status, start_path, target_path,
+            final_path, result_code, duration_ms, confirmed
+       FROM openclash_config_changes
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?`,
+  );
+  const latestStmt = db.prepare<[], OpenClashConfigChangeRawRow>(
+    `SELECT id, timestamp, status, start_path, target_path,
+            final_path, result_code, duration_ms, confirmed
+       FROM openclash_config_changes
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 1`,
+  );
+
+  return {
+    insertStart(input) {
+      // Requirement 6 invariant: `confirmed` is always 1.
+      const result = insertStartStmt.run(
+        input.timestamp,
+        input.startPath,
+        input.targetPath,
+        toBoolInt(input.confirmed),
+      );
+      // `lastInsertRowid` is `number | bigint`; we never enable
+      // `safeIntegers`, so it is always `number` in practice.
+      return Number(result.lastInsertRowid);
+    },
+    insertEnd(input) {
+      insertEndStmt.run(
+        input.timestamp,
+        input.startPath,
+        input.targetPath,
+        input.finalPath,
+        input.resultCode,
+        clampDurationMs(input.durationMs),
+        toBoolInt(input.confirmed),
+      );
+    },
+    recent(limit) {
+      return recentStmt.all(limit).map(mapConfigChangeRow);
+    },
+    latest() {
+      const row = latestStmt.get();
+      return row ? mapConfigChangeRow(row) : undefined;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Composite — convenience bundle for app.ts and IPC handlers
 // ---------------------------------------------------------------------------
 
@@ -974,6 +1197,7 @@ export interface Repositories {
   nodeSamples: NodeSamplesRepository;
   usageEvents: UsageEventsRepository;
   collectorHealth: CollectorHealthRepository;
+  openClashConfigChanges: OpenClashConfigChangesRepository;
 }
 
 /**
@@ -990,6 +1214,7 @@ export function createRepositories(db: MonitorDatabase): Repositories {
     nodeSamples: createNodeSamplesRepository(db),
     usageEvents: createUsageEventsRepository(db),
     collectorHealth: createCollectorHealthRepository(db),
+    openClashConfigChanges: createOpenClashConfigChangesRepository(db),
   };
 }
 

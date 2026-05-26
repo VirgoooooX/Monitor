@@ -31,16 +31,19 @@ import {
 } from '../main/ipc/channels';
 import type {
   AppSettings,
+  ConfigSwitchResult,
   DashboardState,
   DesktopApi,
   DesktopPushChannel,
   DesktopPushPayloads,
   DiagnosticsReport,
   IpcResult,
+  NetworkQuickActions,
   OpenClashDetails,
   QuotaStatus,
   SwitchNodeInput,
   SwitchNodeResult,
+  SwitchOpenClashConfigInput,
   Unsubscribe,
   UpdateSecretInput,
   UsageSummary,
@@ -209,6 +212,44 @@ const desktopApi: DesktopApi = {
 
   openExpanded(): Promise<void> {
     return invoke<void>(DESKTOP_INVOKE_CHANNELS.openExpanded);
+  },
+
+  // -------------------------------------------------------------------------
+  // Network Quick Actions (network-quick-actions task 14.1)
+  // -------------------------------------------------------------------------
+  //
+  // The three channels below back the expanded window's Quick Actions
+  // panel. Each one follows the same envelope-unwrapping contract as
+  // every other invoke method on this bridge — `invoke<T>()` rejects
+  // with an `IpcEnvelopeError` carrying `error.code` / `error.message`
+  // when the main-side handler returns `{ ok: false, ... }`.
+  //
+  // Channel-name whitelisting is implicit: `DESKTOP_INVOKE_CHANNELS`
+  // is the single source of truth for both the preload bridge and the
+  // main-process handler registry (see
+  // `src/main/ipc/channels.ts`). Drift between the two sides is a
+  // compile error because the registry is keyed by the same
+  // `DesktopInvokeMethod` union the bridge consumes here.
+
+  getNetworkQuickActions(): Promise<NetworkQuickActions> {
+    return invoke<NetworkQuickActions>(
+      DESKTOP_INVOKE_CHANNELS.getNetworkQuickActions,
+    );
+  },
+
+  switchOpenClashConfig(
+    input: SwitchOpenClashConfigInput,
+  ): Promise<ConfigSwitchResult> {
+    return invoke<ConfigSwitchResult>(
+      DESKTOP_INVOKE_CHANNELS.switchOpenClashConfig,
+      input,
+    );
+  },
+
+  clearManagementCredentials(): Promise<void> {
+    return invoke<void>(
+      DESKTOP_INVOKE_CHANNELS.clearManagementCredentials,
+    );
   },
 
   on<C extends DesktopPushChannel>(

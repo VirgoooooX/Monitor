@@ -1,3 +1,6 @@
+// DEPRECATED: kept for reference only. Use `node scripts/gen-icons.mjs`
+// (or `npm run icons`) for the production-quality icon assets.
+//
 // Generate minimal placeholder icons for development/packaging.
 // Run: node scripts/gen-placeholder-icons.mjs
 //

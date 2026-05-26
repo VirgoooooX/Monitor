@@ -25,6 +25,20 @@ const PORT_MAX = 65535;
 const MIN_INTERVAL_MS = 1_000;
 const SWITCH_VERIFY_DELAY_MIN = 0;
 const SWITCH_VERIFY_DELAY_MAX = 10_000;
+const MIN_VERIFY_WINDOW_MS = 1_000;
+const MAX_VERIFY_WINDOW_MS = 30_000;
+const MIN_REQUEST_TIMEOUT_MS = 1_000;
+const MAX_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Path regex for whitelisted OpenClash config files. Pinned to
+ * `/etc/openclash/config/*.yaml` (or `.yml`); rejects `..` and other
+ * path-traversal forms so a malicious renderer cannot ask the main
+ * process to commit `/etc/passwd` as a config path.
+ *
+ * See network-quick-actions/design.md §Settings Validation (zod).
+ */
+const CONFIG_PATH_RE = /^\/etc\/openclash\/config\/[A-Za-z0-9._\-]+\.(yaml|yml)$/;
 
 const portSchema = z
   .number()
@@ -128,6 +142,97 @@ export const collectorToggleSchema = z
   })
   .strict();
 
+/**
+ * URL of the OpenClash management interface (LuCI panel). Must be
+ * http(s)://, must not embed userinfo, and must not include a query
+ * string or fragment (Requirement 13.6 — credentials cannot be smuggled
+ * via `?token=...` or `#password=...`).
+ *
+ * See network-quick-actions/design.md §Settings Validation (zod).
+ */
+export const managementUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .superRefine((value, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'must be a valid URL',
+      });
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'must use http:// or https://',
+      });
+    }
+    if (parsed.username !== '' || parsed.password !== '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'must not contain userinfo',
+      });
+    }
+    if (parsed.search !== '' || parsed.hash !== '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'must not contain query or fragment',
+      });
+    }
+  });
+
+/**
+ * One entry in the user-curated `configFileWhitelist`. `alias` is
+ * trimmed non-empty; `path` must match `CONFIG_PATH_RE`.
+ *
+ * See network-quick-actions/design.md §Settings Validation (zod).
+ */
+export const managementConfigFileEntrySchema = z
+  .object({
+    alias: z.string().trim().min(1),
+    path: z
+      .string()
+      .trim()
+      .regex(CONFIG_PATH_RE, 'must be /etc/openclash/config/*.yaml'),
+  })
+  .strict();
+
+/**
+ * Full management interface settings block. Pinned to the
+ * `'openclash-luci'` discriminator in v1; per-request timeout and the
+ * config-file whitelist live here too.
+ *
+ * See network-quick-actions/design.md §Settings Validation (zod).
+ */
+export const managementInterfaceSchema = z
+  .object({
+    kind: z.literal('openclash-luci'),
+    url: managementUrlSchema,
+    requestTimeoutMs: z
+      .number()
+      .int()
+      .min(MIN_REQUEST_TIMEOUT_MS)
+      .max(MAX_REQUEST_TIMEOUT_MS),
+    configFileWhitelist: z.array(managementConfigFileEntrySchema),
+  })
+  .strict();
+
+/**
+ * Per-config-switch verify window. Default 8000 ms (set in
+ * `buildDefaultAppSettings`); range 1000..30000.
+ *
+ * See network-quick-actions/design.md §Settings Validation (zod).
+ */
+export const configSwitchVerifyWindowMsSchema = z
+  .number()
+  .int()
+  .min(MIN_VERIFY_WINDOW_MS)
+  .max(MAX_VERIFY_WINDOW_MS);
+
 export const appSettingsSchema = z
   .object({
     controllerUrl: controllerUrlSchema,
@@ -149,6 +254,8 @@ export const appSettingsSchema = z
     refreshIntervals: refreshIntervalsSchema,
     collectors: z.record(trimmedNonEmpty, collectorToggleSchema),
     autostart: z.boolean(),
+    configSwitchVerifyWindowMs: configSwitchVerifyWindowMsSchema,
+    managementInterface: managementInterfaceSchema,
   })
   .strict();
 
@@ -173,6 +280,8 @@ export const appSettingsPatchSchema = z
     refreshIntervals: refreshIntervalsSchema.optional(),
     collectors: z.record(trimmedNonEmpty, collectorToggleSchema).optional(),
     autostart: z.boolean().optional(),
+    configSwitchVerifyWindowMs: configSwitchVerifyWindowMsSchema.optional(),
+    managementInterface: managementInterfaceSchema.optional(),
   })
   .strict();
 
@@ -434,15 +543,195 @@ export const collectorHealthRowSchema = z
   })
   .strict();
 
+/**
+ * Closed set of result codes accepted in `recentConfigSwitches[*].resultCode`.
+ * Mirrors `ConfigChangeResultCode` from `store/repositories.ts`
+ * (network-quick-actions Requirement 16.1) — kept here as a runtime
+ * source-of-truth so the schema rejects rows whose `result_code`
+ * column drifts from the closed enum.
+ */
+const configChangeResultCodeSchema = z.enum([
+  'ok',
+  'auth_error',
+  'http_error',
+  'network_error',
+  'verify_timeout',
+  'verify_mismatch',
+  'not_supported',
+]);
+
+const recentConfigSwitchEntrySchema = z
+  .object({
+    targetPath: z.string(),
+    resultCode: configChangeResultCodeSchema,
+    timestamp: z.number().int(),
+    durationMs: z.number().int().nullable(),
+  })
+  .strict();
+
+const managementInterfaceDiagnosticsSummarySchema = z
+  .object({
+    url: z.string(),
+    requestTimeoutMs: z.number().int().nonnegative(),
+    configFileWhitelistCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const diagnosticsReportSchema = z
   .object({
     generatedAt: z.number().int(),
     collectors: z.array(collectorHealthRowSchema),
     lastCapability: z.record(z.string(), capabilityResultSchema),
     redactedControllerUrl: z.string(),
+    recentConfigSwitches: z.array(recentConfigSwitchEntrySchema),
+    managementInterface: managementInterfaceDiagnosticsSummarySchema,
     schemaVersion: z.number().int().nonnegative(),
   })
   .strict();
+
+// ---------------------------------------------------------------------------
+// Network Quick Actions IPC schemas (network-quick-actions spec, task 10.2)
+// ---------------------------------------------------------------------------
+//
+// These schemas back the three new `desktop:` channels added in task
+// 10.1: `getNetworkQuickActions`, `switchOpenClashConfig`, and
+// `clearManagementCredentials`. They are wired into the IPC handler
+// registry via `desktopApiSchemas` below so any malformed payload is
+// rejected with `{ ok: false, error: { code: 'validation', ... } }`
+// before the underlying service is ever invoked (carries forward
+// parent design Property 12 / network-quick-actions Property 17).
+
+/**
+ * Closed enum of management-client error codes. Mirrors
+ * `ManagementErrorCode` declared in
+ * `services/openclash.management.service.ts`; kept here as a runtime
+ * source-of-truth so settings/audit/diagnostics validators all share
+ * the same exhaustive set (Requirement 16.1).
+ */
+export const managementErrorCodeSchema = z.enum([
+  'auth_error',
+  'http_error',
+  'network_error',
+  'verify_timeout',
+  'verify_mismatch',
+  'not_supported',
+]);
+
+/**
+ * Single entry in the Quick_Node_Card candidate list. Mirrors
+ * `QuickNodeCandidate` from `services/quickNode.ranking.ts`. The
+ * ranking helper guarantees `avgLatencyMs` is non-null for every
+ * survivor, but the type stays nullable to match the design contract.
+ */
+export const quickNodeCandidateSchema = z
+  .object({
+    nodeName: z.string(),
+    avgLatencyMs: z.number().nullable(),
+    okSamples: z.number().int().nonnegative(),
+    lastOk: z.boolean(),
+  })
+  .strict();
+
+/**
+ * Full payload returned by `desktop:getNetworkQuickActions`. Drives
+ * every visible affordance on the expanded window's Quick Actions
+ * Panel. See network-quick-actions/design.md §IPC Surface for the
+ * field-level contract.
+ */
+export const networkQuickActionsSchema = z
+  .object({
+    primaryGroup: z
+      .object({
+        name: z.string().nullable(),
+        currentNode: z.string().nullable(),
+        candidates: z.array(quickNodeCandidateSchema),
+      })
+      .strict(),
+    configFiles: z
+      .object({
+        activePath: z.string().nullable(),
+        whitelist: z.array(
+          z
+            .object({
+              alias: z.string(),
+              path: z.string(),
+              isActive: z.boolean(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    management: z
+      .object({
+        configured: z.boolean(),
+        reachable: z.boolean(),
+        consecutiveFailures: z.number().int().nonnegative(),
+        lastErrorCode: managementErrorCodeSchema.nullable(),
+      })
+      .strict(),
+    lastConfigSwitch: z
+      .object({
+        targetPath: z.string(),
+        resultCode: z.union([
+          managementErrorCodeSchema,
+          z.literal('ok'),
+        ]),
+        timestamp: z.number().int(),
+      })
+      .strict()
+      .nullable(),
+    switchInProgress: z.union([
+      z.literal(false),
+      z.object({ kind: z.literal('config') }).strict(),
+      z
+        .object({
+          kind: z.literal('node'),
+          group: z.string(),
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+
+/**
+ * Result of `desktop:switchOpenClashConfig`. Mirrors `ConfigSwitchResult`
+ * from `services/openclash.management.service.ts`; the orchestrator
+ * uses these fields verbatim when writing the `'end'` audit row.
+ */
+export const configSwitchResultSchema = z
+  .object({
+    ok: z.boolean(),
+    startPath: z.string().nullable(),
+    targetPath: z.string(),
+    finalPath: z.string().nullable(),
+    error: z
+      .object({
+        code: managementErrorCodeSchema,
+        message: z.string(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** No-argument input for `desktop:getNetworkQuickActions`. */
+export const getNetworkQuickActionsInputSchema = emptyInputSchema;
+
+/**
+ * Input for `desktop:switchOpenClashConfig`. The schema validates the
+ * shape only — `targetPath` is additionally checked against the live
+ * `settings.managementInterface.configFileWhitelist[*].path` set
+ * inside the handler (task 10.4) because the whitelist mutates at
+ * runtime and cannot be encoded in a static zod schema.
+ */
+export const switchOpenClashConfigInputSchema = z
+  .object({
+    targetPath: trimmedNonEmpty,
+  })
+  .strict();
+
+/** No-argument input for `desktop:clearManagementCredentials`. */
+export const clearManagementCredentialsInputSchema = emptyInputSchema;
 
 // ---------------------------------------------------------------------------
 // Push channel schemas
@@ -519,6 +808,22 @@ export const desktopApiSchemas = {
         })),
       })),
     }),
+  },
+  // Network Quick Actions panel (network-quick-actions spec, task 10.2).
+  // Malformed payloads on any of these three channels are rejected at
+  // the IPC boundary with `{ ok: false, error: { code: 'validation',
+  // ... } }`; the handlers (task 10.3..10.5) never see the raw value.
+  getNetworkQuickActions: {
+    input: getNetworkQuickActionsInputSchema,
+    output: networkQuickActionsSchema,
+  },
+  switchOpenClashConfig: {
+    input: switchOpenClashConfigInputSchema,
+    output: configSwitchResultSchema,
+  },
+  clearManagementCredentials: {
+    input: clearManagementCredentialsInputSchema,
+    output: z.void(),
   },
 } as const;
 

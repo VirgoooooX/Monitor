@@ -4,9 +4,17 @@
 //   - updateSettings rejects unknown fields (strict schema)
 //   - updateSecret only accepts allowlisted keys
 //   - Schema validation prevents malformed payloads
+//   - switchOpenClashConfig payload schema (network-quick-actions
+//     task 10.4 — static-shape validation only; live-whitelist
+//     membership and orchestrator behaviour are covered by task 10.6
+//     property tests).
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { appSettingsPatchSchema, updateSecretInputSchema } from '../schemas';
+import { describe, it, expect } from 'vitest';
+import {
+  appSettingsPatchSchema,
+  switchOpenClashConfigInputSchema,
+  updateSecretInputSchema,
+} from '../schemas';
 
 // ---------------------------------------------------------------------------
 // Schema-level tests (no Electron dependency)
@@ -92,6 +100,49 @@ describe('updateSecretInputSchema', () => {
       key: 'openclash.controllerSecret',
       value: 'secret',
       extra: 'bad',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('switchOpenClashConfigInputSchema', () => {
+  it('accepts a non-empty trimmed targetPath', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({
+      targetPath: '/etc/openclash/config/profile-a.yaml',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a missing targetPath field', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty targetPath', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({
+      targetPath: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only targetPath', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({
+      targetPath: '   ',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-string targetPath', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({
+      targetPath: 42,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects extra fields under strict mode', () => {
+    const result = switchOpenClashConfigInputSchema.safeParse({
+      targetPath: '/etc/openclash/config/profile-a.yaml',
+      extra: 'should-be-rejected',
     });
     expect(result.success).toBe(false);
   });

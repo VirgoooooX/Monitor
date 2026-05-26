@@ -20,7 +20,7 @@
 import type { MonitorDatabase } from './db';
 
 /** Bump when adding a new migration. Equals `MIGRATIONS.length`. */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 interface Migration {
   /** 1-based version this migration *upgrades to*. */
@@ -125,11 +125,44 @@ const initialSchema: Migration = {
 };
 
 /**
+ * Migration #2 — `openclash_config_changes` audit table.
+ *
+ * Records start + end rows for every Config_Switch initiated through
+ * the Network Quick Actions panel. Bodies, headers, and credentials
+ * are never written here; see design.md §`openclash_config_changes`
+ * Table for the column contract.
+ *
+ * `confirmed` is always `1`; it is stored explicitly so that audit
+ * consumers do not have to special-case its absence.
+ */
+const openclashConfigChangesSchema: Migration = {
+  version: 2,
+  description: 'Add openclash_config_changes audit table for config switches',
+  up(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS openclash_config_changes (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp   INTEGER NOT NULL,
+        status      TEXT    NOT NULL,
+        start_path  TEXT    NULL,
+        target_path TEXT    NOT NULL,
+        final_path  TEXT    NULL,
+        result_code TEXT    NULL,
+        duration_ms INTEGER NULL,
+        confirmed   INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_openclash_config_changes_ts
+        ON openclash_config_changes(timestamp DESC);
+    `);
+  },
+};
+
+/**
  * Ordered list of migrations. Append new entries; never mutate the
  * existing ones — historical installs replay this list from their
  * current `user_version` to the latest.
  */
-const MIGRATIONS: readonly Migration[] = [initialSchema];
+const MIGRATIONS: readonly Migration[] = [initialSchema, openclashConfigChangesSchema];
 
 /**
  * Read `PRAGMA user_version`. Returns `0` for a freshly opened DB.

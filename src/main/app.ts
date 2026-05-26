@@ -12,7 +12,7 @@
 import { app, BrowserWindow, dialog, safeStorage, session, Tray } from 'electron';
 
 import { setAutostart } from './autostart';
-import { registerIpcHandlers, type IpcRegistry } from './ipc';
+import { registerIpcHandlers, type InflightConfigSwitchRegistry, type IpcRegistry } from './ipc';
 import {
   initSecrets,
   type SecretsStore,
@@ -22,13 +22,30 @@ import {
   type DashboardService,
 } from './services/dashboard.service';
 import {
+  createHealthService,
+} from './services/health.service';
+import {
+  AuthError,
   createOpenClashClient,
   type OpenClashClient,
 } from './services/openclash.service';
 import {
+  createConfigSwitchAuditService,
+  type ConfigSwitchAuditService,
+} from './services/openclash.config.audit';
+import {
+  createOpenClashManagementClient,
+  type OpenClashManagementClient,
+} from './services/openclash.management.service';
+import {
   createSwitchNodeService,
   type SwitchNodeService,
 } from './services/openclash.switch';
+import {
+  createSwitchLock,
+  type SwitchLock,
+  type SwitchLockToken,
+} from './services/switch.lock';
 import {
   createUsageService,
   type UsageService,
@@ -128,6 +145,13 @@ function buildDefaultAppSettings(): AppSettings {
       deepseek: { enabled: false },
     },
     autostart: false,
+    configSwitchVerifyWindowMs: 8_000,
+    managementInterface: {
+      kind: 'openclash-luci',
+      url: '',
+      requestTimeoutMs: 10_000,
+      configFileWhitelist: [],
+    },
   };
 }
 
@@ -218,8 +242,12 @@ let _compactWindow: BrowserWindow | null = null;
 let _expandedWindow: BrowserWindow | null = null;
 let _tray: Tray | null = null;
 let _openClashClient: OpenClashClient | null = null;
+let _openClashManagementClient: OpenClashManagementClient | null = null;
 let _dashboardService: DashboardService | null = null;
 let _switchNodeService: SwitchNodeService | null = null;
+let _switchLock: SwitchLock | null = null;
+let _configSwitchAudit: ConfigSwitchAuditService | null = null;
+let _inflightConfigSwitches: InflightConfigSwitchRegistry | null = null;
 let _ipcRegistry: IpcRegistry | null = null;
 
 async function boot(): Promise<void> {
@@ -276,6 +304,7 @@ async function boot(): Promise<void> {
   //    CSP headers and navigation guards before the renderer loads.
   const compactWindow = createCompactWindow({
     controllerUrl: settings.controllerUrl,
+    managementUrl: settings.managementInterface.url,
     settings: repositories.settings,
     session: session.defaultSession,
   });
@@ -291,10 +320,125 @@ async function boot(): Promise<void> {
   });
   _openClashClient = openClashClient;
 
+  // OpenClash LuCI management client (network-quick-actions task 8.x +
+  // 10.5). Reads creds lazily via the `secrets` singleton, writes
+  // health metrics to the `openclash.management` row of
+  // `collector_health`, and uses the controller HTTP client as its
+  // verify-loop liveness probe. Constructed once here so the IPC
+  // registry's `clearManagementCredentials` handler can call
+  // `invalidateSession()` on the same instance the (future)
+  // `switchOpenClashConfig` handler will drive.
+  const { secrets: secretsModule } =
+    require('./security/secrets') as typeof import('./security/secrets');
+  const openClashManagementClient = createOpenClashManagementClient({
+    secrets: secretsModule,
+    collectorHealthRepo: repositories.collectorHealth,
+    // Liveness probe used by the management client's verify loop:
+    // a 2xx (kernel up) OR a 401 (kernel up but auth required) both
+    // count as "controller is alive". Any other thrown class — network
+    // error, parse error, non-401 HTTP error — counts as "down".
+    controllerHealthcheck: async (opts) => {
+      try {
+        await openClashClient.getConfigs({ timeoutMs: opts.timeoutMs });
+        return true;
+      } catch (err) {
+        if (err instanceof AuthError) return true;
+        return false;
+      }
+    },
+    getAppSettings: () => _settings ?? settings,
+  });
+  _openClashManagementClient = openClashManagementClient;
+
+  // OpenClash config-switch audit writer (network-quick-actions
+  // task 6.1 / 10.4). Wraps the `OpenClashConfigChangesRepository`
+  // with the orchestrator-shaped `recordSwitchStart` /
+  // `recordSwitchEnd` helpers and pins the `confirmed: true`
+  // invariant (Requirement 6) at the call boundary.
+  const configSwitchAudit = createConfigSwitchAuditService({
+    repository: repositories.openClashConfigChanges,
+  });
+  _configSwitchAudit = configSwitchAudit;
+
+  // In-flight `'config'` switch registry. Lives at this scope —
+  // outside the IPC handler — so the lock's `onForceRelease`
+  // watchdog callback (constructed below) can read entries that
+  // belong to switches the orchestrator never had a chance to clean
+  // up. The IPC handler clears entries at the head of its `finally`
+  // block so a normal-path completion always wins the race against
+  // a watchdog firing a tick later. Token-id keyed because the lock
+  // tokens themselves are immutable and the id survives JSON
+  // round-trips.
+  const inflightConfigSwitches: InflightConfigSwitchRegistry = new Map();
+  _inflightConfigSwitches = inflightConfigSwitches;
+
+  // Globally-exclusive switch mutex. The `onForceRelease` callback
+  // is the watchdog's only side-effect: when the lock fires after
+  // `2 × configSwitchVerifyWindowMs` without a release call, we
+  // synthesise a `verify_timeout` end audit row on the orchestrator's
+  // behalf so the table never carries an unbalanced `'start'` row
+  // (Requirement 9.5 + Property 6).
+  //
+  // Key safety properties:
+  //   - We `delete` the in-flight entry BEFORE writing the end row
+  //     so a concurrent normal-path completion that races into the
+  //     orchestrator's `finally` cannot also write a duplicate end
+  //     row (whichever side reads-and-deletes first wins).
+  //   - The audit writer swallows internal errors, so this callback
+  //     is total; any thrown error is also caught by the lock's
+  //     own watchdog wrapper (see switch.lock.ts comments).
+  //   - We never call `switchLock.release` from inside the
+  //     callback — the lock has already removed the token by the
+  //     time `onForceRelease` is invoked.
+  const switchLock = createSwitchLock({
+    onForceRelease: (token: SwitchLockToken) => {
+      if (token.kind.type !== 'config') {
+        // Only `'config'` switches own audit rows. Node switches
+        // have their own watchdog story on the `switchNode` path.
+        return;
+      }
+      const meta = inflightConfigSwitches.get(token.id);
+      if (meta === undefined) {
+        // Either the orchestrator's `finally` already won the race
+        // and dropped the entry, or this token was never tracked
+        // (defensive — every `'config'` lock acquire by the IPC
+        // handler stashes its metadata before `await`-ing the
+        // management client). Nothing to do.
+        return;
+      }
+      inflightConfigSwitches.delete(token.id);
+      const endTs = Date.now();
+      configSwitchAudit.recordSwitchEnd({
+        rowId: meta.auditRowId,
+        targetPath: meta.targetPath,
+        startPath: meta.startPath,
+        finalPath: null,
+        resultCode: 'verify_timeout',
+        startedAt: meta.startTs,
+        endedAt: endTs,
+      });
+    },
+  });
+  _switchLock = switchLock;
+
   const dashboardService = createDashboardService({
     repositories,
     getControllerUrl: () => (_settings ?? settings).controllerUrl,
     getProbeUrls: () => (_settings ?? settings).probeUrls,
+    // Health evaluator with verify-window flap suppression
+    // (network-quick-actions Requirement 5.10, design.md §Property 8).
+    //
+    // The `switchLock` instance constructed above is the live source
+    // of truth for "is a `'config'` switch in flight?"; the health
+    // service's wrapper reads `snapshot()` on every evaluation and
+    // suppresses `openclash_unreachable` escalation while the lock
+    // is held + the down-streak is shorter than the verify window
+    // (network-quick-actions task 12.1).
+    evaluateHealth: createHealthService({
+      getConfigSwitchVerifyWindowMs: () =>
+        (_settings ?? settings).configSwitchVerifyWindowMs,
+      switchLock,
+    }).evaluate,
   });
   _dashboardService = dashboardService;
 
@@ -318,15 +462,25 @@ async function boot(): Promise<void> {
     settings: repositories.settings,
   });
 
-  // Diagnostics service (task 9.3)
+  // Diagnostics service (task 9.3 + network-quick-actions task 11.1).
+  // The `openClashConfigChanges` repository feeds the
+  // `recentConfigSwitches` field added by Requirement 8.4; the
+  // management interface summary (Requirement 12.4) is read live from
+  // the `AppSettings` blob via the same `settings` repo.
   const diagnosticsService = createDiagnosticsService({
     settings: repositories.settings,
     collectorHealth: repositories.collectorHealth,
+    openClashConfigChanges: repositories.openClashConfigChanges,
     getSecretValues: () => {
       try {
         const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
         // Collect all known secret keys
-        const keys = ['openclash.controllerSecret', 'deepseek_api_key'];
+        const keys = [
+          'openclash.controllerSecret',
+          'openclash.management.username',
+          'openclash.management.password',
+          'deepseek_api_key',
+        ];
         return keys.map((k) => sec.get(k)).filter((v): v is string => v !== null);
       } catch {
         return [];
@@ -417,16 +571,72 @@ async function boot(): Promise<void> {
     dashboardService,
     openClashClient,
     switchNodeService,
+    openClashManagementClient,
+    switchLock,
+    configSwitchAudit,
+    inflightConfigSwitches,
     getSettings: () => _settings ?? settings,
     updateSettings: (patch) => applyAppSettingsPatch(repositories, patch),
     updateSecret: (input) => {
       const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
       // Allowlist of secret keys the renderer is permitted to write.
-      const ALLOWED_KEYS = ['openclash.controllerSecret'];
+      // `openclash.management.{username,password}` are the LuCI
+      // session credentials used by the OpenClash management client
+      // (network-quick-actions, Requirements 12.1, 12.2). They flow
+      // through the same `safeStorage`-backed `secrets` module as
+      // `openclash.controllerSecret`.
+      const ALLOWED_KEYS = [
+        'openclash.controllerSecret',
+        'openclash.management.username',
+        'openclash.management.password',
+      ];
       if (!ALLOWED_KEYS.includes(input.key)) {
         throw new Error(`updateSecret: unknown key '${input.key}'`);
       }
       sec.set(input.key, input.value);
+    },
+    removeSecret: (key) => {
+      const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
+      // Mirror of the `updateSecret` allowlist, but narrower: the
+      // `clearManagementCredentials` IPC (task 10.5) is the only
+      // caller and it only ever wipes the two LuCI keys. The
+      // controller secret is rotated via `updateSecret`, never
+      // deleted, because clearing it would silently disable the
+      // entire dashboard until the user re-enters it.
+      const REMOVABLE_KEYS = [
+        'openclash.management.username',
+        'openclash.management.password',
+      ];
+      if (!REMOVABLE_KEYS.includes(key)) {
+        throw new Error(`removeSecret: refusing to delete '${key}'`);
+      }
+      sec.remove(key);
+    },
+    getSecret: (key) => {
+      const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
+      // Allowlist mirrors `updateSecret` / `removeSecret` — the
+      // `getNetworkQuickActions` handler (task 10.3) reads this
+      // strictly to answer "is the management interface configured?"
+      // (URL non-empty AND both LuCI creds present). Plaintext
+      // values never cross the IPC boundary; only the boolean
+      // `management.configured` is surfaced.
+      const READABLE_KEYS = [
+        'openclash.controllerSecret',
+        'openclash.management.username',
+        'openclash.management.password',
+      ];
+      if (!READABLE_KEYS.includes(key)) {
+        throw new Error(`getSecret: refusing to read '${key}'`);
+      }
+      try {
+        return sec.get(key);
+      } catch {
+        // `SecretsDecryptError` / `SecretsUnavailableError` collapse
+        // to "no secret configured" so the IPC handler treats the
+        // management interface as unconfigured rather than crashing
+        // the panel render.
+        return null;
+      }
     },
     getUsageSummary: (range) => usageService.getUsageSummary({ range }),
     getQuotaStatus: () => quotaService.getQuotaStatus(),
@@ -561,6 +771,7 @@ function openOrFocusExpanded(
   const settings = _settings ?? fallbackSettings;
   const expandedWindow = createExpandedWindow({
     controllerUrl: settings.controllerUrl,
+    managementUrl: settings.managementInterface.url,
     settings: repositories.settings,
     session: session.defaultSession,
   });
@@ -621,24 +832,39 @@ function applyAppSettingsPatch(
     setAutostart(next.autostart);
   }
 
-  // Side-effect: rebuild CSP connect-src when controllerUrl changes.
-  // applyCspHeaders is idempotent — it tears down the prior listener
-  // and installs a fresh one. This ensures the renderer's CSP
-  // actually allows requests to the new controller origin.
-  if (patch.controllerUrl !== undefined) {
-    const { applyCspHeaders } = require('./windows') as typeof import('./windows');
-    const devUrl = process.env['VITE_DEV_SERVER_URL'];
-    const isDev = !app.isPackaged && devUrl !== undefined && devUrl.length > 0;
-    let ctlOrigin: string;
-    try {
-      ctlOrigin = new URL(next.controllerUrl).origin;
-    } catch {
-      ctlOrigin = next.controllerUrl;
-    }
-    const allowedConnect = isDev
-      ? [ctlOrigin, new URL(devUrl!).origin, `ws://localhost:*`]
-      : [ctlOrigin];
+  // Side-effect: rebuild CSP connect-src and per-window will-navigate
+  // allowlists when the controllerUrl OR the managementInterface
+  // changes. Both inputs feed the same renderer allowlist computation
+  // (see network-quick-actions/design.md §CSP / will-navigate Update,
+  // Requirements 13.4 + 13.5):
+  //   - connect-src is the union of `controllerUrl` and (when
+  //     non-empty) `managementInterface.url`, deduplicated;
+  //   - will-navigate adds the renderer's own origin.
+  //
+  // `applyCspHeaders` is idempotent (it tears down the prior listener
+  // and installs a fresh one). `applyNavigationGuards` is now
+  // idempotent too — it removes any prior `will-navigate` guard it
+  // installed before re-attaching, so re-invoking on every live
+  // `BrowserWindow` does not stack listeners.
+  const controllerChanged = patch.controllerUrl !== undefined;
+  const managementChanged = patch.managementInterface !== undefined;
+  if (controllerChanged || managementChanged) {
+    const {
+      applyCspHeaders,
+      applyNavigationGuards,
+      computeRendererAllowedOrigins,
+    } = require('./windows') as typeof import('./windows');
+    const { connect: allowedConnect, navigate: allowedNavigate } =
+      computeRendererAllowedOrigins({
+        controllerUrl: next.controllerUrl,
+        managementUrl: next.managementInterface.url,
+      });
     applyCspHeaders(session.defaultSession, allowedConnect);
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) {
+        applyNavigationGuards(w, allowedNavigate);
+      }
+    }
   }
 
   // Side-effect: update scheduler task intervals when refreshIntervals changes.
@@ -700,6 +926,7 @@ function handleActivate(): void {
   if (_settings === null || _repositories === null) return;
   _compactWindow = createCompactWindow({
     controllerUrl: _settings.controllerUrl,
+    managementUrl: _settings.managementInterface.url,
     settings: _repositories.settings,
     session: session.defaultSession,
   });

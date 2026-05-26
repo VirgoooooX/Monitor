@@ -86,6 +86,17 @@ export const FILE_SELF_ORIGIN = 'file://';
  */
 export interface CreateWindowDeps {
   controllerUrl: string;
+  /**
+   * URL of the OpenClash management interface (LuCI panel). Optional
+   * for back-compat with callers (and tests) that predate the
+   * `managementInterface` settings block. When non-empty / parseable
+   * its origin is added to both the `connect-src` CSP allowlist and
+   * the `will-navigate` allowlist; deduplicated against the
+   * `controllerUrl` origin.
+   *
+   * See network-quick-actions/design.md §CSP / will-navigate Update.
+   */
+  managementUrl?: string | undefined;
   settings: SettingsRepository;
   session?: Electron.Session;
 }
@@ -197,6 +208,12 @@ export function isOriginAllowed(
  * mode, or {@link FILE_SELF_ORIGIN} in production) in the allowlist
  * so that the initial page load and intra-app navigation are not
  * blocked.
+ *
+ * Idempotent: prior listeners installed by this function are removed
+ * before re-installing, so callers can re-invoke it after a settings
+ * change to widen / narrow the allowlist without leaking listeners
+ * (network-quick-actions Requirement 13.4 — rebuild on
+ * `controllerUrl` or `managementInterface.url` change).
  */
 export function applyNavigationGuards(
   window: BrowserWindow,
@@ -206,12 +223,35 @@ export function applyNavigationGuards(
   // caller passed does not leak through.
   const allowlist = [...allowedOrigins];
 
-  window.webContents.on('will-navigate', (event, navigationUrl) => {
+  // Tear down any prior `will-navigate` listener installed by us so
+  // re-invocations don't stack guards. We tag the listener with a
+  // sentinel property and only remove our own handler — never any
+  // listener installed by Electron internals or other modules.
+  type TaggedListener = ((event: Electron.Event, navigationUrl: string) => void) & {
+    readonly __monitorNavGuard?: true;
+  };
+  const existingListeners = window.webContents.listeners(
+    'will-navigate',
+  ) as TaggedListener[];
+  for (const listener of existingListeners) {
+    if (listener.__monitorNavGuard === true) {
+      window.webContents.removeListener('will-navigate', listener);
+    }
+  }
+
+  const guard: TaggedListener = ((event, navigationUrl) => {
     if (!isOriginAllowed(navigationUrl, allowlist)) {
       event.preventDefault();
     }
+  }) as TaggedListener;
+  Object.defineProperty(guard, '__monitorNavGuard', {
+    value: true,
+    enumerable: false,
   });
+  window.webContents.on('will-navigate', guard);
 
+  // `setWindowOpenHandler` is single-slot; assigning a new handler
+  // replaces the prior one, so it is idempotent by construction.
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isOriginAllowed(url, allowlist)) {
       return { action: 'allow' };
@@ -385,6 +425,76 @@ function controllerOrigin(controllerUrl: string): string {
 }
 
 /**
+ * Parse `rawUrl` and return its origin, or `null` when the string is
+ * empty/blank or unparseable. Used by
+ * {@link computeRendererAllowedOrigins} to fold the optional
+ * `managementInterface.url` into the renderer allowlists.
+ *
+ * Empty string is the v1 default for `managementInterface.url`
+ * (until the user configures it in Settings) — those callers must
+ * still produce a working allowlist that does not contain a literal
+ * `'undefined'` or empty origin.
+ */
+function tryOriginOrNull(rawUrl: string | undefined): string | null {
+  if (rawUrl === undefined) return null;
+  const trimmed = rawUrl.trim();
+  if (trimmed.length === 0) return null;
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute the deduplicated `{ connect, navigate }` origin lists used
+ * by `applyCspHeaders` and `applyNavigationGuards` respectively.
+ *
+ * Both lists include:
+ *   - the controller origin (always),
+ *   - the management interface origin (when non-empty + parseable),
+ *
+ * The connect list additionally widens with the renderer's own dev
+ * server origin and a `ws://localhost:*` wildcard while running
+ * against Vite (so HMR works), per the existing window factory
+ * behaviour.
+ *
+ * The navigate list additionally includes the renderer's own origin
+ * (the dev URL or {@link FILE_SELF_ORIGIN}) so the initial load and
+ * intra-app navigation are not blocked.
+ *
+ * Origin deduplication is by string equality on `URL.origin` — this
+ * intentionally treats `http://1.2.3.4:80` and `http://1.2.3.4:81`
+ * as different origins (port differs) but folds same-IP-same-port
+ * controller / management URLs into a single entry, matching
+ * Requirement 13.5 from network-quick-actions.
+ */
+export function computeRendererAllowedOrigins(input: {
+  controllerUrl: string;
+  managementUrl?: string | undefined;
+}): { connect: string[]; navigate: string[] } {
+  const target = resolveRendererTarget();
+  const ctlOrigin = controllerOrigin(input.controllerUrl);
+  const mgmtOrigin = tryOriginOrNull(input.managementUrl);
+
+  // Use a Set to keep the dedup semantics explicit (Requirement 13.5).
+  const connect = new Set<string>();
+  connect.add(ctlOrigin);
+  if (mgmtOrigin !== null) connect.add(mgmtOrigin);
+  if (target.kind === 'devServer') {
+    connect.add(target.selfOrigin);
+    connect.add('ws://localhost:*');
+  }
+
+  const navigate = new Set<string>();
+  navigate.add(target.selfOrigin);
+  navigate.add(ctlOrigin);
+  if (mgmtOrigin !== null) navigate.add(mgmtOrigin);
+
+  return { connect: Array.from(connect), navigate: Array.from(navigate) };
+}
+
+/**
  * Wire up debounced bounds persistence on `move` and `resize`.
  *
  * The compact window is `resizable: false`, so its `resize` event
@@ -445,13 +555,15 @@ function loadRenderer(window: BrowserWindow, mode?: 'compact' | 'expanded'): voi
  */
 export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
   const targetSession = deps.session ?? session.defaultSession;
-  const target = resolveRendererTarget();
-  const ctlOrigin = controllerOrigin(deps.controllerUrl);
 
-  // In dev mode, Vite's HMR websocket needs connect-src access.
-  const allowedConnect = target.kind === 'devServer'
-    ? [ctlOrigin, target.selfOrigin, `ws://localhost:*`]
-    : [ctlOrigin];
+  // network-quick-actions Requirement 13.4 / 13.5: the renderer's
+  // connect-src and will-navigate allowlists are the union of the
+  // controller and (optional) management origins, deduplicated.
+  const { connect: allowedConnect, navigate: allowedNavigate } =
+    computeRendererAllowedOrigins({
+      controllerUrl: deps.controllerUrl,
+      managementUrl: deps.managementUrl,
+    });
   applyCspHeaders(targetSession, allowedConnect);
 
   const savedBounds = restoreBounds(deps.settings, 'compact');
@@ -481,7 +593,7 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
 
   const window = new BrowserWindow(options);
 
-  applyNavigationGuards(window, [target.selfOrigin, ctlOrigin]);
+  applyNavigationGuards(window, allowedNavigate);
   attachBoundsAutoSave(window, deps.settings, 'compact');
   loadRenderer(window, 'compact');
 
@@ -506,12 +618,14 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
  */
 export function createExpandedWindow(deps: CreateWindowDeps): BrowserWindow {
   const targetSession = deps.session ?? session.defaultSession;
-  const target = resolveRendererTarget();
-  const ctlOrigin = controllerOrigin(deps.controllerUrl);
 
-  const allowedConnect = target.kind === 'devServer'
-    ? [ctlOrigin, target.selfOrigin, `ws://localhost:*`]
-    : [ctlOrigin];
+  // network-quick-actions Requirement 13.4 / 13.5: see notes in
+  // `createCompactWindow`.
+  const { connect: allowedConnect, navigate: allowedNavigate } =
+    computeRendererAllowedOrigins({
+      controllerUrl: deps.controllerUrl,
+      managementUrl: deps.managementUrl,
+    });
   applyCspHeaders(targetSession, allowedConnect);
 
   const savedBounds = restoreBounds(deps.settings, 'expanded');
@@ -535,7 +649,7 @@ export function createExpandedWindow(deps: CreateWindowDeps): BrowserWindow {
 
   const window = new BrowserWindow(options);
 
-  applyNavigationGuards(window, [target.selfOrigin, ctlOrigin]);
+  applyNavigationGuards(window, allowedNavigate);
   attachBoundsAutoSave(window, deps.settings, 'expanded');
   loadRenderer(window, 'expanded');
 

@@ -22,12 +22,22 @@
 //   • design.md §Window Strategy, §Compact Window Boot — First Render
 //   • PLAN.md §UI Implementation Guide §紧凑首页
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  BarChart3,
+  Settings as SettingsIcon,
+  RefreshCw,
+} from 'lucide-react';
 
 import { WidgetShell } from './components/WidgetShell';
 import { NodeTable } from './components/NodeTable';
+import { QuickActionsPanel } from './components/QuickActionsPanel';
 import { UsagePanel } from './components/UsagePanel';
 import { SettingsView } from './components/SettingsView';
+import { StatusHero } from './components/StatusHero';
+import { Sparkline } from './components/Sparkline';
+import { formatLatency } from './lib/format';
 import type { DashboardState, NodeView, Unsubscribe } from './lib/types';
 
 const COMPACT_WIDTH = 360;
@@ -190,10 +200,36 @@ function CompactRoot(): JSX.Element | null {
 }
 
 // ---------------------------------------------------------------------------
-// Expanded root — tabbed layout with Network and Usage panels.
+// Expanded root — refreshed editorial layout.
+//
+// Composition (top → bottom):
+//   ┌──────────────────────────────────────────────────────────────┐
+//   │  Topbar  ◇ MONITOR · network & ai watchdog       tabs · ↻   │
+//   ├──────────────────────────────────────────────────────────────┤
+//   │  Tab content                                                 │
+//   │   • network  →  network glance card  +  node table           │
+//   │   • usage    →  UsagePanel (quota + token breakdown)         │
+//   │   • settings →  SettingsView                                 │
+//   └──────────────────────────────────────────────────────────────┘
+//
+// The compact widget's network glance is reused on the network tab
+// so the two windows feel like one product, but it stays scoped to
+// that tab — the AI quota lives on the usage tab where it belongs.
 // ---------------------------------------------------------------------------
 
 type ExpandedTab = 'network' | 'usage' | 'settings';
+
+interface TabDef {
+  readonly id: ExpandedTab;
+  readonly label: string;
+  readonly icon: JSX.Element;
+}
+
+const TABS: readonly TabDef[] = [
+  { id: 'network', label: '网络', icon: <Activity size={15} strokeWidth={1.75} /> },
+  { id: 'usage', label: '用量', icon: <BarChart3 size={15} strokeWidth={1.75} /> },
+  { id: 'settings', label: '设置', icon: <SettingsIcon size={15} strokeWidth={1.75} /> },
+];
 
 function ExpandedRoot(): JSX.Element {
   const [tab, setTab] = useState<ExpandedTab>('network');
@@ -202,6 +238,42 @@ function ExpandedRoot(): JSX.Element {
   const [currentGroup, setCurrentGroup] = useState<string | null>(null);
   const [switchConfirm, setSwitchConfirm] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  const reloadNodes = useCallback(async (): Promise<void> => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    try {
+      const details = await desktop.getOpenClashDetails();
+      if (details.groups.length > 0) {
+        const primary = details.groups[0];
+        if (primary) {
+          setNodes(primary.nodes);
+          setCurrentGroup(primary.name);
+        }
+      }
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.error('[ExpandedRoot] getOpenClashDetails failed:', err);
+    }
+  }, []);
+
+  const handleRefresh = useCallback(async (): Promise<void> => {
+    const desktop = window.desktop;
+    if (!desktop) return;
+    setRefreshing(true);
+    try {
+      await desktop.refreshNow();
+      await reloadNodes();
+    } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.error('[ExpandedRoot] refreshNow failed:', err);
+    } finally {
+      // Keep the spin animation visible for at least a beat so the
+      // click registers visually.
+      setTimeout(() => setRefreshing(false), 350);
+    }
+  }, [reloadNodes]);
 
   useEffect(() => {
     const desktop = window.desktop;
@@ -212,40 +284,37 @@ function ExpandedRoot(): JSX.Element {
 
     let cancelled = false;
 
-    // Load initial dashboard
-    desktop.getDashboard().then((d) => {
-      if (!cancelled) setDashboard(d);
-    }).catch((err: unknown) => {
-      if (!cancelled) setError(`getDashboard: ${err instanceof Error ? err.message : String(err)}`);
-    });
-
-    // Load settings for switchConfirmation
-    desktop.getSettings().then((s) => {
-      if (!cancelled) setSwitchConfirm(s.switchConfirmation);
-    }).catch(() => { /* non-fatal */ });
-
-    // Load node details
-    desktop.getOpenClashDetails().then((details) => {
-      if (!cancelled && details.groups.length > 0) {
-        const primary = details.groups[0];
-        if (primary) {
-          setNodes(primary.nodes);
-          setCurrentGroup(primary.name);
+    desktop
+      .getDashboard()
+      .then((d) => {
+        if (!cancelled) setDashboard(d);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(`getDashboard: ${err instanceof Error ? err.message : String(err)}`);
         }
-      }
-    }).catch((err: unknown) => {
-      // Non-fatal: node table will just be empty
-      console.error('[ExpandedRoot] getOpenClashDetails failed:', err);
-    });
+      });
 
-    // Subscribe to live updates
+    desktop
+      .getSettings()
+      .then((s) => {
+        if (!cancelled) setSwitchConfirm(s.switchConfirmation);
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+
+    void reloadNodes();
+
     const unsub = desktop.on('dashboard.updated', (d) => {
       if (!cancelled) setDashboard(d);
     });
 
-    // Subscribe to tab navigation from main process (e.g. tray → settings)
     const unsubTab = desktop.on('navigate-tab', (targetTab) => {
-      if (!cancelled && (targetTab === 'network' || targetTab === 'usage' || targetTab === 'settings')) {
+      if (
+        !cancelled &&
+        (targetTab === 'network' || targetTab === 'usage' || targetTab === 'settings')
+      ) {
         setTab(targetTab);
       }
     });
@@ -255,92 +324,167 @@ function ExpandedRoot(): JSX.Element {
       unsub();
       unsubTab();
     };
-  }, []);
+  }, [reloadNodes]);
+
+  const networkBadges = useMemo(() => {
+    if (!dashboard) return [];
+    const apiOk = dashboard.openclash.apiOk;
+    return [
+      { label: '路由', tone: dashboard.router.ok ? 'ok' : 'bad' as const },
+      { label: 'Clash TCP', tone: dashboard.openclash.tcpOk ? 'ok' : 'bad' as const },
+      {
+        label: 'API',
+        tone: apiOk === true ? 'ok' : apiOk === 'auth_error' ? 'warn' : 'bad' as const,
+      },
+    ];
+  }, [dashboard]);
 
   return (
-    <div className="expanded" data-testid="expanded-root">
-      {/* Sidebar navigation */}
-      <nav className="expanded__nav" aria-label="主导航">
-        <div className="expanded__brand">Monitor</div>
-        <button
-          className={`expanded__tab${tab === 'network' ? ' expanded__tab--active' : ''}`}
-          onClick={() => setTab('network')}
-          type="button"
-          aria-selected={tab === 'network'}
-        >
-          🌐 网络
-        </button>
-        <button
-          className={`expanded__tab${tab === 'usage' ? ' expanded__tab--active' : ''}`}
-          onClick={() => setTab('usage')}
-          type="button"
-          aria-selected={tab === 'usage'}
-        >
-          📊 AI 用量
-        </button>
-        <button
-          className={`expanded__tab${tab === 'settings' ? ' expanded__tab--active' : ''}`}
-          onClick={() => setTab('settings')}
-          type="button"
-          aria-selected={tab === 'settings'}
-        >
-          ⚙️ 设置
-        </button>
-      </nav>
+    <div className="ex" data-testid="expanded-root">
+      {/* ── Topbar ────────────────────────────────────────────── */}
+      <header className="ex__topbar">
+        <div className="ex__brand">
+          <span className="ex__brand-mark" aria-hidden="true">◆</span>
+          <span className="ex__brand-name">MONITOR</span>
+          <span className="ex__brand-tag">network · ai watch</span>
+        </div>
 
-      {/* Main content */}
-      <main className="expanded__main">
+        <nav className="ex__tabs" role="tablist" aria-label="主导航">
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`ex__tab${active ? ' ex__tab--active' : ''}`}
+                onClick={() => setTab(t.id)}
+              >
+                <span className="ex__tab-icon" aria-hidden="true">{t.icon}</span>
+                <span className="ex__tab-label">{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <button
+          type="button"
+          className={`ex__refresh${refreshing ? ' ex__refresh--spin' : ''}`}
+          onClick={() => void handleRefresh()}
+          aria-label="立即刷新"
+          title="立即刷新"
+          disabled={refreshing}
+        >
+          <RefreshCw size={14} strokeWidth={1.75} />
+        </button>
+      </header>
+
+      {/* ── Tab content ───────────────────────────────────────── */}
+      <main className="ex__main" role="tabpanel" aria-label={TABS.find((t) => t.id === tab)?.label}>
         {error && (
-          <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.15)', borderRadius: '6px', marginBottom: '16px', color: '#f87171', fontSize: '13px' }}>
-            ⚠️ {error}
+          <div className="ex__error" role="alert">
+            <span className="ex__error-mark" aria-hidden="true">!</span>
+            <span>{error}</span>
           </div>
         )}
 
         {tab === 'network' && (
-          <div className="expanded__panel">
-            {/* Status summary card */}
-            {dashboard ? (
-              <div className="expanded__status-card">
-                <div className="expanded__status-row">
-                  <span className={`expanded__dot expanded__dot--${dashboard.status === 'healthy' ? 'ok' : 'bad'}`} />
-                  <span className="expanded__status-label">{dashboard.statusLabel}</span>
-                </div>
-                <div className="expanded__meta-row">
-                  <span>路由: {dashboard.router.ok ? '✅' : '❌'}</span>
-                  <span>Clash TCP: {dashboard.openclash.tcpOk ? '✅' : '❌'}</span>
-                  <span>API: {dashboard.openclash.apiOk === true ? '✅' : '❌'}</span>
-                  {dashboard.currentNode.avgLatencyMs !== null && (
-                    <span>延迟: {Math.round(dashboard.currentNode.avgLatencyMs)}ms</span>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div style={{ padding: '16px', color: '#999', fontSize: '13px' }}>
-                等待数据中…
-              </div>
-            )}
+          <div className="ex__stack">
+            {/* Network glance — moved from the global header so it
+                lives with the rest of the network tab. */}
+            <article className="ex__card ex__card--network" aria-label="网络状态">
+              <header className="ex__card-head">
+                <span className="ex__card-eyebrow">network</span>
+                <span className="ex__card-title">连通性</span>
+              </header>
+
+              {dashboard ? (
+                <>
+                  <div className="ex__hero">
+                    <StatusHero state={dashboard} />
+                  </div>
+
+                  <div className="ex__node-line" title={dashboard.currentNode.node ?? ''}>
+                    {dashboard.currentNode.group && (
+                      <span className="ex__node-group">{dashboard.currentNode.group}</span>
+                    )}
+                    <span className="ex__node-name">
+                      {dashboard.currentNode.node ?? '等待节点数据'}
+                    </span>
+                  </div>
+
+                  <div className="ex__trend" aria-hidden="true">
+                    <Sparkline
+                      data={dashboard.currentNode.sparkline}
+                      width={920}
+                      height={72}
+                      strokeWidth={1.5}
+                      fill
+                    />
+                  </div>
+
+                  <ul className="ex__badges">
+                    {networkBadges.map((b) => (
+                      <li key={b.label} className={`ex__badge ex__badge--${b.tone}`}>
+                        <span className="ex__badge-dot" />
+                        <span className="ex__badge-label">{b.label}</span>
+                      </li>
+                    ))}
+                    {dashboard.currentNode.avgLatencyMs !== null && (
+                      <li className="ex__badge ex__badge--neutral ex__badge--metric">
+                        <span className="ex__badge-label">avg</span>
+                        <span className="ex__badge-value">
+                          {formatLatency(dashboard.currentNode.avgLatencyMs)}
+                        </span>
+                      </li>
+                    )}
+                  </ul>
+                </>
+              ) : (
+                <div className="ex__placeholder">等待数据中…</div>
+              )}
+            </article>
+
+            {/* Quick actions — Quick Node Card + Config Switch Card.
+                Only mounted on the expanded window's Network tab
+                (Requirement 1: compact window stays untouched). */}
+            <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
 
             {/* Node table */}
-            <h3 className="expanded__section-title">节点列表</h3>
-            <NodeTable
-              nodes={nodes}
-              currentNode={dashboard?.currentNode.node ?? null}
-              groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
-              switchConfirmEnabled={switchConfirm}
-            />
+            <section className="ex__panel ex__panel--network" aria-label="节点列表">
+              <header className="ex__panel-head">
+                <h2 className="ex__panel-title">
+                  节点
+                  <span className="ex__panel-count">{nodes.length}</span>
+                </h2>
+                {currentGroup && (
+                  <span className="ex__panel-meta">
+                    分组 <strong>{currentGroup}</strong>
+                  </span>
+                )}
+              </header>
+
+              <NodeTable
+                nodes={nodes}
+                currentNode={dashboard?.currentNode.node ?? null}
+                groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
+                switchConfirmEnabled={switchConfirm}
+              />
+            </section>
           </div>
         )}
 
         {tab === 'usage' && (
-          <div className="expanded__panel">
+          <section className="ex__panel ex__panel--usage">
             <UsagePanel />
-          </div>
+          </section>
         )}
 
         {tab === 'settings' && (
-          <div className="expanded__panel">
+          <section className="ex__panel ex__panel--settings">
             <SettingsView />
-          </div>
+          </section>
         )}
       </main>
     </div>
