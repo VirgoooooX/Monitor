@@ -1,0 +1,19 @@
+appId: com.monitor.desktop
+productName: Monitor
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+
+npmRebuild: true
+forceCodeSigning: false
+
+win:
+  target: nsis
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "outDir": "dist/renderer",
+    "rootDir": "src",
+    "sourceMap": true,
+    "declaration": false,
+    "noEmit": true
+  },
+  // Renderer code lives under `src/renderer`. The renderer is permitted
+  // to TYPE-ONLY import from `src/main/types.ts` (single source of truth
+  // for shared shapes); `import type` plus `isolatedModules: true` ensure
+  // these imports are erased at build time, so the sandbox boundary
+  // remains intact (no runtime dependency on main).
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/main/types.ts"
+  ],
+  "exclude": ["**/*.test.ts", "**/*.spec.ts", "node_modules"]
+}

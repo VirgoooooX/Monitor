@@ -1,0 +1,999 @@
+// Typed read/write helpers for every table in the application's own
+// SQLite database.
+//
+// References:
+//   - design.md §SQLite Schema, §Integrity invariants, §Data Models
+//   - PLAN.md §SQLite Schema
+//
+// Design notes:
+//   - Each repository is a "prepare-once, exec-many" object: a factory
+//     prepares the parameterised statements at construction time, and
+//     the returned methods are thin typed wrappers around `.run` /
+//     `.get` / `.all`. This is the recommended pattern in
+//     better-sqlite3 and keeps the hot path (3-second tick) under
+//     ~100 µs per insert.
+//   - All settings values are JSON-encoded before they hit the
+//     `settings.value TEXT` column; secrets are stored as raw blobs
+//     (encryption is layered on top in task 1.6, not here).
+//   - `usage_events` writes use `INSERT OR IGNORE` so that re-scanning
+//     append-only Codex JSONL files never produces duplicate rows
+//     (design.md §Property 5, §Property 6).
+//   - Integers from SQLite arrive as `number` (we never enable
+//     `safeIntegers`); the boolean columns `ok` and `api_ok` are
+//     stored as 0/1 and converted on the way in/out.
+
+import type { MonitorDatabase } from './db';
+import type {
+  AppSettings,
+  CapabilityResult,
+  CollectorHealthRow,
+  UsageProviderSummary,
+  UsageRange,
+} from '../types';
+
+// ---------------------------------------------------------------------------
+// Shared row helpers
+// ---------------------------------------------------------------------------
+
+const toBoolInt = (value: boolean): 0 | 1 => (value ? 1 : 0);
+const fromBoolInt = (value: number): boolean => value !== 0;
+
+// ---------------------------------------------------------------------------
+// Settings repository (key/value with JSON encoding)
+// ---------------------------------------------------------------------------
+
+interface SettingsRow {
+  key: string;
+  value: string;
+}
+
+export interface SettingsRepository {
+  /** Get a typed JSON-decoded value, or `undefined` when the key is missing. */
+  get<T>(key: string): T | undefined;
+  /** JSON-encode and upsert. */
+  set<T>(key: string, value: T): void;
+  /** Delete a single key. No-op if it does not exist. */
+  remove(key: string): void;
+  /** All keys currently stored (sorted ASC). */
+  keys(): string[];
+  /** Convenience for the diagnostics export. */
+  entries(): Array<{ key: string; value: unknown }>;
+}
+
+export function createSettingsRepository(db: MonitorDatabase): SettingsRepository {
+  const selectStmt = db.prepare<[string], SettingsRow>(
+    'SELECT key, value FROM settings WHERE key = ?',
+  );
+  const upsertStmt = db.prepare<[string, string]>(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  );
+  const deleteStmt = db.prepare<[string]>('DELETE FROM settings WHERE key = ?');
+  const keysStmt = db.prepare<[], { key: string }>(
+    'SELECT key FROM settings ORDER BY key ASC',
+  );
+  const allStmt = db.prepare<[], SettingsRow>(
+    'SELECT key, value FROM settings ORDER BY key ASC',
+  );
+
+  return {
+    get<T>(key: string): T | undefined {
+      const row = selectStmt.get(key);
+      if (!row) {
+        return undefined;
+      }
+      return JSON.parse(row.value) as T;
+    },
+    set<T>(key: string, value: T): void {
+      upsertStmt.run(key, JSON.stringify(value));
+    },
+    remove(key: string): void {
+      deleteStmt.run(key);
+    },
+    keys(): string[] {
+      return keysStmt.all().map((r) => r.key);
+    },
+    entries(): Array<{ key: string; value: unknown }> {
+      return allStmt.all().map((row) => ({
+        key: row.key,
+        value: JSON.parse(row.value) as unknown,
+      }));
+    },
+  };
+}
+
+/** Reserved key for the persisted full `AppSettings` blob. */
+export const APP_SETTINGS_KEY = 'app.settings';
+
+/**
+ * Convenience read/write of the canonical `AppSettings` value (which
+ * lives under `APP_SETTINGS_KEY` inside `settings`). Used by the IPC
+ * `getSettings` / `updateSettings` handlers wired in task 3.11.
+ */
+export function readAppSettings(repo: SettingsRepository): AppSettings | undefined {
+  return repo.get<AppSettings>(APP_SETTINGS_KEY);
+}
+
+export function writeAppSettings(
+  repo: SettingsRepository,
+  settings: AppSettings,
+): void {
+  repo.set<AppSettings>(APP_SETTINGS_KEY, settings);
+}
+
+// ---------------------------------------------------------------------------
+// Secrets repository (raw blob get/set/delete; encryption is task 1.6)
+// ---------------------------------------------------------------------------
+
+interface SecretRow {
+  key: string;
+  encrypted_value: Buffer;
+}
+
+export interface SecretsRepository {
+  /** Read the raw ciphertext blob; `undefined` when the key is missing. */
+  get(key: string): Buffer | undefined;
+  /** Upsert the raw ciphertext blob. */
+  set(key: string, encryptedValue: Buffer): void;
+  /** Delete a single key. No-op if it does not exist. */
+  remove(key: string): void;
+  /** All known keys (sorted ASC). */
+  keys(): string[];
+}
+
+export function createSecretsRepository(db: MonitorDatabase): SecretsRepository {
+  const selectStmt = db.prepare<[string], SecretRow>(
+    'SELECT key, encrypted_value FROM secrets WHERE key = ?',
+  );
+  const upsertStmt = db.prepare<[string, Buffer]>(
+    `INSERT INTO secrets (key, encrypted_value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET encrypted_value = excluded.encrypted_value`,
+  );
+  const deleteStmt = db.prepare<[string]>('DELETE FROM secrets WHERE key = ?');
+  const keysStmt = db.prepare<[], { key: string }>(
+    'SELECT key FROM secrets ORDER BY key ASC',
+  );
+
+  return {
+    get(key: string): Buffer | undefined {
+      const row = selectStmt.get(key);
+      return row?.encrypted_value;
+    },
+    set(key: string, encryptedValue: Buffer): void {
+      upsertStmt.run(key, encryptedValue);
+    },
+    remove(key: string): void {
+      deleteStmt.run(key);
+    },
+    keys(): string[] {
+      return keysStmt.all().map((r) => r.key);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Network samples
+// ---------------------------------------------------------------------------
+
+export type NetworkLayer =
+  | 'router'
+  | 'controller_tcp'
+  | 'controller_api'
+  | 'probe';
+
+export interface NetworkSampleInsert {
+  timestamp: number;
+  layer: NetworkLayer;
+  target: string;
+  ok: boolean;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+export interface NetworkSampleRow {
+  id: number;
+  timestamp: number;
+  layer: NetworkLayer;
+  target: string;
+  ok: boolean;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+interface NetworkSampleRawRow {
+  id: number;
+  timestamp: number;
+  layer: NetworkLayer;
+  target: string;
+  ok: number;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+const mapNetworkRow = (row: NetworkSampleRawRow): NetworkSampleRow => ({
+  id: row.id,
+  timestamp: row.timestamp,
+  layer: row.layer,
+  target: row.target,
+  ok: fromBoolInt(row.ok),
+  latencyMs: row.latency_ms,
+  error: row.error,
+});
+
+export interface NetworkSamplesRepository {
+  insert(sample: NetworkSampleInsert): void;
+  /** Most recent sample for the given layer, or `undefined` if none exist. */
+  latestForLayer(layer: NetworkLayer): NetworkSampleRow | undefined;
+  /** Most recent N samples for a layer (newest first). */
+  recentForLayer(layer: NetworkLayer, limit: number): NetworkSampleRow[];
+  /** Samples within `[fromTs, toTs]` for a layer (newest first). */
+  forLayerInWindow(
+    layer: NetworkLayer,
+    fromTs: number,
+    toTs: number,
+  ): NetworkSampleRow[];
+}
+
+export function createNetworkSamplesRepository(
+  db: MonitorDatabase,
+): NetworkSamplesRepository {
+  const insertStmt = db.prepare<
+    [number, NetworkLayer, string, 0 | 1, number | null, string | null]
+  >(
+    `INSERT INTO network_samples
+       (timestamp, layer, target, ok, latency_ms, error)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const latestStmt = db.prepare<[NetworkLayer], NetworkSampleRawRow>(
+    `SELECT id, timestamp, layer, target, ok, latency_ms, error
+       FROM network_samples
+      WHERE layer = ?
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 1`,
+  );
+  const recentStmt = db.prepare<[NetworkLayer, number], NetworkSampleRawRow>(
+    `SELECT id, timestamp, layer, target, ok, latency_ms, error
+       FROM network_samples
+      WHERE layer = ?
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?`,
+  );
+  const windowStmt = db.prepare<
+    [NetworkLayer, number, number],
+    NetworkSampleRawRow
+  >(
+    `SELECT id, timestamp, layer, target, ok, latency_ms, error
+       FROM network_samples
+      WHERE layer = ? AND timestamp BETWEEN ? AND ?
+      ORDER BY timestamp DESC, id DESC`,
+  );
+
+  return {
+    insert(sample) {
+      insertStmt.run(
+        sample.timestamp,
+        sample.layer,
+        sample.target,
+        toBoolInt(sample.ok),
+        sample.latencyMs,
+        sample.error,
+      );
+    },
+    latestForLayer(layer) {
+      const row = latestStmt.get(layer);
+      return row ? mapNetworkRow(row) : undefined;
+    },
+    recentForLayer(layer, limit) {
+      return recentStmt.all(layer, limit).map(mapNetworkRow);
+    },
+    forLayerInWindow(layer, fromTs, toTs) {
+      return windowStmt.all(layer, fromTs, toTs).map(mapNetworkRow);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OpenClash snapshots
+// ---------------------------------------------------------------------------
+
+export type OpenClashSnapshotStatus =
+  | 'ok'
+  | 'auth_error'
+  | 'unreachable'
+  | 'http_error'
+  | 'verify_mismatch'
+  | 'verify_timeout';
+
+export interface OpenClashSnapshotInsert {
+  timestamp: number;
+  apiOk: boolean;
+  mode: string | null;
+  groupName: string | null;
+  nodeName: string | null;
+  status: OpenClashSnapshotStatus;
+}
+
+export interface OpenClashSnapshotRow {
+  id: number;
+  timestamp: number;
+  apiOk: boolean;
+  mode: string | null;
+  groupName: string | null;
+  nodeName: string | null;
+  status: OpenClashSnapshotStatus;
+}
+
+interface OpenClashSnapshotRawRow {
+  id: number;
+  timestamp: number;
+  api_ok: number;
+  mode: string | null;
+  group_name: string | null;
+  node_name: string | null;
+  status: OpenClashSnapshotStatus;
+}
+
+const mapOpenClashRow = (row: OpenClashSnapshotRawRow): OpenClashSnapshotRow => ({
+  id: row.id,
+  timestamp: row.timestamp,
+  apiOk: fromBoolInt(row.api_ok),
+  mode: row.mode,
+  groupName: row.group_name,
+  nodeName: row.node_name,
+  status: row.status,
+});
+
+export interface OpenClashSnapshotsRepository {
+  insert(snapshot: OpenClashSnapshotInsert): void;
+  /** Most recent snapshot regardless of status. */
+  latest(): OpenClashSnapshotRow | undefined;
+  /** Most recent successful (`status = 'ok'`) snapshot. */
+  latestOk(): OpenClashSnapshotRow | undefined;
+  /** Most recent N snapshots (newest first). */
+  recent(limit: number): OpenClashSnapshotRow[];
+}
+
+export function createOpenClashSnapshotsRepository(
+  db: MonitorDatabase,
+): OpenClashSnapshotsRepository {
+  const insertStmt = db.prepare<
+    [
+      number,
+      0 | 1,
+      string | null,
+      string | null,
+      string | null,
+      OpenClashSnapshotStatus,
+    ]
+  >(
+    `INSERT INTO openclash_snapshots
+       (timestamp, api_ok, mode, group_name, node_name, status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const latestStmt = db.prepare<[], OpenClashSnapshotRawRow>(
+    `SELECT id, timestamp, api_ok, mode, group_name, node_name, status
+       FROM openclash_snapshots
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 1`,
+  );
+  const latestOkStmt = db.prepare<[], OpenClashSnapshotRawRow>(
+    `SELECT id, timestamp, api_ok, mode, group_name, node_name, status
+       FROM openclash_snapshots
+      WHERE status = 'ok'
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 1`,
+  );
+  const recentStmt = db.prepare<[number], OpenClashSnapshotRawRow>(
+    `SELECT id, timestamp, api_ok, mode, group_name, node_name, status
+       FROM openclash_snapshots
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?`,
+  );
+
+  return {
+    insert(snapshot) {
+      insertStmt.run(
+        snapshot.timestamp,
+        toBoolInt(snapshot.apiOk),
+        snapshot.mode,
+        snapshot.groupName,
+        snapshot.nodeName,
+        snapshot.status,
+      );
+    },
+    latest() {
+      const row = latestStmt.get();
+      return row ? mapOpenClashRow(row) : undefined;
+    },
+    latestOk() {
+      const row = latestOkStmt.get();
+      return row ? mapOpenClashRow(row) : undefined;
+    },
+    recent(limit) {
+      return recentStmt.all(limit).map(mapOpenClashRow);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Node samples (per-node delay history from rolling scan)
+// ---------------------------------------------------------------------------
+
+export interface NodeSampleInsert {
+  timestamp: number;
+  groupName: string;
+  nodeName: string;
+  source: string | null;
+  delayMs: number | null;
+  ok: boolean;
+  error: string | null;
+}
+
+export interface NodeSampleRow {
+  id: number;
+  timestamp: number;
+  groupName: string;
+  nodeName: string;
+  source: string | null;
+  delayMs: number | null;
+  ok: boolean;
+  error: string | null;
+}
+
+interface NodeSampleRawRow {
+  id: number;
+  timestamp: number;
+  group_name: string;
+  node_name: string;
+  source: string | null;
+  delay_ms: number | null;
+  ok: number;
+  error: string | null;
+}
+
+const mapNodeRow = (row: NodeSampleRawRow): NodeSampleRow => ({
+  id: row.id,
+  timestamp: row.timestamp,
+  groupName: row.group_name,
+  nodeName: row.node_name,
+  source: row.source,
+  delayMs: row.delay_ms,
+  ok: fromBoolInt(row.ok),
+  error: row.error,
+});
+
+export interface NodeSamplesRepository {
+  insert(sample: NodeSampleInsert): void;
+  /** Most recent N samples for a specific node (newest first). */
+  recentForNode(
+    groupName: string,
+    nodeName: string,
+    limit: number,
+  ): NodeSampleRow[];
+  /** Most recent sample for every node in a group. */
+  latestPerNodeInGroup(groupName: string): NodeSampleRow[];
+}
+
+export function createNodeSamplesRepository(
+  db: MonitorDatabase,
+): NodeSamplesRepository {
+  const insertStmt = db.prepare<
+    [
+      number,
+      string,
+      string,
+      string | null,
+      number | null,
+      0 | 1,
+      string | null,
+    ]
+  >(
+    `INSERT INTO node_samples
+       (timestamp, group_name, node_name, source, delay_ms, ok, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const recentForNodeStmt = db.prepare<
+    [string, string, number],
+    NodeSampleRawRow
+  >(
+    `SELECT id, timestamp, group_name, node_name, source, delay_ms, ok, error
+       FROM node_samples
+      WHERE group_name = ? AND node_name = ?
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?`,
+  );
+  // For each (group, node) pair return the row with the largest id —
+  // since `id` increments monotonically per insert, MAX(id) is also
+  // the latest timestamp regardless of clock skew.
+  const latestPerNodeStmt = db.prepare<[string], NodeSampleRawRow>(
+    `SELECT ns.id, ns.timestamp, ns.group_name, ns.node_name,
+            ns.source, ns.delay_ms, ns.ok, ns.error
+       FROM node_samples ns
+       JOIN (
+         SELECT node_name, MAX(id) AS max_id
+           FROM node_samples
+          WHERE group_name = ?
+          GROUP BY node_name
+       ) latest ON latest.max_id = ns.id
+      ORDER BY ns.node_name ASC`,
+  );
+
+  return {
+    insert(sample) {
+      insertStmt.run(
+        sample.timestamp,
+        sample.groupName,
+        sample.nodeName,
+        sample.source,
+        sample.delayMs,
+        toBoolInt(sample.ok),
+        sample.error,
+      );
+    },
+    recentForNode(groupName, nodeName, limit) {
+      return recentForNodeStmt
+        .all(groupName, nodeName, limit)
+        .map(mapNodeRow);
+    },
+    latestPerNodeInGroup(groupName) {
+      return latestPerNodeStmt.all(groupName).map(mapNodeRow);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Usage events (idempotent dedup via UNIQUE(provider, source_path, source_offset))
+// ---------------------------------------------------------------------------
+
+export interface UsageEventInsert {
+  timestamp: number;
+  provider: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  costUsd: number | null;
+  source: string;
+  sourcePath: string;
+  sourceOffset: number;
+  eventId: string | null;
+}
+
+export interface UsageEventRow {
+  id: number;
+  timestamp: number;
+  provider: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  costUsd: number | null;
+  source: string;
+  sourcePath: string;
+  sourceOffset: number;
+  eventId: string | null;
+}
+
+interface UsageEventRawRow {
+  id: number;
+  timestamp: number;
+  provider: string;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_tokens: number;
+  cost_usd: number | null;
+  source: string;
+  source_path: string;
+  source_offset: number;
+  event_id: string | null;
+}
+
+const mapUsageRow = (row: UsageEventRawRow): UsageEventRow => ({
+  id: row.id,
+  timestamp: row.timestamp,
+  provider: row.provider,
+  model: row.model,
+  inputTokens: row.input_tokens,
+  outputTokens: row.output_tokens,
+  cacheTokens: row.cache_tokens,
+  costUsd: row.cost_usd,
+  source: row.source,
+  sourcePath: row.source_path,
+  sourceOffset: row.source_offset,
+  eventId: row.event_id,
+});
+
+interface ProviderAggregateRawRow {
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_tokens: number;
+  cost_usd: number | null;
+  event_count: number;
+}
+
+/** Aggregate row used to compose a `UsageProviderSummary`. */
+export interface ProviderUsageAggregate {
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  costUsd: number | null;
+  eventCount: number;
+}
+
+export interface UsageRangeBounds {
+  /** Inclusive lower bound (Unix ms). */
+  fromTs: number;
+  /** Inclusive upper bound (Unix ms). */
+  toTs: number;
+}
+
+export interface UsageEventsRepository {
+  /**
+   * `INSERT OR IGNORE` — duplicate `(provider, source_path,
+   * source_offset)` triples are silently dropped (design.md §Property
+   * 5). Returns `true` when a new row was inserted.
+   */
+  insertIgnore(event: UsageEventInsert): boolean;
+  /**
+   * Largest `source_offset` already stored for the given (provider,
+   * source_path) pair. Used as the watermark for incremental scans.
+   * Returns `null` when no rows exist yet.
+   */
+  watermark(provider: string, sourcePath: string): number | null;
+  /** Aggregate totals per provider in the closed interval. */
+  aggregateByProvider(bounds: UsageRangeBounds): ProviderUsageAggregate[];
+  /** Lookup the aggregate for a specific provider in the interval. */
+  aggregateForProvider(
+    provider: string,
+    bounds: UsageRangeBounds,
+  ): ProviderUsageAggregate;
+  /** Most recent N events for a provider (newest first). */
+  recentForProvider(provider: string, limit: number): UsageEventRow[];
+}
+
+export function createUsageEventsRepository(
+  db: MonitorDatabase,
+): UsageEventsRepository {
+  const insertStmt = db.prepare<
+    [
+      number,
+      string,
+      string | null,
+      number,
+      number,
+      number,
+      number | null,
+      string,
+      string,
+      number,
+      string | null,
+    ]
+  >(
+    `INSERT OR IGNORE INTO usage_events
+       (timestamp, provider, model,
+        input_tokens, output_tokens, cache_tokens,
+        cost_usd, source, source_path, source_offset, event_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const watermarkStmt = db.prepare<[string, string], { max_offset: number | null }>(
+    `SELECT MAX(source_offset) AS max_offset
+       FROM usage_events
+      WHERE provider = ? AND source_path = ?`,
+  );
+  const aggregateAllStmt = db.prepare<
+    [number, number],
+    ProviderAggregateRawRow
+  >(
+    `SELECT provider,
+            COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_tokens), 0)  AS cache_tokens,
+            SUM(cost_usd)                   AS cost_usd,
+            COUNT(*)                        AS event_count
+       FROM usage_events
+      WHERE timestamp BETWEEN ? AND ?
+      GROUP BY provider
+      ORDER BY provider ASC`,
+  );
+  const aggregateOneStmt = db.prepare<
+    [string, string, number, number],
+    ProviderAggregateRawRow
+  >(
+    `SELECT ? AS provider,
+            COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_tokens), 0)  AS cache_tokens,
+            SUM(cost_usd)                   AS cost_usd,
+            COUNT(*)                        AS event_count
+       FROM usage_events
+      WHERE provider = ? AND timestamp BETWEEN ? AND ?`,
+  );
+  const recentStmt = db.prepare<[string, number], UsageEventRawRow>(
+    `SELECT id, timestamp, provider, model,
+            input_tokens, output_tokens, cache_tokens,
+            cost_usd, source, source_path, source_offset, event_id
+       FROM usage_events
+      WHERE provider = ?
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?`,
+  );
+
+  const mapAggregate = (
+    row: ProviderAggregateRawRow,
+  ): ProviderUsageAggregate => ({
+    provider: row.provider,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    cacheTokens: row.cache_tokens,
+    costUsd: row.cost_usd,
+    eventCount: row.event_count,
+  });
+
+  return {
+    insertIgnore(event) {
+      const result = insertStmt.run(
+        event.timestamp,
+        event.provider,
+        event.model,
+        event.inputTokens,
+        event.outputTokens,
+        event.cacheTokens,
+        event.costUsd,
+        event.source,
+        event.sourcePath,
+        event.sourceOffset,
+        event.eventId,
+      );
+      return result.changes > 0;
+    },
+    watermark(provider, sourcePath) {
+      const row = watermarkStmt.get(provider, sourcePath);
+      return row?.max_offset ?? null;
+    },
+    aggregateByProvider(bounds) {
+      return aggregateAllStmt
+        .all(bounds.fromTs, bounds.toTs)
+        .map(mapAggregate);
+    },
+    aggregateForProvider(provider, bounds) {
+      // The `?` for provider is bound twice: once as the literal in
+      // the SELECT list and once in the WHERE clause. This guarantees
+      // the returned row carries the requested provider name even
+      // when there are zero events.
+      const row = aggregateOneStmt.get(provider, provider, bounds.fromTs, bounds.toTs);
+      if (!row) {
+        return {
+          provider,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheTokens: 0,
+          costUsd: null,
+          eventCount: 0,
+        };
+      }
+      return mapAggregate(row);
+    },
+    recentForProvider(provider, limit) {
+      return recentStmt.all(provider, limit).map(mapUsageRow);
+    },
+  };
+}
+
+/**
+ * Convenience: convert a raw aggregate plus a status/reason into the
+ * UI-shaped {@link UsageProviderSummary}. Kept here so repositories
+ * remain the single place that knows the column-to-camelCase mapping.
+ */
+export function aggregateToProviderSummary(
+  aggregate: ProviderUsageAggregate,
+  status: UsageProviderSummary['status'],
+  reason?: string,
+): UsageProviderSummary {
+  const summary: UsageProviderSummary = {
+    provider: aggregate.provider,
+    status,
+    inputTokens: aggregate.inputTokens,
+    outputTokens: aggregate.outputTokens,
+    cacheTokens: aggregate.cacheTokens,
+    costUsd: aggregate.costUsd,
+    eventCount: aggregate.eventCount,
+  };
+  if (reason !== undefined) {
+    summary.reason = reason;
+  }
+  return summary;
+}
+
+/**
+ * The set of usage ranges the dashboard supports. Re-exported here so
+ * that callers depending on the repositories module can import the
+ * type without pulling all of `types.ts`.
+ */
+export type { UsageRange };
+
+// ---------------------------------------------------------------------------
+// Collector health (one row per collector id; upsert)
+// ---------------------------------------------------------------------------
+
+export interface CollectorHealthUpsert {
+  collector: string;
+  lastRunAt: number | null;
+  lastSuccessAt?: number | null;
+  lastError?: string | null;
+  lastErrorAt?: number | null;
+  consecutiveFailures: number;
+}
+
+interface CollectorHealthRawRow {
+  collector: string;
+  last_run_at: number | null;
+  last_success_at: number | null;
+  last_error: string | null;
+  last_error_at: number | null;
+  consecutive_failures: number;
+}
+
+const mapCollectorHealthRow = (
+  row: CollectorHealthRawRow,
+): CollectorHealthRow => ({
+  collector: row.collector,
+  lastRunAt: row.last_run_at,
+  lastSuccessAt: row.last_success_at,
+  lastError: row.last_error,
+  lastErrorAt: row.last_error_at,
+  consecutiveFailures: row.consecutive_failures,
+});
+
+export interface CollectorHealthRepository {
+  /** Upsert a complete health snapshot. Use the helpers below for the
+   *  common success / failure transitions. */
+  upsert(row: CollectorHealthUpsert): void;
+  /**
+   * Mark a successful run: stamps `last_run_at` + `last_success_at`,
+   * clears `last_error` / `last_error_at`, resets
+   * `consecutive_failures` to 0.
+   */
+  recordSuccess(collector: string, at: number): void;
+  /**
+   * Mark a failed run: stamps `last_run_at` + `last_error_at`, sets
+   * `last_error`, increments `consecutive_failures` by 1, leaves
+   * `last_success_at` untouched.
+   */
+  recordFailure(collector: string, at: number, error: string): void;
+  /** Read a single row, or `undefined` when the collector has never run. */
+  get(collector: string): CollectorHealthRow | undefined;
+  /** All known collectors (sorted by id). */
+  list(): CollectorHealthRow[];
+}
+
+export function createCollectorHealthRepository(
+  db: MonitorDatabase,
+): CollectorHealthRepository {
+  const upsertStmt = db.prepare<
+    [
+      string,
+      number | null,
+      number | null,
+      string | null,
+      number | null,
+      number,
+    ]
+  >(
+    `INSERT INTO collector_health
+       (collector, last_run_at, last_success_at, last_error,
+        last_error_at, consecutive_failures)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(collector) DO UPDATE SET
+       last_run_at          = excluded.last_run_at,
+       last_success_at      = excluded.last_success_at,
+       last_error           = excluded.last_error,
+       last_error_at        = excluded.last_error_at,
+       consecutive_failures = excluded.consecutive_failures`,
+  );
+  // On success we need to preserve the upstream `last_success_at`
+  // semantics: we always overwrite it with `at`. `last_error` /
+  // `last_error_at` are cleared, `consecutive_failures` reset.
+  const recordSuccessStmt = db.prepare<[string, number, number]>(
+    `INSERT INTO collector_health
+       (collector, last_run_at, last_success_at, last_error,
+        last_error_at, consecutive_failures)
+     VALUES (?, ?, ?, NULL, NULL, 0)
+     ON CONFLICT(collector) DO UPDATE SET
+       last_run_at          = excluded.last_run_at,
+       last_success_at      = excluded.last_success_at,
+       last_error           = NULL,
+       last_error_at        = NULL,
+       consecutive_failures = 0`,
+  );
+  // On failure we keep the existing `last_success_at` (may be NULL),
+  // bump `consecutive_failures` by 1 (or set to 1 on first insert),
+  // and stamp the error fields.
+  const recordFailureStmt = db.prepare<[string, number, string, number]>(
+    `INSERT INTO collector_health
+       (collector, last_run_at, last_success_at, last_error,
+        last_error_at, consecutive_failures)
+     VALUES (?, ?, NULL, ?, ?, 1)
+     ON CONFLICT(collector) DO UPDATE SET
+       last_run_at          = excluded.last_run_at,
+       last_error           = excluded.last_error,
+       last_error_at        = excluded.last_error_at,
+       consecutive_failures = collector_health.consecutive_failures + 1`,
+  );
+  const selectStmt = db.prepare<[string], CollectorHealthRawRow>(
+    `SELECT collector, last_run_at, last_success_at, last_error,
+            last_error_at, consecutive_failures
+       FROM collector_health
+      WHERE collector = ?`,
+  );
+  const listStmt = db.prepare<[], CollectorHealthRawRow>(
+    `SELECT collector, last_run_at, last_success_at, last_error,
+            last_error_at, consecutive_failures
+       FROM collector_health
+      ORDER BY collector ASC`,
+  );
+
+  return {
+    upsert(row) {
+      upsertStmt.run(
+        row.collector,
+        row.lastRunAt,
+        row.lastSuccessAt ?? null,
+        row.lastError ?? null,
+        row.lastErrorAt ?? null,
+        row.consecutiveFailures,
+      );
+    },
+    recordSuccess(collector, at) {
+      recordSuccessStmt.run(collector, at, at);
+    },
+    recordFailure(collector, at, error) {
+      recordFailureStmt.run(collector, at, error, at);
+    },
+    get(collector) {
+      const row = selectStmt.get(collector);
+      return row ? mapCollectorHealthRow(row) : undefined;
+    },
+    list() {
+      return listStmt.all().map(mapCollectorHealthRow);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Composite — convenience bundle for app.ts and IPC handlers
+// ---------------------------------------------------------------------------
+
+export interface Repositories {
+  settings: SettingsRepository;
+  secrets: SecretsRepository;
+  networkSamples: NetworkSamplesRepository;
+  openClashSnapshots: OpenClashSnapshotsRepository;
+  nodeSamples: NodeSamplesRepository;
+  usageEvents: UsageEventsRepository;
+  collectorHealth: CollectorHealthRepository;
+}
+
+/**
+ * Build all repositories against a shared `Database` instance. Call
+ * once at boot (after migrations) and pass the returned bundle to the
+ * scheduler / collectors / IPC layer.
+ */
+export function createRepositories(db: MonitorDatabase): Repositories {
+  return {
+    settings: createSettingsRepository(db),
+    secrets: createSecretsRepository(db),
+    networkSamples: createNetworkSamplesRepository(db),
+    openClashSnapshots: createOpenClashSnapshotsRepository(db),
+    nodeSamples: createNodeSamplesRepository(db),
+    usageEvents: createUsageEventsRepository(db),
+    collectorHealth: createCollectorHealthRepository(db),
+  };
+}
+
+// `CapabilityResult` is referenced in design.md; re-export here so
+// downstream task 7.1 can keep its imports anchored at the store layer
+// without needing a separate re-export module.
+export type { CapabilityResult };

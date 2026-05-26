@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Static fallback CSP. The authoritative CSP is injected by the
+      main process via `session.webRequest.onHeadersReceived`
+      (see `src/main/windows.ts#applyCspHeaders`), which widens
+      `connect-src` dynamically with the configured OpenClash
+      controller origin. Because this `<meta>` tag must be static at
+      build time, we restrict `connect-src` here to `'self'` only;
+      the runtime header takes precedence (Electron applies the
+      union, but a static `'self'` is always a subset of any wider
+      runtime policy and never opens new origins).
+
+      Keep the directive list in sync with `buildCspHeaderValue` in
+      `src/main/windows.ts`.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://localhost:*"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Desktop Monitor</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

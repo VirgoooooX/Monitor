@@ -1,0 +1,15 @@
+node_modules
+dist
+out
+release
+.vite
+.cache
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.kiro/specs/desktop-monitor-widget/design.md
+.kiro/specs/desktop-monitor-widget/tasks.md
+.kiro/specs/desktop-monitor-widget/.config.kiro
+PLAN.md
+.kiro
