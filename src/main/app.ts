@@ -488,7 +488,14 @@ async function boot(): Promise<void> {
     scheduler,
     onExpand: () => openOrFocusExpanded(repositories, settings),
     onSettings: () => openOrFocusExpanded(repositories, settings),
-    getIconPath: () => path.join(__dirname, '..', '..', 'build', 'tray-icon.png'),
+    getIconPath: () => {
+      // In packaged app, extraResources lands in process.resourcesPath.
+      // In dev, use the build/ folder relative to project root.
+      if (app.isPackaged) {
+        return path.join(process.resourcesPath, 'tray-icon.png');
+      }
+      return path.join(__dirname, '..', '..', 'build', 'tray-icon.png');
+    },
   });
 }
 
