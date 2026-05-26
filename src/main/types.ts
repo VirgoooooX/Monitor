@@ -212,6 +212,46 @@ export interface UsageProviderSummary {
   reason?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Quota / Rate Limit tracking
+// ---------------------------------------------------------------------------
+
+/**
+ * A single quota window (e.g. 5-hour or weekly) as reported by the
+ * provider's API or embedded in local session logs.
+ */
+export interface QuotaWindow {
+  /** Human-friendly window name: '5h', 'weekly', 'monthly', 'daily'. */
+  name: string;
+  /** Percentage of quota remaining (0–100). `null` if unknown. */
+  percentLeft: number | null;
+  /** Epoch ms when this window resets. `null` if unknown. */
+  resetAt: number | null;
+  /** Window length in seconds (e.g. 18000 for 5h, 604800 for weekly). */
+  windowSeconds: number | null;
+}
+
+/**
+ * Full quota snapshot for a single provider at a point in time.
+ */
+export interface QuotaSnapshot {
+  provider: string;
+  /** When this snapshot was captured (epoch ms). */
+  capturedAt: number;
+  /** Source of the snapshot: 'local_log' (parsed from session JSONL) or 'remote_api'. */
+  source: 'local_log' | 'remote_api';
+  /** One or more quota windows. */
+  windows: QuotaWindow[];
+}
+
+/**
+ * Combined quota status returned to the renderer.
+ */
+export interface QuotaStatus {
+  /** Per-provider quota snapshots (latest known). */
+  snapshots: QuotaSnapshot[];
+}
+
 export interface UsageSummary {
   range: UsageRange;
   perProvider: UsageProviderSummary[];
@@ -298,11 +338,12 @@ export interface UsageSummaryInput {
 
 export type Unsubscribe = () => void;
 
-export type DesktopPushChannel = 'dashboard.updated' | 'openclash.updated';
+export type DesktopPushChannel = 'dashboard.updated' | 'openclash.updated' | 'navigate-tab';
 
 export interface DesktopPushPayloads {
   'dashboard.updated': DashboardState;
   'openclash.updated': OpenClashDetails;
+  'navigate-tab': string;
 }
 
 export interface UpdateSecretInput {
@@ -321,6 +362,7 @@ export interface DesktopApi {
   switchNode(input: SwitchNodeInput): Promise<SwitchNodeResult>;
   refreshNow(): Promise<void>;
   getUsageSummary(input: UsageSummaryInput): Promise<UsageSummary>;
+  getQuotaStatus(): Promise<QuotaStatus>;
   getSettings(): Promise<AppSettings>;
   updateSettings(input: Partial<AppSettings>): Promise<AppSettings>;
   updateSecret(input: UpdateSecretInput): Promise<void>;

@@ -74,11 +74,11 @@ export function App(): JSX.Element | null {
   useEffect(() => {
     const { body } = document;
     if (mode === 'expanded') {
-      body.classList.add('expanded');
-      body.classList.remove('compact');
+      body.classList.add('mode-expanded');
+      body.classList.remove('mode-compact', 'expanded', 'compact');
     } else {
-      body.classList.add('compact');
-      body.classList.remove('expanded');
+      body.classList.add('mode-compact');
+      body.classList.remove('mode-expanded', 'expanded', 'compact');
     }
   }, [mode]);
 
@@ -243,9 +243,17 @@ function ExpandedRoot(): JSX.Element {
       if (!cancelled) setDashboard(d);
     });
 
+    // Subscribe to tab navigation from main process (e.g. tray → settings)
+    const unsubTab = desktop.on('navigate-tab', (targetTab) => {
+      if (!cancelled && (targetTab === 'network' || targetTab === 'usage' || targetTab === 'settings')) {
+        setTab(targetTab);
+      }
+    });
+
     return () => {
       cancelled = true;
       unsub();
+      unsubTab();
     };
   }, []);
 
@@ -287,12 +295,6 @@ function ExpandedRoot(): JSX.Element {
             ⚠️ {error}
           </div>
         )}
-
-        <div style={{ padding: '8px', color: '#888', fontSize: '12px' }}>
-          bridge: {typeof window !== 'undefined' && window.desktop ? '✅' : '❌'} |
-          dashboard: {dashboard ? '✅' : '⏳'} |
-          nodes: {nodes.length}
-        </div>
 
         {tab === 'network' && (
           <div className="expanded__panel">

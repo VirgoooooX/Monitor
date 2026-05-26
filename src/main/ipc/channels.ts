@@ -43,6 +43,7 @@ export const DESKTOP_INVOKE_CHANNELS = {
   switchNode: 'desktop:switchNode',
   refreshNow: 'desktop:refreshNow',
   getUsageSummary: 'desktop:getUsageSummary',
+  getQuotaStatus: 'desktop:getQuotaStatus',
   getSettings: 'desktop:getSettings',
   updateSettings: 'desktop:updateSettings',
   updateSecret: 'desktop:updateSecret',
@@ -66,6 +67,7 @@ export type DesktopInvokeChannel =
 export const DESKTOP_PUSH_CHANNELS = [
   'dashboard.updated',
   'openclash.updated',
+  'navigate-tab',
 ] as const satisfies readonly DesktopPushChannel[];
 
 /**

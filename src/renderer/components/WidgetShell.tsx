@@ -1,70 +1,57 @@
-// WidgetShell — the compact-window container.
+// WidgetShell — the compact-window container (redesigned).
 //
-// Layout (top to bottom, fits within the 360×240 frameless transparent
-// window from `windows.ts#createCompactWindow`):
+// New layout (50/50 split — network + AI quota):
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │  StatusHero (≈72 px)                                          │
-//   │   • zh-CN status label + colored dot                         │
-//   │   • avg latency + 失败 N                                      │
+//   │  Network section (~50%)                                       │
+//   │   • Left: status + latency, then group · node name            │
+//   │   • Right: sparkline spanning both network rows               │
 //   ├──────────────────────────────────────────────────────────────┤
-//   │  primary group · current node       (single line, truncated) │
-//   ├──────────────────────────────────────────────────────────────┤
-//   │  ConnectivityStrip: 路由 / Clash / 节点 / 外网                │
-//   ├──────────────────────────────────────────────────────────────┤
-//   │  今日 Codex N · Gemini N · OpenCode N                         │
+//   │  AI section (~50%)                                            │
+//   │   • QuotaStrip: one row per quota window (sorted by urgency) │
+//   │   • Token summary: Codex N · Gemini N · OC N                 │
 //   └──────────────────────────────────────────────────────────────┘
 //
-// The whole shell is clickable and is meant to request the expanded
-// window. The IPC verb that opens the expanded window is wired up in
-// task 5.8; until then the click handler logs a TODO. We deliberately
-// do NOT call `refreshNow()` as a stand-in: that would surprise users
-// who click the widget expecting a window to open.
+// The whole shell is clickable → opens expanded window.
 //
 // References:
-//   • design.md §Window Strategy
 //   • PLAN.md §UI Implementation Guide §紧凑首页
 
 import type { DashboardState } from '../lib/types';
 import { formatTokens } from '../lib/format';
 import { StatusHero } from './StatusHero';
-import { ConnectivityStrip } from './ConnectivityStrip';
 import { Sparkline } from './Sparkline';
+import { QuotaStrip } from './QuotaStrip';
 
 interface WidgetShellProps {
   readonly state: DashboardState;
 }
 
-/**
- * Build the "primary group · current node" middle line. When either
- * field is missing (cold boot, OpenClash unreachable) we fall back to
- * an em-dash so the slot keeps its height and the layout doesn't
- * jump.
- */
-function nodeLine(state: DashboardState): { text: string; tooltip: string } {
+function nodeLine(state: DashboardState): {
+  primary: string;
+  secondary: string | null;
+  tooltip: string;
+} {
   const group = state.currentNode.group;
   const node = state.currentNode.node;
   if (group && node) {
-    const text = `${group} · ${node}`;
-    return { text, tooltip: text };
+    return { primary: node, secondary: group, tooltip: `${group} · ${node}` };
   }
-  if (node) {
-    return { text: node, tooltip: node };
-  }
+  if (node) return { primary: node, secondary: null, tooltip: node };
   if (group) {
-    return { text: group, tooltip: group };
+    return {
+      primary: '未选择真实节点',
+      secondary: group,
+      tooltip: `${group} 当前选择为 DIRECT/GLOBAL/REJECT`,
+    };
   }
-  return { text: '— · —', tooltip: '当前节点暂无数据' };
+  return { primary: '等待节点数据', secondary: null, tooltip: '当前节点暂无数据' };
 }
 
 export function WidgetShell({ state }: WidgetShellProps): JSX.Element {
   const line = nodeLine(state);
   const usage = state.usageToday;
 
-  // Clicking anywhere on the widget should open the expanded window.
-  // The main-side IPC verb is added in task 5.8 (Node table view in
-  // expanded window); until then we surface a TODO marker on the
-  // console so manual QA can confirm the click is reaching here.
   const handleClick = (): void => {
     const desktop = window.desktop;
     if (desktop) {
@@ -86,22 +73,35 @@ export function WidgetShell({ state }: WidgetShellProps): JSX.Element {
         }
       }}
     >
-      <StatusHero state={state} />
+      {/* ── Network section: two-line copy + two-row sparkline ── */}
+      <div className="widget-shell__network">
+        <div className="widget-shell__network-copy">
+          <StatusHero state={state} />
 
-      <div className="widget-shell__node-row">
-        <div className="widget-shell__node" title={line.tooltip}>
-          {line.text}
+          <span className="widget-shell__node" title={line.tooltip}>
+            {line.secondary && (
+              <span className="widget-shell__node-group">{line.secondary}</span>
+            )}
+            <span className="widget-shell__node-name">{line.primary}</span>
+          </span>
         </div>
-        <Sparkline data={state.currentNode.sparkline} />
+
+        <div className="widget-shell__sparkline" aria-hidden="true">
+          <Sparkline data={state.currentNode.sparkline} />
+        </div>
       </div>
 
-      <ConnectivityStrip state={state} />
+      {/* ── AI section ── */}
+      <div className="widget-shell__ai">
+        <QuotaStrip />
 
-      <div className="widget-shell__usage" data-testid="widget-shell-usage">
-        <span className="widget-shell__usage-prefix">今日</span>
-        <span> Codex {formatTokens(usage.codex)}</span>
-        <span> · Gemini {formatTokens(usage.gemini)}</span>
-        <span> · OpenCode {formatTokens(usage.opencode)}</span>
+        {(usage.codex > 0 || usage.gemini > 0 || usage.opencode > 0) && (
+          <div className="widget-shell__usage" data-testid="widget-shell-usage">
+            <span>Codex {formatTokens(usage.codex)}</span>
+            <span> · Gemini {formatTokens(usage.gemini)}</span>
+            <span> · OC {formatTokens(usage.opencode)}</span>
+          </div>
+        )}
       </div>
     </div>
   );

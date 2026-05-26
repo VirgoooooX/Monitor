@@ -8,7 +8,7 @@
  * and let the inner `.widget-shell` paint its own dark surface.
  *
  * The expanded window is 760x560 with a normal frame; it gets an
- * opaque white background via `body.expanded`.
+ * opaque white background via `body.mode-expanded`.
  *
  * Font sizes are locked (no viewport-relative units) per
  * PLAN.md §UI Implementation Guide and design.md §Window Strategy.
@@ -43,7 +43,7 @@ body {
   background: transparent;
 }
 
-body.expanded {
+body.mode-expanded {
   background: #ffffff;
   color: #1f2328;
   overflow: auto;
@@ -97,11 +97,11 @@ body.expanded {
   box-sizing: border-box;
   height: calc(100% - 12px);
   margin: 6px;
-  padding: 12px 14px;
+  padding: 10px 14px;
 
-  display: grid;
-  grid-template-rows: auto 1fr auto auto;
-  row-gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 
   background: linear-gradient(145deg, rgba(24, 24, 28, 0.94), rgba(16, 16, 18, 0.96));
   color: var(--color-text-primary);
@@ -121,31 +121,80 @@ body.expanded {
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.6), 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-/* The middle row: "primary group · current node" + sparkline.
- * Long names are truncated to one line with a hover tooltip (the
- * `title` attribute is set in the React component). */
-.widget-shell__node-row {
-  display: flex;
+/* Network section (top: two text rows + right-side trend) */
+.widget-shell__network {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  column-gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   -webkit-app-region: no-drag;
 }
 
+.widget-shell__network-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* AI section (bottom half) */
+.widget-shell__ai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  flex: 1;
+  min-height: 0;
+  -webkit-app-region: no-drag;
+}
+
+/* The node name (in line 2) */
 .widget-shell__node {
-  font-size: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
   font-weight: 400;
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.widget-shell__node-group {
+  flex: 0 1 auto;
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.widget-shell__node-name {
   flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
 }
 
 .sparkline {
-  flex: 0 0 auto;
+  width: 100%;
+  height: 100%;
   display: block;
+}
+
+.widget-shell__sparkline {
+  width: 92px;
+  height: 34px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  -webkit-app-region: no-drag;
 }
 
 .widget-shell__usage {
@@ -167,126 +216,182 @@ body.expanded {
 /* Status hero ------------------------------------------------------------- */
 
 .status-hero {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   -webkit-app-region: drag;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.status-hero[data-status='critical'] {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.15);
-}
-
-.status-hero__left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0; /* allow the label to truncate inside the flex item */
 }
 
 .status-hero__dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex: 0 0 auto;
   background: var(--color-unknown);
-  box-shadow: 0 0 6px currentColor;
-  color: var(--color-unknown);
 }
 
 .status-hero[data-status='healthy'] .status-hero__dot {
   background: var(--color-ok);
-  color: var(--color-ok);
+  box-shadow: 0 0 6px var(--color-ok);
 }
 
 .status-hero[data-status='warn'] .status-hero__dot {
   background: var(--color-warn);
-  color: var(--color-warn);
+  box-shadow: 0 0 6px var(--color-warn);
 }
 
 .status-hero[data-status='bad'] .status-hero__dot,
 .status-hero[data-status='critical'] .status-hero__dot {
   background: var(--color-bad);
-  color: var(--color-bad);
+  box-shadow: 0 0 6px var(--color-bad);
 }
 
 .status-hero__label {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.status-hero__right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
 }
 
 .status-hero__latency {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary);
+  color: var(--color-text-secondary);
 }
 
 .status-hero__fails {
   font-size: 10px;
-  color: var(--color-text-muted);
+  color: var(--color-bad);
   font-variant-numeric: tabular-nums;
 }
 
-/* Connectivity strip ------------------------------------------------------ */
+/* Quota strip (compact widget) -------------------------------------------- */
 
-.connectivity-strip {
+.quota-strip {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 6px;
-  -webkit-app-region: no-drag;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.connectivity-strip__item {
+.quota-strip__group {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--color-text-muted);
+  gap: 8px;
 }
 
-.connectivity-strip__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-unknown);
+.quota-strip__provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  min-width: 22px;
+  width: 22px;
+  align-self: center;
+}
+
+/* Provider brand glyphs come from @lobehub/icons-static-svg.
+   The wrapper controls dimensions; the inline <svg> uses 1em sizing. */
+.provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  line-height: 1;
 }
 
-.connectivity-strip__item[data-state='ok'] .connectivity-strip__dot {
+.provider-icon > svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+
+/* Fallback (unknown provider) keeps the old monochrome look. */
+.provider-icon--fallback {
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+
+.quota-strip__windows {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.quota-strip__row {
+  display: grid;
+  grid-template-columns: 20px 1fr 30px 32px auto;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+}
+
+.quota-strip__window-label {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.quota-strip__track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.quota-strip__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease-out;
+}
+
+.quota-strip__fill--ok {
   background: var(--color-ok);
 }
 
-.connectivity-strip__item[data-state='bad'] .connectivity-strip__dot {
+.quota-strip__fill--warn {
+  background: var(--color-warn);
+}
+
+.quota-strip__fill--critical {
   background: var(--color-bad);
 }
 
-.connectivity-strip__item[data-state='unknown'] .connectivity-strip__dot {
-  background: var(--color-unknown);
+.quota-strip__percent {
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  text-align: right;
 }
 
-.connectivity-strip__label {
-  letter-spacing: 0.02em;
+.quota-strip__row[data-urgency='critical'] .quota-strip__percent {
+  color: var(--color-bad);
+}
+
+.quota-strip__row[data-urgency='warn'] .quota-strip__percent {
+  color: var(--color-warn);
+}
+
+.quota-strip__reset {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.quota-strip__warn-icon {
+  font-size: 10px;
+  line-height: 1;
 }
 
 
@@ -784,7 +889,7 @@ body.expanded {
    Expanded window layout
    =========================================================================== */
 
-body.expanded {
+body.mode-expanded {
   background: #1a1a1e;
   color: #f5f5f7;
 }
@@ -1064,4 +1169,534 @@ body.expanded {
   font-size: 11px;
   color: rgba(245, 245, 247, 0.45);
   margin: 6px 0 0;
+}
+
+
+/* ===========================================================================
+   Usage Panel v2 — Comprehensive AI usage + quota dashboard
+   =========================================================================== */
+
+/* Color tokens for token breakdown bars */
+:root {
+  --color-input: #6366f1;    /* indigo */
+  --color-output: #10b981;   /* emerald */
+  --color-cache: #8b5cf6;    /* violet */
+}
+
+.usage-panel-v2 {
+  padding: 20px;
+  max-width: 720px;
+}
+
+.usage-panel-v2__error {
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 6px;
+  color: #f87171;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.usage-panel-v2__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.usage-panel-v2__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: rgba(245, 245, 247, 0.9);
+}
+
+.usage-panel-v2__tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.usage-panel-v2__tab {
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(245, 245, 247, 0.6);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.usage-panel-v2__tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.usage-panel-v2__tab--active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.usage-panel-v2__loading {
+  color: rgba(245, 245, 247, 0.5);
+  font-size: 13px;
+  margin: 16px 0;
+}
+
+.usage-panel-v2__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* Quota Overview ---------------------------------------------------------- */
+
+.quota-overview {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.quota-overview__title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 14px;
+  color: rgba(245, 245, 247, 0.9);
+}
+
+.quota-overview__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Quota Bar --------------------------------------------------------------- */
+
+.quota-bar {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.quota-bar__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.quota-bar__provider {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.9);
+}
+
+.quota-bar__window-name {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.5);
+  flex: 1;
+}
+
+.quota-bar__source {
+  font-size: 10px;
+  color: rgba(245, 245, 247, 0.35);
+}
+
+.quota-bar__track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.quota-bar__fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease-out;
+}
+
+.quota-bar--ok .quota-bar__fill {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.quota-bar--warn .quota-bar__fill {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.quota-bar--critical .quota-bar__fill {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+.quota-bar--unknown .quota-bar__fill {
+  background: rgba(107, 114, 128, 0.4);
+}
+
+.quota-bar__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.5);
+}
+
+.quota-bar__percent {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-bar--critical .quota-bar__percent {
+  color: #f87171;
+}
+
+.quota-bar--warn .quota-bar__percent {
+  color: #fbbf24;
+}
+
+.quota-bar--ok .quota-bar__percent {
+  color: #34d399;
+}
+
+.quota-bar__reset {
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-bar__stale {
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+/* Usage Totals Summary ---------------------------------------------------- */
+
+.usage-totals {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+
+.usage-totals__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-totals__value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.95);
+}
+
+.usage-totals__label {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.45);
+}
+
+.usage-totals__item--breakdown {
+  margin-left: auto;
+}
+
+.usage-totals__mini {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Provider Card ----------------------------------------------------------- */
+
+.provider-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s;
+}
+
+.provider-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.provider-card--disabled {
+  opacity: 0.5;
+}
+
+.provider-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.provider-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(245, 245, 247, 0.9);
+}
+
+.provider-card__badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 3px;
+}
+
+.provider-card__badge--ok {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.provider-card__badge--degraded {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.provider-card__badge--unavailable {
+  background: rgba(107, 114, 128, 0.15);
+  color: #9ca3af;
+}
+
+.provider-card__badge--disabled {
+  background: rgba(107, 114, 128, 0.1);
+  color: rgba(245, 245, 247, 0.3);
+}
+
+/* Token breakdown */
+.provider-card__breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.token-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 56px;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-row__label {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.token-row__bar-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.token-row__bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease-out;
+}
+
+.token-row__value {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.8);
+  text-align: right;
+}
+
+/* Provider card footer stats */
+.provider-card__footer {
+  display: flex;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.provider-card__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.provider-card__stat-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.9);
+}
+
+.provider-card__stat-label {
+  font-size: 10px;
+  color: rgba(245, 245, 247, 0.4);
+}
+
+/* Inactive provider */
+.provider-card__inactive {
+  padding: 4px 0;
+}
+
+.provider-card__reason {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.45);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.provider-card__hint {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.3);
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+/* ===========================================================================
+   Dark-theme overrides for the expanded window
+   ===========================================================================
+   The SettingsView and a few quota labels were authored for the light
+   theme but the expanded shell uses a dark background. The rules below
+   re-color the text + surfaces so everything stays legible without
+   touching the compact widget which keeps its own treatment.
+   =========================================================================== */
+
+/* Quota bar — brighter window name + reset text on the dark surface */
+.quota-bar__window-name {
+  color: rgba(245, 245, 247, 0.75);
+}
+
+.quota-bar__footer {
+  color: rgba(245, 245, 247, 0.7);
+}
+
+.quota-bar__reset {
+  color: rgba(245, 245, 247, 0.7);
+}
+
+.quota-bar__source {
+  color: rgba(245, 245, 247, 0.5);
+}
+
+/* Settings view — dark theme overrides (only when nested in expanded shell) */
+.expanded .settings-view {
+  color: #f5f5f7;
+}
+
+.expanded .settings-view__title {
+  color: #f5f5f7;
+}
+
+.expanded .settings-view__loading,
+.expanded .settings-view__error {
+  color: rgba(245, 245, 247, 0.6);
+}
+
+.expanded .settings-view__fieldset {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.expanded .settings-view__fieldset--danger {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.expanded .settings-view__legend {
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.expanded .settings-view__legend--danger {
+  color: #f87171;
+}
+
+.expanded .settings-view__label {
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.expanded .settings-view__input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+}
+
+.expanded .settings-view__input::placeholder {
+  color: rgba(245, 245, 247, 0.35);
+}
+
+.expanded .settings-view__input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+.expanded .settings-view__input[aria-invalid='true'] {
+  border-color: #f87171;
+}
+
+.expanded .settings-view__error-msg {
+  color: #f87171;
+}
+
+.expanded .settings-view__btn-icon {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(245, 245, 247, 0.6);
+}
+
+.expanded .settings-view__btn-icon:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+
+.expanded .settings-view__btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.expanded .settings-view__btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.expanded .settings-view__btn-primary {
+  background: #6366f1;
+}
+
+.expanded .settings-view__btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.expanded .settings-view__btn-primary:disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 245, 247, 0.4);
+}
+
+.expanded .settings-view__btn-danger {
+  background: transparent;
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #f87171;
+}
+
+.expanded .settings-view__btn-danger:hover {
+  background: rgba(239, 68, 68, 0.85);
+  color: #fff;
+}
+
+.expanded .settings-view__success {
+  color: #34d399;
+}
+
+.expanded .settings-view__save-error {
+  color: #f87171;
+}
+
+/* Checkbox tweaks — keep them visible against dark surfaces */
+.expanded .settings-view input[type='checkbox'] {
+  accent-color: #6366f1;
 }

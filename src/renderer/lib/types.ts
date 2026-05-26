@@ -45,6 +45,11 @@ export type {
   UsageSummary,
   UsageSummaryInput,
 
+  // Quota
+  QuotaWindow,
+  QuotaSnapshot,
+  QuotaStatus,
+
   // Settings
   RouterHealthSettings,
   RefreshIntervalSettings,

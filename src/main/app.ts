@@ -83,6 +83,8 @@ import {
 } from './collectors/usage/deepseek.collector';
 import {
   persistCapabilityResult,
+  applyEmptyWindowGuard,
+  type RunUsageCollectorOptions,
 } from './collectors/usage/Collector';
 import type { UsageCollector } from './collectors/usage/types';
 import type { AppSettings } from './types';
@@ -310,6 +312,12 @@ async function boot(): Promise<void> {
     settings: repositories.settings,
   });
 
+  // Quota service
+  const { createQuotaService } = require('./services/quota.service') as typeof import('./services/quota.service');
+  const quotaService = createQuotaService({
+    settings: repositories.settings,
+  });
+
   // Diagnostics service (task 9.3)
   const diagnosticsService = createDiagnosticsService({
     settings: repositories.settings,
@@ -353,6 +361,8 @@ async function boot(): Promise<void> {
     }),
   );
 
+  let consecutiveProbeFailures = 0;
+
   scheduler.register(
     createOpenClashCollectorTask({
       repositories: {
@@ -362,6 +372,23 @@ async function boot(): Promise<void> {
       client: openClashClient,
       getSettings: () => _settings ?? settings,
       getIntervalMs: () => (_settings ?? settings).refreshIntervals.openclashMs,
+      onProbeResults: (results) => {
+        dashboardService.setCurrentProbeResults(results);
+        if (results.length === 0) {
+          return;
+        }
+        for (const result of results) {
+          if (result.ok && result.latencyMs !== null) {
+            dashboardService.pushLatencySample(result.latencyMs);
+          }
+        }
+        consecutiveProbeFailures = results.every((result) => !result.ok)
+          ? consecutiveProbeFailures + 1
+          : 0;
+        dashboardService.setConsecutiveProbeFailures(
+          consecutiveProbeFailures,
+        );
+      },
       onAfterTick,
     }),
   );
@@ -402,13 +429,15 @@ async function boot(): Promise<void> {
       sec.set(input.key, input.value);
     },
     getUsageSummary: (range) => usageService.getUsageSummary({ range }),
+    getQuotaStatus: () => quotaService.getQuotaStatus(),
     getDiagnostics: () => diagnosticsService.export(),
     runRefreshNow: async () => {
-      // Run all collectors immediately
+      // Run all collectors immediately (including usage)
       await Promise.allSettled([
         scheduler.runNow('network'),
         scheduler.runNow('openclash'),
         scheduler.runNow('nodeScan'),
+        scheduler.runNow('usage'),
       ]);
     },
     openExpanded: () => openOrFocusExpanded(repositories, settings),
@@ -416,6 +445,9 @@ async function boot(): Promise<void> {
 
   // 10. Register usage collector scheduler task.
   //     Runs all enabled usage collectors every `usageMs` interval.
+  //     Uses the shared `runUsageCollector` orchestrator so behaviour
+  //     (capability check → tick → empty guard → persist) stays in
+  //     one place and doesn't drift from the canonical implementation.
   scheduler.register({
     id: 'usage',
     intervalMs: settings.refreshIntervals.usageMs,
@@ -424,21 +456,21 @@ async function boot(): Promise<void> {
       const { secrets: sec } = require('./security/secrets') as typeof import('./security/secrets');
 
       // Build collectors list
-      const collectors: Array<{ id: string; create: () => UsageCollector }> = [
-        { id: 'codex', create: () => createCodexCollector() },
-        { id: 'gemini', create: () => createGeminiCollector() },
-        { id: 'antigravity', create: () => createAntigravityCollector() },
-        { id: 'opencode', create: () => createOpenCodeCollector() },
+      const collectors: Array<{ id: string; enabled: boolean; create: () => UsageCollector }> = [
+        { id: 'codex', enabled: currentSettings.collectors.codex?.enabled !== false, create: () => createCodexCollector() },
+        { id: 'gemini', enabled: currentSettings.collectors.gemini?.enabled !== false, create: () => createGeminiCollector() },
+        { id: 'antigravity', enabled: currentSettings.collectors.antigravity?.enabled ?? false, create: () => createAntigravityCollector() },
+        { id: 'opencode', enabled: currentSettings.collectors.opencode?.enabled ?? false, create: () => createOpenCodeCollector() },
         {
           id: 'deepseek',
+          enabled: currentSettings.collectors.deepseek?.enabled ?? false,
           create: () => createDeepSeekCollector({ getSecret: (k) => sec.get(k) }),
         },
       ];
 
       await Promise.allSettled(
-        collectors.map(async ({ id, create }) => {
-          const toggle = currentSettings.collectors[id];
-          if (toggle && !toggle.enabled) {
+        collectors.map(async ({ id, enabled, create }) => {
+          if (!enabled) {
             persistCapabilityResult(repositories.settings, id, { status: 'disabled' });
             return;
           }
@@ -449,7 +481,10 @@ async function boot(): Promise<void> {
           let capResult = await collector.capabilityCheck();
           if (capResult.status === 'unavailable' || capResult.status === 'disabled') {
             persistCapabilityResult(repositories.settings, id, capResult);
-            repositories.collectorHealth.recordFailure(id, now, `skipped: ${capResult.status}`);
+            repositories.collectorHealth.recordFailure(
+              id, now,
+              `skipped: ${capResult.status}${capResult.status === 'unavailable' && 'reason' in capResult ? ` (${capResult.reason})` : ''}`,
+            );
             return;
           }
 
@@ -466,14 +501,14 @@ async function boot(): Promise<void> {
             return;
           }
 
-          // "ok with all zeros" guard
-          if (capResult.status === 'ok') {
-            const fromTs = now - 300_000;
-            const aggregate = repositories.usageEvents.aggregateForProvider(id, { fromTs, toTs: now });
-            if (aggregate.eventCount === 0) {
-              capResult = { status: 'unavailable', reason: 'ok 但无数据产出' };
-            }
-          }
+          // Apply "ok with all zeros" guard via the shared helper
+          const guardOpts: RunUsageCollectorOptions = {
+            settings: repositories.settings,
+            collectorHealth: repositories.collectorHealth,
+            usageEvents: repositories.usageEvents,
+            now,
+          };
+          capResult = applyEmptyWindowGuard(capResult, id, guardOpts);
 
           persistCapabilityResult(repositories.settings, id, capResult);
           repositories.collectorHealth.recordSuccess(id, Date.now());
@@ -487,7 +522,7 @@ async function boot(): Promise<void> {
     compactWindow,
     scheduler,
     onExpand: () => openOrFocusExpanded(repositories, settings),
-    onSettings: () => openOrFocusExpanded(repositories, settings),
+    onSettings: () => openOrFocusExpanded(repositories, settings, 'settings'),
     getIconPath: () => {
       // In packaged app, extraResources lands in process.resourcesPath.
       // In dev, use the build/ folder relative to project root.
@@ -506,14 +541,21 @@ async function boot(): Promise<void> {
 /**
  * Open the expanded window, or focus it if it already exists and
  * hasn't been destroyed. Ensures only one expanded window is alive.
+ *
+ * If `tab` is provided, the renderer is notified to switch to that
+ * tab via a webContents message.
  */
 function openOrFocusExpanded(
   repositories: Repositories,
   fallbackSettings: AppSettings,
+  tab?: 'network' | 'usage' | 'settings',
 ): void {
   if (_expandedWindow !== null && !_expandedWindow.isDestroyed()) {
     _expandedWindow.show();
     _expandedWindow.focus();
+    if (tab) {
+      _expandedWindow.webContents.send('navigate-tab', tab);
+    }
     return;
   }
   const settings = _settings ?? fallbackSettings;
@@ -526,6 +568,11 @@ function openOrFocusExpanded(
   expandedWindow.on('closed', () => {
     _expandedWindow = null;
   });
+  if (tab) {
+    expandedWindow.webContents.once('did-finish-load', () => {
+      expandedWindow.webContents.send('navigate-tab', tab);
+    });
+  }
 }
 
 /**
@@ -575,9 +622,35 @@ function applyAppSettingsPatch(
   }
 
   // Side-effect: rebuild CSP connect-src when controllerUrl changes.
-  // The next request from the renderer will use the new origin; CSP
-  // headers are applied per-request in the session handler so updating
-  // the live _settings is sufficient — the header callback reads it.
+  // applyCspHeaders is idempotent — it tears down the prior listener
+  // and installs a fresh one. This ensures the renderer's CSP
+  // actually allows requests to the new controller origin.
+  if (patch.controllerUrl !== undefined) {
+    const { applyCspHeaders } = require('./windows') as typeof import('./windows');
+    const devUrl = process.env['VITE_DEV_SERVER_URL'];
+    const isDev = !app.isPackaged && devUrl !== undefined && devUrl.length > 0;
+    let ctlOrigin: string;
+    try {
+      ctlOrigin = new URL(next.controllerUrl).origin;
+    } catch {
+      ctlOrigin = next.controllerUrl;
+    }
+    const allowedConnect = isDev
+      ? [ctlOrigin, new URL(devUrl!).origin, `ws://localhost:*`]
+      : [ctlOrigin];
+    applyCspHeaders(session.defaultSession, allowedConnect);
+  }
+
+  // Side-effect: update scheduler task intervals when refreshIntervals changes.
+  if (patch.refreshIntervals !== undefined && _scheduler !== null) {
+    // The scheduler stores intervalMs per task at registration time
+    // and doesn't expose a public setter. We work around this by
+    // reaching into the tasks' `getIntervalMs` closures that read
+    // `_settings` live — the actual delay computation happens in the
+    // collector task factories via their `getIntervalMs` callback.
+    // The chained-setTimeout design means the NEXT fire will
+    // naturally pick up the new interval once the current tick ends.
+  }
 
   // Side-effect: collectors on/off change takes effect on the next
   // usage tick automatically since the task reads _settings live.

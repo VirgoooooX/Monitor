@@ -59,7 +59,12 @@ import {
   AuthError,
   type OpenClashClient,
 } from '../services/openclash.service';
-import { identifyPrimaryGroup } from '../services/openclash.groups';
+import {
+  identifyPrimaryGroup,
+  isPseudoNodeName,
+  resolveSelectedNode,
+  selectedNodeName,
+} from '../services/openclash.groups';
 import type { DashboardService } from '../services/dashboard.service';
 import type { SwitchNodeService } from '../services/openclash.switch';
 import type {
@@ -117,6 +122,8 @@ export interface IpcRegistryDeps {
   updateSecret: (input: UpdateSecretInput) => void;
   /** Future service (task 7.8). When absent the IPC returns `not_implemented`. */
   getUsageSummary?: (range: UsageRange) => Promise<UsageSummary> | UsageSummary;
+  /** Quota service. When absent the IPC returns `not_implemented`. */
+  getQuotaStatus?: () => Promise<import('../types').QuotaStatus>;
   /** Future service (task 9.3). When absent the IPC returns `not_implemented`. */
   getDiagnostics?: () => Promise<DiagnosticsReport> | DiagnosticsReport;
   /** Future trigger (task 5.x). When absent the IPC returns `not_implemented`. */
@@ -203,13 +210,15 @@ function buildGroupViews(
   repositories: Repositories,
 ): GroupView[] {
   const primary = identifyPrimaryGroup(proxies, primaryGroups);
+  const resolvedPrimary = resolveSelectedNode(proxies, primary);
   const head: GroupView[] = [];
   const tail: GroupView[] = [];
 
   for (const [name, entry] of Object.entries(proxies.proxies)) {
     if (entry.type !== 'Selector') continue;
 
-    const current = entry.now ?? entry.current ?? '';
+    const selected = selectedNodeName(entry);
+    const current = isPseudoNodeName(selected) ? '' : (selected ?? '');
     const view: GroupView = {
       name,
       type: entry.type,
@@ -217,7 +226,7 @@ function buildGroupViews(
       nodes: buildNodeViews(name, entry, repositories),
     };
 
-    if (name === primary) {
+    if (name === (resolvedPrimary?.groupName ?? primary)) {
       head.push(view);
     } else {
       tail.push(view);
@@ -465,6 +474,28 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       }
       try {
         const value = await fetcher(parsed.data.range);
+        return { ok: true, value };
+      } catch (err) {
+        return INTERNAL_FAILURE(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // getQuotaStatus
+  // -------------------------------------------------------------------------
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.getQuotaStatus,
+    async (): Promise<IpcResult<import('../types').QuotaStatus>> => {
+      const fetcher = deps.getQuotaStatus;
+      if (fetcher === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'getQuotaStatus',
+          'awaiting quota.service',
+        );
+      }
+      try {
+        const value = await fetcher();
         return { ok: true, value };
       } catch (err) {
         return INTERNAL_FAILURE(err);

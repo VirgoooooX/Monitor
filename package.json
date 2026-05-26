@@ -13,6 +13,7 @@
     "package": "npm run build && electron-builder --win"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "1.90.0",
     "better-sqlite3": "11.5.0",
     "lucide-react": "0.460.0",
     "react": "18.3.1",

@@ -451,6 +451,7 @@ export const diagnosticsReportSchema = z
 export const desktopPushChannelSchema = z.enum([
   'dashboard.updated',
   'openclash.updated',
+  'navigate-tab',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -502,6 +503,22 @@ export const desktopApiSchemas = {
   openExpanded: {
     input: z.undefined().or(z.null()).or(z.void()),
     output: z.void(),
+  },
+  getQuotaStatus: {
+    input: z.undefined().or(z.null()).or(z.void()),
+    output: z.object({
+      snapshots: z.array(z.object({
+        provider: z.string(),
+        capturedAt: z.number(),
+        source: z.enum(['local_log', 'remote_api']),
+        windows: z.array(z.object({
+          name: z.string(),
+          percentLeft: z.number().nullable(),
+          resetAt: z.number().nullable(),
+          windowSeconds: z.number().nullable(),
+        })),
+      })),
+    }),
   },
 } as const;
 

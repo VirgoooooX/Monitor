@@ -38,14 +38,17 @@ import type {
   OpenClashSnapshotsRepository,
   OpenClashSnapshotStatus,
 } from '../store/repositories';
-import type { AppSettings } from '../types';
+import type { AppSettings, ProbeResultDigest } from '../types';
 import { httpProbe } from './probe/httpProbe';
 import type { OpenClashClient } from '../services/openclash.service';
 import {
   AuthError,
   NetworkError,
 } from '../services/openclash.service';
-import { identifyPrimaryGroup } from '../services/openclash.groups';
+import {
+  identifyPrimaryGroup,
+  resolveSelectedNode,
+} from '../services/openclash.groups';
 
 // ---------------------------------------------------------------------------
 // Public constants
@@ -87,6 +90,11 @@ export interface OpenClashCollectorDeps {
    * service can rebroadcast. Failures inside `onAfterTick` are swallowed.
    */
   onAfterTick?: () => void;
+  /**
+   * Receives the current probe results before `onAfterTick` so the
+   * dashboard push can include fresh node/external status.
+   */
+  onProbeResults?: (results: readonly ProbeResultDigest[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,12 +220,12 @@ export function createOpenClashCollectorTask(
             proxiesResult,
             settings.primaryGroups,
           );
-          if (primaryGroup !== null) {
+          const resolved = resolveSelectedNode(proxiesResult, primaryGroup);
+          if (resolved !== null) {
+            groupName = resolved.groupName;
+            nodeName = resolved.nodeName;
+          } else {
             groupName = primaryGroup;
-            const entry = proxiesResult.proxies[primaryGroup];
-            if (entry !== undefined) {
-              nodeName = entry.now ?? entry.current ?? null;
-            }
           }
         } catch {
           // Proxies fetch failure is non-fatal for the snapshot; we
@@ -251,6 +259,7 @@ export function createOpenClashCollectorTask(
       });
 
       // --- Phase 2: Probe URLs (only when API is ok) ------------------------
+      const probeDigests: ProbeResultDigest[] = [];
       if (apiOk && settings.probeUrls.length > 0) {
         const probePromises = settings.probeUrls.map(async (url) => {
           const result = await httpProbe(url, probeTimeoutMs);
@@ -262,9 +271,23 @@ export function createOpenClashCollectorTask(
             latencyMs: result.latencyMs,
             error: result.error ?? null,
           });
+          return {
+            url,
+            ok: result.ok,
+            latencyMs: result.latencyMs,
+          };
         });
 
-        await Promise.all(probePromises);
+        probeDigests.push(...(await Promise.all(probePromises)));
+      }
+
+      const onProbeResults = deps.onProbeResults;
+      if (onProbeResults !== undefined) {
+        try {
+          onProbeResults(probeDigests);
+        } catch {
+          // Subscriber failure must not poison the next tick.
+        }
       }
 
       // --- After-tick callback -----------------------------------------------

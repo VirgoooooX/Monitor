@@ -33,6 +33,18 @@ if (tscResult.status !== 0) {
   process.exit(tscResult.status ?? 1);
 }
 
+// 1b. Bundle preload for sandbox mode. Same script used by `npm run build`.
+//     Without this, sandbox: true prevents require() of relative modules.
+step('bundling preload for sandbox (esbuild)');
+const bundleResult = spawnSync(
+  process.platform === 'win32' ? 'node.exe' : 'node',
+  ['scripts/bundle-preload.mjs'],
+  { cwd: repoRoot, stdio: 'inherit', shell: true },
+);
+if (bundleResult.status !== 0) {
+  process.exit(bundleResult.status ?? 1);
+}
+
 // 2. Start Vite dev server.
 step('starting Vite dev server');
 const server = await createServer({

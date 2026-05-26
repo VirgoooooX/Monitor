@@ -68,6 +68,7 @@
 // the right UX for "we don't know yet, don't panic".
 
 import { averageLatency, evaluate } from './health.service';
+import { isPseudoNodeName } from './openclash.groups';
 import type { Repositories } from '../store/repositories';
 import type { NetworkSampleRow } from '../store/repositories';
 import type {
@@ -308,8 +309,10 @@ export function createDashboardService(
     const lastOkSnapshot = repos.openClashSnapshots.latestOk();
     const openclashApiOk = deriveApiOk(latestSnapshot);
     const mode = lastOkSnapshot?.mode ?? null;
-    const group = lastOkSnapshot?.groupName ?? null;
-    const node = lastOkSnapshot?.nodeName ?? null;
+    const rawGroup = lastOkSnapshot?.groupName ?? null;
+    const rawNode = lastOkSnapshot?.nodeName ?? null;
+    const group = isPseudoNodeName(rawGroup) ? null : rawGroup;
+    const node = isPseudoNodeName(rawNode) ? null : rawNode;
 
     // Probe success rate over the last N attempts.
     const probeRecent = repos.networkSamples.recentForLayer(
@@ -321,6 +324,15 @@ export function createDashboardService(
         ? null
         : probeRecent.filter((r) => r.ok).length / probeRecent.length;
 
+    const effectiveProbeResults =
+      currentProbeResults.length > 0
+        ? currentProbeResults
+        : probeRecent.map((sample) => ({
+            url: sample.target,
+            ok: sample.ok,
+            latencyMs: sample.latencyMs,
+          }));
+
     // Latency stream (sparkline + node_slow average leg).
     const sparkline = sparkBuffer.values();
     const avgLatencyMs =
@@ -331,7 +343,7 @@ export function createDashboardService(
       routerReachableHistory,
       openclashTcpReachable,
       openclashApiOk,
-      currentNodeProbeResults: currentProbeResults.map(digestToProbeResult),
+      currentNodeProbeResults: effectiveProbeResults.map(digestToProbeResult),
       recentSuccessProbeLatencies: sparkline,
       recentSuccessRate,
       consecutiveProbeFailures,
@@ -354,7 +366,7 @@ export function createDashboardService(
         avgLatencyMs,
         // Defensive copy: the renderer should never see the same
         // array reference across two `compute()` calls.
-        probeResults: currentProbeResults.map((d) => ({
+        probeResults: effectiveProbeResults.map((d) => ({
           url: d.url,
           ok: d.ok,
           latencyMs: d.latencyMs,

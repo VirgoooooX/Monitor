@@ -38,7 +38,7 @@ import type { ProxiesResponse, ProxyEntry } from '../types';
 
 /**
  * Names that Clash always exposes as built-in pseudo-nodes. They never
- * count as "real" options for the > 3 fallback heuristic.
+ * count as "real" options for the fallback heuristic.
  *
  * The match is case-sensitive: real Clash builds emit these names exactly
  * as `DIRECT`, `REJECT`, and `GLOBAL`, and a user-defined node sharing a
@@ -52,13 +52,6 @@ export const EXCLUDED_NODE_NAMES: ReadonlySet<string> = new Set([
 
 /** Clash type tag for a manually-selectable policy group. */
 const SELECTOR_TYPE = 'Selector';
-
-/**
- * Threshold used by the fallback heuristic. A Selector with **strictly
- * more than** this many real options is considered "primary-shaped",
- * matching the design.md formal spec wording (`> 3`).
- */
-const MIN_REAL_OPTIONS_FOR_FALLBACK = 3;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,9 +83,76 @@ export function countRealOptions(entry: ProxyEntry): number {
   return count;
 }
 
+/** True when a name is one of Clash's built-in pseudo nodes/groups. */
+export function isPseudoNodeName(name: string | null | undefined): boolean {
+  return typeof name === 'string' && EXCLUDED_NODE_NAMES.has(name);
+}
+
+/** Current selected value for a Selector group, normalised to null. */
+export function selectedNodeName(entry: ProxyEntry): string | null {
+  const value = entry.now ?? entry.current ?? null;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export interface ResolvedSelectedNode {
+  /** Selector group that directly selected the resolved leaf node. */
+  groupName: string;
+  /** Final non-pseudo leaf proxy name. */
+  nodeName: string;
+}
+
+/**
+ * Follow nested Selector selections until the final real proxy node is
+ * reached. Example: `GLOBAL -> SS -> CN 台湾A01` resolves to
+ * `{ groupName: 'SS', nodeName: 'CN 台湾A01' }`.
+ */
+export function resolveSelectedNode(
+  proxies: ProxiesResponse,
+  startGroupName: string | null,
+): ResolvedSelectedNode | null {
+  if (startGroupName === null) {
+    return null;
+  }
+
+  const map = proxies.proxies;
+  let groupName = startGroupName;
+  const seen = new Set<string>();
+
+  while (!seen.has(groupName)) {
+    seen.add(groupName);
+    const entry = map[groupName];
+    if (entry === undefined || !isSelector(entry)) {
+      return null;
+    }
+
+    const selected = selectedNodeName(entry);
+    if (selected === null || isPseudoNodeName(selected)) {
+      return null;
+    }
+
+    const selectedEntry = map[selected];
+    if (selectedEntry !== undefined && isSelector(selectedEntry)) {
+      groupName = selected;
+      continue;
+    }
+
+    return { groupName, nodeName: selected };
+  }
+
+  return null;
+}
+
 /** True when `entry` is a Selector group (the only switchable kind). */
 function isSelector(entry: ProxyEntry): boolean {
   return entry.type === SELECTOR_TYPE;
+}
+
+function isRealSelectorGroup(name: string, entry: ProxyEntry): boolean {
+  return (
+    !isPseudoNodeName(name) &&
+    isSelector(entry) &&
+    countRealOptions(entry) > 0
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -105,14 +165,14 @@ function isSelector(entry: ProxyEntry): boolean {
  * Algorithm (matching design.md §`identifyPrimaryGroup` formal spec):
  *
  *   1. **Preference pass.** Walk `primaryGroups` in order. For each
- *      candidate name, return it if and only if `proxies.proxies[name]`
- *      exists and is a Selector. The first preference-list hit wins;
- *      no fallback is consulted while preferences remain unmatched.
+ *      candidate name, return it if and only if it is not a pseudo
+ *      group name, exists, is a Selector, and has at least one real
+ *      node option.
  *
  *   2. **Fallback pass.** Walk the keys of `proxies.proxies` in the
- *      response's insertion order. Return the first key whose value is
- *      a Selector AND whose `all` array has more than 3 real options
- *      (DIRECT/REJECT/GLOBAL excluded from the count).
+ *      response's insertion order and choose the real Selector with
+ *      the highest real-node count, provided its current value is not
+ *      a pseudo node. Ties keep response order.
  *
  *   3. Otherwise return `null`.
  *
@@ -138,15 +198,15 @@ export function identifyPrimaryGroup(
   // URLTest or a leaf proxy must be skipped over to the next preference.
   for (const name of primaryGroups) {
     const entry = map[name];
-    if (entry !== undefined && isSelector(entry)) {
+    if (entry !== undefined && isRealSelectorGroup(name, entry)) {
       return name;
     }
   }
 
-  // Pass 2: fallback heuristic. `Object.keys` preserves the insertion
-  // order produced by `JSON.parse`, which matches the Clash controller's
-  // output order — so the "first key" wording in the spec is well-
-  // defined here.
+  // Pass 2: fallback heuristic. Keep the first highest-scoring group
+  // so ties preserve the Clash response order.
+  let bestName: string | null = null;
+  let bestRealCount = 0;
   for (const name of Object.keys(map)) {
     const entry = map[name];
     if (entry === undefined) {
@@ -155,13 +215,19 @@ export function identifyPrimaryGroup(
       // the same map. This branch is unreachable in practice.
       continue;
     }
-    if (
-      isSelector(entry) &&
-      countRealOptions(entry) > MIN_REAL_OPTIONS_FOR_FALLBACK
-    ) {
-      return name;
+    if (!isRealSelectorGroup(name, entry)) {
+      continue;
+    }
+    const current = selectedNodeName(entry);
+    if (isPseudoNodeName(current)) {
+      continue;
+    }
+    const realCount = countRealOptions(entry);
+    if (realCount > bestRealCount) {
+      bestName = name;
+      bestRealCount = realCount;
     }
   }
 
-  return null;
+  return bestName;
 }

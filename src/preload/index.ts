@@ -38,6 +38,7 @@ import type {
   DiagnosticsReport,
   IpcResult,
   OpenClashDetails,
+  QuotaStatus,
   SwitchNodeInput,
   SwitchNodeResult,
   Unsubscribe,
@@ -181,6 +182,10 @@ const desktopApi: DesktopApi = {
       DESKTOP_INVOKE_CHANNELS.getUsageSummary,
       input,
     );
+  },
+
+  getQuotaStatus(): Promise<QuotaStatus> {
+    return invoke<QuotaStatus>(DESKTOP_INVOKE_CHANNELS.getQuotaStatus);
   },
 
   getSettings(): Promise<AppSettings> {
