@@ -34,27 +34,19 @@
 //   • PLAN.md §UI Implementation Guide §紧凑首页
 //
 
-import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
 import type { AppearanceSettings, DashboardState } from '../lib/types';
 import { formatTokens } from '../lib/format';
 import { StatusHero } from './StatusHero';
 import { Sparkline } from './Sparkline';
 import { QuotaStrip } from './QuotaStrip';
 import { CompactMiniRail } from './CompactMiniRail';
-import { ArrowUpRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 
 interface WidgetShellProps {
   readonly state: DashboardState;
   readonly appearance?: AppearanceSettings | undefined;
-  readonly displayMode?: 'full' | 'expanded' | 'mini';
-  readonly onDisplayModeChange?: (mode: 'full' | 'expanded' | 'mini') => void;
-}
-
-interface ScrollCueState {
-  scrollable: boolean;
-  thumbTop: number;
-  thumbHeight: number;
+  readonly displayMode?: 'expanded' | 'mini';
+  readonly onDisplayModeChange?: (mode: 'expanded' | 'mini') => void;
 }
 
 function nodeLine(state: DashboardState): {
@@ -81,85 +73,16 @@ function nodeLine(state: DashboardState): {
 export function WidgetShell({
   state,
   appearance,
-  displayMode = 'full',
+  displayMode = 'expanded',
   onDisplayModeChange,
 }: WidgetShellProps): JSX.Element {
   const line = nodeLine(state);
   const usage = state.usageToday;
   const isMini = displayMode === 'mini';
-  const isExpanded = displayMode === 'expanded';
-  const usageScrollRef = useRef<HTMLDivElement | null>(null);
-  const [scrollCue, setScrollCue] = useState<ScrollCueState>({
-    scrollable: false,
-    thumbTop: 0,
-    thumbHeight: 0,
-  });
-
-  useEffect(() => {
-    const scrollEl = usageScrollRef.current;
-    if (isMini || isExpanded || !scrollEl) {
-      setScrollCue({ scrollable: false, thumbTop: 0, thumbHeight: 0 });
-      return;
-    }
-
-    let raf = 0;
-    const update = (): void => {
-      raf = 0;
-      const { clientHeight, scrollHeight, scrollTop } = scrollEl;
-      const scrollable = scrollHeight > clientHeight + 1;
-      if (!scrollable) {
-        setScrollCue({ scrollable: false, thumbTop: 0, thumbHeight: 0 });
-        return;
-      }
-
-      const minThumbHeight = 18;
-      const thumbHeight = Math.max(
-        minThumbHeight,
-        Math.round((clientHeight / scrollHeight) * clientHeight),
-      );
-      const maxThumbTop = Math.max(0, clientHeight - thumbHeight);
-      const maxScrollTop = Math.max(1, scrollHeight - clientHeight);
-      const thumbTop = Math.round((scrollTop / maxScrollTop) * maxThumbTop);
-
-      setScrollCue((current) => {
-        if (
-          current.scrollable &&
-          current.thumbTop === thumbTop &&
-          current.thumbHeight === thumbHeight
-        ) {
-          return current;
-        }
-        return { scrollable: true, thumbTop, thumbHeight };
-      });
-    };
-
-    const schedule = (): void => {
-      if (raf !== 0) {
-        return;
-      }
-      raf = window.requestAnimationFrame(update);
-    };
-
-    schedule();
-    scrollEl.addEventListener('scroll', schedule, { passive: true });
-    const observer = new ResizeObserver(schedule);
-    observer.observe(scrollEl);
-    const mutationObserver = new MutationObserver(schedule);
-    mutationObserver.observe(scrollEl, { childList: true, subtree: true });
-
-    return () => {
-      scrollEl.removeEventListener('scroll', schedule);
-      observer.disconnect();
-      mutationObserver.disconnect();
-      if (raf !== 0) {
-        window.cancelAnimationFrame(raf);
-      }
-    };
-  }, [isExpanded, isMini, usage.codex, usage.gemini, usage.opencode]);
 
   const handleClick = (): void => {
     if (isMini) {
-      onDisplayModeChange?.('full');
+      onDisplayModeChange?.('expanded');
       return;
     }
     const desktop = window.desktop;
@@ -236,22 +159,6 @@ export function WidgetShell({
         <ArrowUpRight size={14} />
       </button>
 
-      {/* Bottom center expand toggle button */}
-      {(isExpanded || scrollCue.scrollable) && (
-        <button
-          type="button"
-          className="compact-expand-toggle-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDisplayModeChange?.(isExpanded ? 'full' : 'expanded');
-          }}
-          title={isExpanded ? '收起用量' : '展开全部用量'}
-          aria-label={isExpanded ? '收起用量' : '展开全部用量'}
-        >
-          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
-      )}
-
       <div className="compact-frame__content">
         {/* ── Network slot: status + node copy on the left, sparkline
               mini-window on the right ──────────────────────────── */}
@@ -277,7 +184,7 @@ export function WidgetShell({
         {/* ── Usage slot: quota rows + token summary ──────────── */}
         <section className="compact-usage-slot" aria-label="AI 用量">
           <div className="compact-usage-slot__scroll-wrap">
-            <div className="compact-usage-slot__scroll" ref={usageScrollRef}>
+            <div className="compact-usage-slot__scroll">
               <QuotaStrip />
 
               {(usage.codex > 0 || usage.gemini > 0 || usage.opencode > 0) && (
@@ -291,16 +198,6 @@ export function WidgetShell({
                 </div>
               )}
             </div>
-
-            <span
-              className="compact-scroll-cue"
-              data-scrollable={scrollCue.scrollable}
-              style={{
-                '--scroll-cue-thumb-top': `${scrollCue.thumbTop}px`,
-                '--scroll-cue-thumb-height': `${scrollCue.thumbHeight}px`,
-              } as CSSProperties}
-              aria-hidden="true"
-            />
           </div>
         </section>
       </div>

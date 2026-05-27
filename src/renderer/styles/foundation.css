@@ -5,8 +5,9 @@
 /*
  * Global renderer styles.
  *
- * The compact window is 360x240, frameless, transparent, and
- * always-on-top (see `windows.ts#createCompactWindow`). For the
+ * The compact window is 360px wide, content-height driven,
+ * frameless, transparent, and always-on-top
+ * (see `windows.ts#createCompactWindow`). For the
  * transparency to actually take effect, the renderer's `<body>`
  * must not paint an opaque background; we keep `body` transparent
  * and let the inner `.widget-shell` paint its own dark surface.
@@ -107,26 +108,21 @@ body.mode-expanded {
 body.local-browser-preview {
   width: 360px;
   min-height: 0;
-  height: 240px;
+  height: auto;
   background: #eaf4f5;
   overflow: visible;
 }
 
 body.local-browser-preview #root {
   width: 360px;
-  height: 240px;
-  min-height: 0;
-}
-
-body.local-browser-preview:has(.compact-frame[data-display-mode='expanded']),
-body.local-browser-preview:has(.compact-frame[data-display-mode='expanded']) #root {
   height: auto;
+  min-height: 0;
 }
 
 body.local-browser-preview:has(.compact-frame--mini),
 body.local-browser-preview:has(.compact-frame--mini) #root {
   width: 56px;
-  height: 240px;
+  height: auto;
 }
 
 #root {

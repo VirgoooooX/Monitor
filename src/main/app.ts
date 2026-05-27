@@ -81,7 +81,7 @@ import {
   createRetentionTask,
   RETENTION_TASK_ID,
 } from './store/retention';
-import { createCompactWindow, createExpandedWindow } from './windows';
+import { COMPACT_DEFAULT_SIZE, createCompactWindow, createExpandedWindow } from './windows';
 import { createTray } from './tray';
 // `app.ts` no longer drives per-collector usage ticks (the AI
 // Accounts unification moved that responsibility to
@@ -970,7 +970,7 @@ function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInpu
   );
   const size = _compactWindow.getSize();
   const currentWidth = size[0] ?? 360;
-  const currentHeight = size[1] ?? 240;
+  const currentHeight = size[1] ?? COMPACT_DEFAULT_SIZE.height;
   if (currentWidth === nextWidth && currentHeight === nextHeight) {
     return;
   }

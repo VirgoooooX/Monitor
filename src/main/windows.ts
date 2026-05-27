@@ -69,8 +69,8 @@ const MIN_ONSCREEN_OVERLAP = 100 * 100;
 /** Auto-save debounce for `move` / `resize` events. */
 const BOUNDS_SAVE_DEBOUNCE_MS = 250;
 
-/** Compact-window default size (design.md §Window Strategy). */
-export const COMPACT_DEFAULT_SIZE = { width: 360, height: 240 } as const;
+/** Compact-window startup size; renderer content drives the final height. */
+export const COMPACT_DEFAULT_SIZE = { width: 360, height: 40 } as const;
 
 /** Expanded-window default size (design.md §Window Strategy). */
 export const EXPANDED_DEFAULT_SIZE = { width: 760, height: 560 } as const;

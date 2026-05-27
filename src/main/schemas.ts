@@ -587,7 +587,7 @@ export const updateSecretInputSchema = z
 export const resizeCompactWindowInputSchema = z
   .object({
     width: z.number().int().min(56).max(360).optional(),
-    height: z.number().int().min(180).max(1200),
+    height: z.number().int().min(40).max(1200),
   })
   .strict();
 

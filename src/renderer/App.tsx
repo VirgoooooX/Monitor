@@ -1,7 +1,7 @@
 // Renderer root.
 //
 // The renderer hosts two visually distinct UIs in the same bundle —
-// the 360×240 compact widget and the 760×560 expanded window
+// the 360px-wide compact widget and the 760×560 expanded window
 // (windows.ts#createCompactWindow / createExpandedWindow). We pick
 // between them on mount with a simple `window.innerWidth` threshold
 // rather than a media-query library; the compact window is
@@ -106,7 +106,7 @@ const EXPANDED_WIDTH = 760;
 const MODE_THRESHOLD = (COMPACT_WIDTH + EXPANDED_WIDTH) / 2;
 
 type WindowMode = 'compact' | 'expanded';
-type CompactDisplayMode = 'full' | 'expanded' | 'mini';
+type CompactDisplayMode = 'expanded' | 'mini';
 
 function detectWindowMode(): WindowMode {
   if (typeof window === 'undefined') {
@@ -237,7 +237,7 @@ function CompactRoot({
     isLocalBrowserPreview() ? previewDashboardState() : null
   ));
   const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
-  const [displayMode, setDisplayMode] = useState<CompactDisplayMode>('full');
+  const [displayMode, setDisplayMode] = useState<CompactDisplayMode>('expanded');
 
   useEffect(() => {
     const desktop = window.desktop;
@@ -291,20 +291,16 @@ function CompactRoot({
 
   const requestCompactWindowSize = useCallback((
     mode: CompactDisplayMode,
-    measuredHeight?: number,
+    measuredHeight: number,
   ): void => {
     const desktop = window.desktop;
     const isPreview = isLocalBrowserPreview();
 
     let width = 360;
-    let height = 240;
+    const height = measuredHeight;
 
     if (mode === 'mini') {
       width = 56;
-      height = measuredHeight ?? 240;
-    } else if (mode === 'expanded') {
-      width = 360;
-      height = measuredHeight ?? 240;
     }
 
     if (isPreview) {
@@ -323,30 +319,14 @@ function CompactRoot({
   }, []);
 
   useEffect(() => {
-    if (displayMode === 'full') {
-      requestCompactWindowSize('full');
-    } else if (displayMode === 'mini') {
-      requestCompactWindowSize('mini');
-    }
-  }, [displayMode, requestCompactWindowSize]);
-
-  useEffect(() => {
-    if (displayMode === 'full') {
-      return;
-    }
-
     let lastSize: { width: number; height: number } | null = null;
     let raf = 0;
 
     const measure = (): void => {
       raf = 0;
       const currentMode = displayModeRef.current;
-      if (currentMode === 'full') {
-        return;
-      }
-
-      let width = 360;
-      let height = 240;
+      let width: number;
+      let height: number;
 
       if (currentMode === 'mini') {
         const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
@@ -356,7 +336,7 @@ function CompactRoot({
         width = 56;
         const measuredHeight = miniRail.scrollHeight;
         height = Math.ceil(measuredHeight + 8);
-      } else if (currentMode === 'expanded') {
+      } else {
         const frame = document.querySelector<HTMLElement>('[data-testid="widget-shell"]');
         if (!frame) {
           return;
