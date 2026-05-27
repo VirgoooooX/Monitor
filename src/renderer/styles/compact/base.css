@@ -666,14 +666,19 @@
 .compact-frame .quota-strip__group {
   grid-template-columns: 44px minmax(0, 1fr);
   column-gap: 10px;
-  align-items: center;
+  /* Pin the icon to the first row instead of centering across the
+     stack — see components/quota-strip.css for the rationale. */
+  align-items: start;
   min-width: 0;
 }
 
 .compact-frame .quota-strip__provider {
   width: 40px;
-  height: 40px;
+  /* Match `.compact-frame .quota-strip__row` min-height so the icon
+     centers on the first balance row. */
+  height: 26px;
   min-width: 40px;
+  align-self: start;
   color: var(--compact-muted);
 }
 

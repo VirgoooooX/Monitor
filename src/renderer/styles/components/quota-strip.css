@@ -16,7 +16,10 @@
 .quota-strip__group {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  align-items: center;
+  /* Align icon with the first balance row instead of centering it
+     across all rows. The provider cell below is height-matched to
+     the first row so the icon's center lands on the first row. */
+  align-items: start;
   column-gap: 8px;
   min-width: 0;
 }
@@ -27,9 +30,12 @@
   justify-content: center;
   color: var(--color-text-secondary);
   width: 38px;
-  height: 38px;
+  /* Match `.quota-strip__row` min-height so the icon's vertical
+     center aligns with the first row regardless of how many extra
+     rows the provider exposes (5h + weekly, Claude + Gemini, …). */
+  height: 22px;
   min-width: 38px;
-  align-self: center;
+  align-self: start;
 }
 
 /* Provider brand glyphs come from @lobehub/icons-static-svg.
