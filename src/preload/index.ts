@@ -45,6 +45,7 @@ import type {
   ProviderAuthMetadata,
   ProviderId,
   QuotaStatus,
+  ResizeCompactWindowInput,
   SetProviderAuthEnabledInput,
   SwitchNodeInput,
   SwitchNodeResult,
@@ -194,6 +195,13 @@ const desktopApi: DesktopApi = {
 
   getQuotaStatus(): Promise<QuotaStatus> {
     return invoke<QuotaStatus>(DESKTOP_INVOKE_CHANNELS.getQuotaStatus);
+  },
+
+  resizeCompactWindow(input: ResizeCompactWindowInput): Promise<void> {
+    return invoke<void>(
+      DESKTOP_INVOKE_CHANNELS.resizeCompactWindow,
+      input,
+    );
   },
 
   getSettings(): Promise<AppSettings> {

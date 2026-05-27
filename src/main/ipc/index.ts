@@ -237,6 +237,12 @@ export interface IpcRegistryDeps {
   /** Quota service. When absent the IPC returns `not_implemented`. */
   getQuotaStatus?: () => Promise<import('../types').QuotaStatus>;
   /**
+   * Resize the compact window to a content-driven height. The renderer
+   * supplies the measured outer height and the main process applies it
+   * to the live compact `BrowserWindow`.
+   */
+  resizeCompactWindow?: (input: import('../types').ResizeCompactWindowInput) => void;
+  /**
    * Provider Auth service (cpa-quota-import task 10.3). Owns the
    * five `desktop:listProviderAuths` / `desktop:importProviderAuthFile` /
    * `desktop:deleteProviderAuth` / `desktop:validateProviderAuth` /
@@ -1089,6 +1095,36 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       try {
         const value = await fetcher();
         return { ok: true, value };
+      } catch (err) {
+        return INTERNAL_FAILURE(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // resizeCompactWindow
+  // -------------------------------------------------------------------------
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.resizeCompactWindow,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<void>> => {
+      const parsed =
+        desktopApiSchemas.resizeCompactWindow.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const resizer = deps.resizeCompactWindow;
+      if (resizer === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'resizeCompactWindow',
+          'compact window resize hook not wired',
+        );
+      }
+      try {
+        resizer(parsed.data);
+        return { ok: true, value: undefined };
       } catch (err) {
         return INTERNAL_FAILURE(err);
       }

@@ -250,7 +250,7 @@ const HAPPY_CASES: ReadonlyArray<HappyCase> = [
       projectId: null,
       payload: { apiKey: 'sk-deepseek-DDDD' },
     },
-    expectedCapability: 'health_only',
+    expectedCapability: 'official',
   },
   {
     provider: 'xiaomi',

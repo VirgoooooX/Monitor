@@ -232,6 +232,18 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
   };
 }
 
+function upgradeProviderAuthCapabilities(repositories: Repositories): void {
+  const now = Date.now();
+  for (const row of repositories.providerAuth.list()) {
+    if (row.provider === 'deepseek' && row.quotaCapability !== 'official') {
+      repositories.providerAuth.update(row.id, {
+        quotaCapability: 'official',
+        updatedAt: now,
+      });
+    }
+  }
+}
+
 /**
  * Read the persisted `AppSettings` blob, seeding the default value on
  * the first launch (when no row exists yet).
@@ -337,6 +349,11 @@ let _configSwitchAudit: ConfigSwitchAuditService | null = null;
 let _inflightConfigSwitches: InflightConfigSwitchRegistry | null = null;
 let _ipcRegistry: IpcRegistry | null = null;
 
+const COMPACT_AUTO_MIN_HEIGHT = 40;
+const COMPACT_AUTO_MAX_HEIGHT = 720;
+const COMPACT_AUTO_MIN_WIDTH = 56;
+const COMPACT_AUTO_MAX_WIDTH = 360;
+
 async function boot(): Promise<void> {
   // 1. Open the application database and apply migrations.
   const db = openDatabase();
@@ -347,6 +364,7 @@ async function boot(): Promise<void> {
   //    samples, usage events, collector_health).
   const repositories = createRepositories(db);
   _repositories = repositories;
+  upgradeProviderAuthCapabilities(repositories);
 
   // 3. Initialise the secrets singleton against Electron `safeStorage`
   //    and the SQLite-backed secrets repository (design.md §Property
@@ -823,6 +841,7 @@ async function boot(): Promise<void> {
     },
     getUsageSummary: (range) => usageService.getUsageSummary({ range }),
     getQuotaStatus: () => quotaService.getQuotaStatus(),
+    resizeCompactWindow: (input) => applyCompactWindowSize(input),
     providerAuthService,
     quotaService,
     getDiagnostics: () => diagnosticsService.export(),
@@ -915,6 +934,63 @@ function openOrFocusExpanded(
     expandedWindow.webContents.once('did-finish-load', () => {
       expandedWindow.webContents.send('navigate-tab', tab);
     });
+  }
+}
+
+function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInput): void {
+  if (_compactWindow === null || _compactWindow.isDestroyed()) {
+    return;
+  }
+  const nextWidth = Math.min(
+    COMPACT_AUTO_MAX_WIDTH,
+    Math.max(COMPACT_AUTO_MIN_WIDTH, Math.round(input.width ?? 360)),
+  );
+  const nextHeight = Math.min(
+    COMPACT_AUTO_MAX_HEIGHT,
+    Math.max(COMPACT_AUTO_MIN_HEIGHT, Math.round(input.height)),
+  );
+  const size = _compactWindow.getSize();
+  const currentWidth = size[0] ?? 360;
+  const currentHeight = size[1] ?? 240;
+  if (currentWidth === nextWidth && currentHeight === nextHeight) {
+    return;
+  }
+
+  // Compute the new X so the window's RIGHT edge stays fixed on screen.
+  const pos = _compactWindow.getPosition();
+  const currentX = pos[0] ?? 0;
+  const currentY = pos[1] ?? 0;
+  const nextX = currentX + currentWidth - nextWidth;
+
+  const wasResizable = _compactWindow.isResizable();
+  if (!wasResizable) {
+    _compactWindow.setResizable(true);
+  }
+
+  // Temporarily widen / narrow the maxWidth constraint so Electron
+  // does not silently clamp the requested width.
+  _compactWindow.setMaximumSize(
+    Math.max(COMPACT_AUTO_MAX_WIDTH, nextWidth),
+    COMPACT_AUTO_MAX_HEIGHT,
+  );
+
+  // On Windows, `setBounds` on transparent frameless windows can be
+  // unreliable. Split into `setPosition` + `setSize` for robustness.
+  _compactWindow.setPosition(nextX, currentY, false);
+  _compactWindow.setSize(nextWidth, nextHeight, false);
+
+  // Restore the maxWidth constraint for the new mode.
+  _compactWindow.setMaximumSize(
+    Math.max(COMPACT_AUTO_MAX_WIDTH, nextWidth),
+    COMPACT_AUTO_MAX_HEIGHT,
+  );
+
+  if (!wasResizable) {
+    setTimeout(() => {
+      if (_compactWindow && !_compactWindow.isDestroyed()) {
+        _compactWindow.setResizable(false);
+      }
+    }, 100);
   }
 }
 

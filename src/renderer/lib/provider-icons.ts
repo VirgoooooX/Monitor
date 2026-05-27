@@ -21,6 +21,8 @@ import antigravityColor from '@lobehub/icons-static-svg/icons/antigravity-color.
 import copilotColor from '@lobehub/icons-static-svg/icons/copilot-color.svg?raw';
 import kimiColor from '@lobehub/icons-static-svg/icons/kimi-color.svg?raw';
 import mistralColor from '@lobehub/icons-static-svg/icons/mistral-color.svg?raw';
+import geminicliColor from '@lobehub/icons-static-svg/icons/geminicli-color.svg?raw';
+import xiaomiMimo from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw';
 
 // No color variant available — fall back to the brand-mono mark.
 import opencodeMono from '@lobehub/icons-static-svg/icons/opencode.svg?raw';
@@ -51,6 +53,12 @@ export const PROVIDER_ICON_SVG: Record<string, string> = {
   'github-copilot': copilotColor,
   kimi: kimiColor,
   mistral: mistralColor,
+  'gemini-cli': geminicliColor,
+  geminicli: geminicliColor,
+  'gemini-api': geminiColor,
+  xiaomi: xiaomiMimo,
+  'xiaomi-cloud': xiaomiMimo,
+  'xiaomi-mimo': xiaomiMimo,
 
   opencode: opencodeMono,
   openai: openaiMono,

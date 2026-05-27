@@ -91,18 +91,24 @@ describe('UsagePanel quota overview', () => {
     expect(screen.getByText('按账号显示')).toBeTruthy();
     expect(screen.getByText('5 小时限额')).toBeTruthy();
     expect(screen.getByText('周限额')).toBeTruthy();
-    expect(screen.getByText('Gemini Pro Series')).toBeTruthy();
-    expect(screen.getByText('Claude/GPT')).toBeTruthy();
-    expect(screen.getByText('Gemini 3.1 Pro Series')).toBeTruthy();
+    expect(screen.getByText('Gemini Pro')).toBeTruthy();
+    expect(screen.getByText('Gemini')).toBeTruthy();
+    expect(screen.queryByText('Claude/GPT')).toBeNull();
+    expect(screen.queryByText('Gemini Pro Series')).toBeNull();
+    expect(screen.queryByText('Gemini 3.1 Pro Series')).toBeNull();
     expect(screen.getByText('Plus')).toBeTruthy();
     expect(screen.getByText('Pro')).toBeTruthy();
     expect(screen.getByText('上游拒绝')).toBeTruthy();
     expect(screen.getByText('upstream returned HTTP 401')).toBeTruthy();
     expect(screen.queryByText(/MODEL_PLACEHOLDER/)).toBeNull();
+    expect(screen.queryByText(/MODEL_OPENAI/)).toBeNull();
 
     await waitFor(() => {
       expect(document.querySelectorAll('.quota-account-card')).toHaveLength(3);
-      expect(document.querySelectorAll('.quota-window-row')).toHaveLength(5);
+      // Antigravity rows: only MODEL_GOOGLE_GEMINI_2_5_PRO survives the filter
+      // (placeholder + OpenAI GPT are dropped) → folds into the single
+      // "Gemini" bucket. Plus codex 2 + gemini-cli 1 = 4.
+      expect(document.querySelectorAll('.quota-window-row')).toHaveLength(4);
     });
   });
 });

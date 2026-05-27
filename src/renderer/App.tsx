@@ -22,7 +22,7 @@
 //   • design.md §Window Strategy, §Compact Window Boot — First Render
 //   • PLAN.md §UI Implementation Guide §紧凑首页
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -106,9 +106,13 @@ const EXPANDED_WIDTH = 760;
 const MODE_THRESHOLD = (COMPACT_WIDTH + EXPANDED_WIDTH) / 2;
 
 type WindowMode = 'compact' | 'expanded';
+type CompactDisplayMode = 'full' | 'expanded' | 'mini';
 
 function detectWindowMode(): WindowMode {
   if (typeof window === 'undefined') {
+    return 'compact';
+  }
+  if (isLocalBrowserPreview()) {
     return 'compact';
   }
   // Main process passes mode via URL hash (#compact or #expanded)
@@ -118,6 +122,36 @@ function detectWindowMode(): WindowMode {
   // Fallback: use window width
   const width = window.outerWidth || window.innerWidth;
   return width < MODE_THRESHOLD ? 'compact' : 'expanded';
+}
+
+function isLocalBrowserPreview(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return (
+    !window.desktop &&
+    (window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === 'localhost')
+  );
+}
+
+function previewDashboardState(): DashboardState {
+  return {
+    status: 'healthy',
+    statusLabel: '外网正常',
+    generatedAt: Date.now(),
+    router: { ok: true, lastChange: Date.now() - 60_000 },
+    openclash: { tcpOk: true, apiOk: true, mode: 'rule' },
+    currentNode: {
+      group: '日本04',
+      node: '日本A04 | IEPL',
+      avgLatencyMs: 128,
+      probeResults: [],
+      successRate5: 1,
+      sparkline: [31, 33, 30, 32, 31, 128, 34, 30, 32, 31, 33, 30, 32, 31, 34, 30],
+    },
+    usageToday: { codex: 0, gemini: 0, opencode: 0 },
+  };
 }
 
 export function App(): JSX.Element | null {
@@ -131,6 +165,7 @@ export function App(): JSX.Element | null {
     const handler = (): void => {
       setMode(detectWindowMode());
     };
+    handler();
     window.addEventListener('resize', handler);
     return () => {
       window.removeEventListener('resize', handler);
@@ -142,6 +177,7 @@ export function App(): JSX.Element | null {
   // truth (the detected mode) in one place.
   useEffect(() => {
     const { body } = document;
+    body.classList.toggle('local-browser-preview', isLocalBrowserPreview());
     if (mode === 'expanded') {
       body.classList.add('mode-expanded');
       body.classList.remove('mode-compact', 'expanded', 'compact');
@@ -197,12 +233,19 @@ function CompactRoot({
 }: {
   readonly appearance: AppearanceSettings;
 }): JSX.Element | null {
-  const [state, setState] = useState<DashboardState | null>(null);
+  const [state, setState] = useState<DashboardState | null>(() => (
+    isLocalBrowserPreview() ? previewDashboardState() : null
+  ));
   const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
+  const [displayMode, setDisplayMode] = useState<CompactDisplayMode>('full');
 
   useEffect(() => {
     const desktop = window.desktop;
     if (!desktop) {
+      if (isLocalBrowserPreview()) {
+        setState(previewDashboardState());
+        return;
+      }
       setBridgeMissing(true);
       return;
     }
@@ -243,6 +286,138 @@ function CompactRoot({
     };
   }, []);
 
+  const displayModeRef = useRef<CompactDisplayMode>(displayMode);
+  displayModeRef.current = displayMode;
+
+  const requestCompactWindowSize = useCallback((
+    mode: CompactDisplayMode,
+    measuredHeight?: number,
+  ): void => {
+    const desktop = window.desktop;
+    const isPreview = isLocalBrowserPreview();
+
+    let width = 360;
+    let height = 240;
+
+    if (mode === 'mini') {
+      width = 56;
+      height = measuredHeight ?? 240;
+    } else if (mode === 'expanded') {
+      width = 360;
+      height = measuredHeight ?? 240;
+    }
+
+    if (isPreview) {
+      const root = document.getElementById('root');
+      document.body.style.width = `${width}px`;
+      document.body.style.height = `${height}px`;
+      if (root) {
+        root.style.width = `${width}px`;
+        root.style.height = `${height}px`;
+      }
+    }
+
+    if (desktop && 'resizeCompactWindow' in desktop) {
+      desktop.resizeCompactWindow({ width, height }).catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    if (displayMode === 'full') {
+      requestCompactWindowSize('full');
+    } else if (displayMode === 'mini') {
+      requestCompactWindowSize('mini');
+    }
+  }, [displayMode, requestCompactWindowSize]);
+
+  useEffect(() => {
+    if (displayMode === 'full') {
+      return;
+    }
+
+    let lastSize: { width: number; height: number } | null = null;
+    let raf = 0;
+
+    const measure = (): void => {
+      raf = 0;
+      const currentMode = displayModeRef.current;
+      if (currentMode === 'full') {
+        return;
+      }
+
+      let width = 360;
+      let height = 240;
+
+      if (currentMode === 'mini') {
+        const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
+        if (!miniRail) {
+          return;
+        }
+        width = 56;
+        const measuredHeight = miniRail.scrollHeight;
+        height = Math.ceil(measuredHeight + 8);
+      } else if (currentMode === 'expanded') {
+        const frame = document.querySelector<HTMLElement>('[data-testid="widget-shell"]');
+        if (!frame) {
+          return;
+        }
+        width = 360;
+        // frame.scrollHeight already includes content + inner padding.
+        // Add 12 for the 6 px frame margin on each side.
+        const measuredHeight = frame.scrollHeight;
+        height = Math.ceil(measuredHeight + 12);
+      }
+
+      if (lastSize?.width === width && lastSize.height === height) {
+        return;
+      }
+      lastSize = { width, height };
+
+      requestCompactWindowSize(currentMode, height);
+    };
+
+    const schedule = (): void => {
+      if (raf !== 0) {
+        return;
+      }
+      raf = window.requestAnimationFrame(measure);
+    };
+
+    schedule();
+
+    const observer = new ResizeObserver(schedule);
+    const frame = document.querySelector<HTMLElement>('[data-testid="widget-shell"]');
+    if (frame) {
+      observer.observe(frame);
+    }
+    const content = document.querySelector<HTMLElement>('.compact-frame__content');
+    if (content) {
+      observer.observe(content);
+    }
+    const usageSlot = document.querySelector<HTMLElement>('.compact-usage-slot');
+    if (usageSlot) {
+      observer.observe(usageSlot);
+    }
+    const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
+    if (miniRail) {
+      observer.observe(miniRail);
+    }
+
+    return () => {
+      observer.disconnect();
+      if (raf !== 0) {
+        window.cancelAnimationFrame(raf);
+      }
+    };
+  }, [
+    state,
+    displayMode,
+    appearance.colorMode,
+    appearance.compactTheme,
+    appearance.fontScale,
+    requestCompactWindowSize,
+  ]);
+
   if (bridgeMissing) {
     return (
       <div
@@ -278,7 +453,14 @@ function CompactRoot({
     );
   }
 
-  return <WidgetShell state={state} appearance={appearance} />;
+  return (
+    <WidgetShell
+      state={state}
+      appearance={appearance}
+      displayMode={displayMode}
+      onDisplayModeChange={setDisplayMode}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

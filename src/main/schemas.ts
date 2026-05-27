@@ -582,6 +582,14 @@ export const updateSecretInputSchema = z
   })
   .strict();
 
+/** Input for `desktop:resizeCompactWindow`. */
+export const resizeCompactWindowInputSchema = z
+  .object({
+    width: z.number().int().min(56).max(360).optional(),
+    height: z.number().int().min(180).max(1200),
+  })
+  .strict();
+
 // ---------------------------------------------------------------------------
 // Shared output substructures
 // ---------------------------------------------------------------------------
@@ -1250,6 +1258,10 @@ export const desktopApiSchemas = {
     output: z.object({
       snapshots: z.array(quotaSnapshotSchema),
     }),
+  },
+  resizeCompactWindow: {
+    input: resizeCompactWindowInputSchema,
+    output: z.void(),
   },
   // Network Quick Actions panel (network-quick-actions spec, task 10.2).
   // Malformed payloads on any of these three channels are rejected at

@@ -548,7 +548,7 @@ function loadRenderer(window: BrowserWindow, mode?: 'compact' | 'expanded'): voi
  * Create the always-on-top compact widget window
  * (design.md §Window Strategy):
  *
- *   - 360 × 240
+ *   - 360px wide, height driven by renderer content
  *   - `transparent: true`, `frame: false`
  *   - `alwaysOnTop: true`
  *   - `resizable: false`
@@ -571,10 +571,9 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
   const options: Electron.BrowserWindowConstructorOptions = {
     width: COMPACT_DEFAULT_SIZE.width,
     height: COMPACT_DEFAULT_SIZE.height,
-    minWidth: COMPACT_DEFAULT_SIZE.width,
-    minHeight: COMPACT_DEFAULT_SIZE.height,
+    minWidth: 56,
+    minHeight: 40,
     maxWidth: COMPACT_DEFAULT_SIZE.width,
-    maxHeight: COMPACT_DEFAULT_SIZE.height,
     transparent: true,
     frame: false,
     /*

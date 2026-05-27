@@ -549,6 +549,15 @@ export function SettingsView(): JSX.Element {
     [errors],
   );
 
+  // Auto-dismiss the "已保存" confirmation after a short delay so the
+  // sticky save bar doesn't linger indefinitely once the user has
+  // acknowledged the success state.
+  useEffect(() => {
+    if (!saveSuccess) return;
+    const timer = window.setTimeout(() => setSaveSuccess(false), 2000);
+    return () => window.clearTimeout(timer);
+  }, [saveSuccess]);
+
   // ---------------------------------------------------------------------------
   // Field updaters
   // ---------------------------------------------------------------------------

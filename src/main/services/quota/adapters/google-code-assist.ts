@@ -14,6 +14,15 @@ import {
 } from './common';
 import type { ProviderAdapter } from './types';
 
+const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GOOGLE_OAUTH_CLIENT_ID =
+  '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
+const GOOGLE_OAUTH_CLIENT_SECRET = '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';
+const ANTIGRAVITY_OAUTH_CLIENT_ID =
+  '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
+const ANTIGRAVITY_OAUTH_CLIENT_SECRET = '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';
+const TOKEN_EXPIRY_SKEW_MS = 60_000;
+
 type CodeAssistAction =
   | 'retrieveUserQuota'
   | 'loadCodeAssist'
@@ -30,6 +39,11 @@ export interface GoogleCodeAssistAdapterConfig {
 
 export interface GoogleCodeAssistAdapterDeps {
   readonly requestJson?: RequestJson;
+}
+
+interface GoogleRefreshTokenResponse {
+  readonly access_token?: unknown;
+  readonly expires_in?: unknown;
 }
 
 export function createGoogleCodeAssistAdapter(
@@ -75,40 +89,32 @@ export function createGoogleCodeAssistAdapter(
           `${config.provider} project id is missing`,
         );
       }
+
+      let requestAccessToken = accessToken;
+      if (googleAccessTokenShouldRefresh(secret.expiresAt, now)) {
+        requestAccessToken = await refreshGoogleAccessToken(
+          secret,
+          config.provider,
+          doRequest,
+          signal,
+        );
+      }
+
       let lastError: ProviderAdapterError | null = null;
       for (const base of config.bases) {
         const responses: unknown[] = [];
         try {
-          for (const action of config.actions) {
-            try {
-            responses.push(
-              await doRequest<unknown>({
-                url: `${base.replace(/\/$/, '')}/v1internal:${action}`,
-                method: 'POST',
-                ...(signal !== undefined ? { signal } : {}),
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                  Accept: 'application/json',
-                  'User-Agent': config.userAgent,
-                  ...(config.xGoogApiClient !== undefined
-                    ? { 'X-Goog-Api-Client': config.xGoogApiClient }
-                    : {}),
-                },
-                body: bodyForAction(action, projectId, config),
-              }),
-            );
-            } catch (err) {
-              const coded = normaliseError(err, `${config.provider} quota request failed`);
-              lastError = coded;
-              if (
-                coded.code === 'upstream_unauthorized' ||
-                coded.code === 'rate_limited' ||
-                coded.code === 'auth_expired'
-              ) {
-                throw coded;
-              }
-            }
-          }
+          responses.push(
+            ...(await requestCodeAssistActions({
+              base,
+              actions: config.actions,
+              projectId,
+              config,
+              accessToken: requestAccessToken,
+              doRequest,
+              ...(signal !== undefined ? { signal } : {}),
+            })),
+          );
 
           const windows = parseGoogleCodeAssistWindows(responses, config.provider);
           if (windows.length === 0) {
@@ -125,6 +131,46 @@ export function createGoogleCodeAssistAdapter(
           const coded = normaliseError(err, `${config.provider} quota request failed`);
           lastError = coded;
           if (
+            coded.code === 'upstream_unauthorized' &&
+            requestAccessToken === accessToken &&
+            typeof secret.refreshToken === 'string' &&
+            secret.refreshToken.trim().length > 0
+          ) {
+            try {
+              requestAccessToken = await refreshGoogleAccessToken(
+                secret,
+                config.provider,
+                doRequest,
+                signal,
+              );
+              const retryInput = {
+                base,
+                actions: config.actions,
+                projectId,
+                config,
+                accessToken: requestAccessToken,
+                doRequest,
+                ...(signal !== undefined ? { signal } : {}),
+              };
+              const retriedResponses = await requestCodeAssistActions({
+                ...retryInput,
+              });
+              const windows = parseGoogleCodeAssistWindows(retriedResponses, config.provider);
+              if (windows.length === 0) {
+                throw new ProviderAdapterError(
+                  'upstream_changed',
+                  `${config.provider} quota response missing windows`,
+                );
+              }
+              return okSnapshot(account, now, windows, {
+                kind: inferKind(windows),
+              });
+            } catch (refreshErr) {
+              lastError = normaliseError(refreshErr, `${config.provider} auth token refresh failed`);
+              throw lastError;
+            }
+          }
+          if (
             coded.code === 'upstream_unauthorized' ||
             coded.code === 'rate_limited' ||
             coded.code === 'auth_expired'
@@ -139,6 +185,117 @@ export function createGoogleCodeAssistAdapter(
   };
 }
 
+async function requestCodeAssistActions(input: {
+  readonly base: string;
+  readonly actions: readonly CodeAssistAction[];
+  readonly projectId: string;
+  readonly config: GoogleCodeAssistAdapterConfig;
+  readonly accessToken: string;
+  readonly signal?: AbortSignal;
+  readonly doRequest: RequestJson;
+}): Promise<unknown[]> {
+  const responses: unknown[] = [];
+  for (const action of input.actions) {
+    try {
+      responses.push(
+        await input.doRequest<unknown>({
+          url: `${input.base.replace(/\/$/, '')}/v1internal:${action}`,
+          method: 'POST',
+          ...(input.signal !== undefined ? { signal: input.signal } : {}),
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+            Accept: 'application/json',
+            'User-Agent': input.config.userAgent,
+            ...(input.config.xGoogApiClient !== undefined
+              ? { 'X-Goog-Api-Client': input.config.xGoogApiClient }
+              : {}),
+          },
+          body: bodyForAction(action, input.projectId, input.config),
+        }),
+      );
+    } catch (err) {
+      const coded = normaliseError(err, `${input.config.provider} quota request failed`);
+      if (
+        coded.code === 'upstream_unauthorized' ||
+        coded.code === 'rate_limited' ||
+        coded.code === 'auth_expired'
+      ) {
+        throw coded;
+      }
+    }
+  }
+  return responses;
+}
+
+function googleAccessTokenShouldRefresh(
+  expiresAt: number | undefined,
+  now: number,
+): boolean {
+  return typeof expiresAt === 'number' &&
+    Number.isFinite(expiresAt) &&
+    expiresAt <= now + TOKEN_EXPIRY_SKEW_MS;
+}
+
+async function refreshGoogleAccessToken(
+  secret: { readonly refreshToken?: string },
+  provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
+  doRequest: RequestJson,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  const refreshToken =
+    typeof secret.refreshToken === 'string' ? secret.refreshToken.trim() : '';
+  if (refreshToken.length === 0) {
+    throw new ProviderAdapterError('auth_expired', 'Google auth token expired');
+  }
+  const oauthClient = googleOauthClientForProvider(provider);
+
+  let response: GoogleRefreshTokenResponse;
+  try {
+    response = await doRequest<GoogleRefreshTokenResponse>({
+      url: GOOGLE_OAUTH_TOKEN_URL,
+      method: 'POST',
+      ...(signal !== undefined ? { signal } : {}),
+      headers: { Accept: 'application/json' },
+      body: new URLSearchParams({
+        client_id: oauthClient.clientId,
+        client_secret: oauthClient.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+  } catch (err) {
+    const coded = normaliseError(err, 'Google auth token refresh failed');
+    if (
+      coded.code === 'upstream_unauthorized' ||
+      coded.code === 'upstream_changed'
+    ) {
+      throw new ProviderAdapterError('auth_expired', 'Google refresh token rejected');
+    }
+    throw coded;
+  }
+
+  const nextToken =
+    typeof response.access_token === 'string' ? response.access_token.trim() : '';
+  if (nextToken.length === 0) {
+    throw new ProviderAdapterError('auth_expired', 'Google refresh token rejected');
+  }
+  return nextToken;
+}
+
+function googleOauthClientForProvider(
+  provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
+): { readonly clientId: string; readonly clientSecret: string } {
+  return provider === 'antigravity'
+    ? {
+        clientId: ANTIGRAVITY_OAUTH_CLIENT_ID,
+        clientSecret: ANTIGRAVITY_OAUTH_CLIENT_SECRET,
+      }
+    : {
+        clientId: GOOGLE_OAUTH_CLIENT_ID,
+        clientSecret: GOOGLE_OAUTH_CLIENT_SECRET,
+      };
+}
+
 function bodyForAction(
   action: CodeAssistAction,
   projectId: string,
@@ -146,7 +303,7 @@ function bodyForAction(
 ): Record<string, unknown> {
   switch (action) {
     case 'retrieveUserQuota':
-      return { project: projectId, userAgent: config.userAgent };
+      return { project: projectId };
     case 'fetchAvailableModels':
       return { project: projectId };
     case 'loadCodeAssist':
@@ -297,33 +454,58 @@ function normaliseGoogleWindows(
   windows: readonly QuotaWindow[],
   provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
 ): QuotaWindow[] {
-  const byName = new Map<string, QuotaWindow>();
+  // Both Antigravity and Gemini CLI now collapse multiple raw model
+  // buckets into a small set of display groups (Antigravity:
+  // Claude/Gemini; Gemini CLI: Gemini Pro/Flash). Within a group we
+  // average percentLeft so the visible bar reflects the group as a
+  // whole rather than its worst member.
+  type Aggregator = {
+    name: string;
+    percentSum: number;
+    percentCount: number;
+    resetAt: number | null;
+    windowSeconds: number | null;
+  };
+  const byName = new Map<string, Aggregator>();
 
   for (const window of windows) {
     const name = normaliseGoogleQuotaName(window.name, provider);
     if (name === null) continue;
 
-    const next: QuotaWindow = {
-      ...window,
-      name,
-      windowSeconds: window.windowSeconds ?? inferWindowSeconds(name),
-    };
     const existing = byName.get(name);
-    byName.set(name, existing === undefined ? next : mergeWindow(existing, next));
+    if (existing === undefined) {
+      byName.set(name, {
+        name,
+        percentSum: window.percentLeft ?? 0,
+        percentCount: window.percentLeft === null ? 0 : 1,
+        resetAt: window.resetAt,
+        windowSeconds: window.windowSeconds ?? inferWindowSeconds(name),
+      });
+      continue;
+    }
+
+    if (window.percentLeft !== null) {
+      existing.percentSum += window.percentLeft;
+      existing.percentCount += 1;
+    }
+    existing.resetAt = minNullable(existing.resetAt, window.resetAt);
+    existing.windowSeconds = existing.windowSeconds ?? window.windowSeconds ?? inferWindowSeconds(name);
   }
 
-  return [...byName.values()].sort(
+  const merged: QuotaWindow[] = [];
+  byName.forEach((agg) => {
+    const percentLeft = agg.percentCount === 0 ? null : agg.percentSum / agg.percentCount;
+    merged.push({
+      name: agg.name,
+      percentLeft,
+      resetAt: agg.resetAt,
+      windowSeconds: agg.windowSeconds,
+    });
+  });
+
+  return merged.sort(
     (a, b) => googleWindowPriority(a.name, provider) - googleWindowPriority(b.name, provider),
   );
-}
-
-function mergeWindow(a: QuotaWindow, b: QuotaWindow): QuotaWindow {
-  return {
-    name: a.name,
-    percentLeft: minNullable(a.percentLeft, b.percentLeft),
-    resetAt: minNullable(a.resetAt, b.resetAt),
-    windowSeconds: a.windowSeconds ?? b.windowSeconds,
-  };
 }
 
 function minNullable(a: number | null, b: number | null): number | null {
@@ -345,30 +527,46 @@ function normaliseGoogleQuotaName(
   const lower = base.toLowerCase();
 
   if (/^MODEL_PLACEHOLDER_M\d+$/.test(upper)) return null;
-  if (/^MODEL_CHAT_\d+$/.test(upper)) return normaliseKnownChatModel(upper);
+  if (/^MODEL_CHAT_\d+$/.test(upper)) return normaliseKnownChatModel(upper, provider);
   if (/^MODEL_[A-Z0-9_]+$/.test(upper)) {
     return normaliseEnumModel(upper, provider);
   }
 
-  if (lower.includes('gemini-2.5-flash-lite')) {
-    return provider === 'antigravity' ? 'Gemini 2.5 Flash Lite' : 'Gemini Flash Lite Series';
+  if (provider === 'antigravity') {
+    if (lower.includes('claude') || lower.includes('anthropic')) return 'Claude';
+    if (lower.includes('gpt') || lower.includes('openai')) return null;
+    if (lower.includes('image')) return null;
+    if (lower.includes('gemini') || lower.includes('google')) return 'Gemini';
+    if (/^response:\d+$/.test(trimmed) || /^\d+$/.test(trimmed)) return null;
+    // Antigravity displayName fallback (e.g. "Antigravity Pro" CPA bucket).
+    return trimmed;
   }
-  if (lower.includes('gemini-2.5-flash')) {
-    return provider === 'antigravity' ? 'Gemini 2.5 Flash' : 'Gemini Flash Series';
+
+  // Gemini CLI rules: Google CPA exposes a per-modelId daily bucket. We
+  // collapse all Pro variants into one row and all Flash variants
+  // (including Flash Lite + previews) into another so the strip stays
+  // readable as new model variants ship. Within each row we keep the
+  // existing min-merge behaviour (most-pessimistic).
+  if (lower.includes('gemini') || lower.includes('google')) {
+    if (lower.includes('image')) return null;
+    if (lower.includes('pro')) return 'Gemini Pro';
+    if (lower.includes('flash')) return 'Gemini Flash';
   }
-  if (lower.includes('gemini-2.5-pro')) {
-    return provider === 'antigravity' ? 'Gemini 3.1 Pro Series' : 'Gemini Pro Series';
-  }
-  if (lower.includes('gemini-3.1-flash-lite-preview')) return 'gemini-3.1-flash-lite-preview';
-  if (lower.includes('gemini-3.1-flash-lite')) return 'gemini-3.1-flash-lite';
-  if (lower.includes('gemini-3.1-pro')) return 'Gemini 3.1 Pro Series';
-  if (lower.includes('gemini-3-flash')) return 'Gemini 3 Flash';
 
   if (/^response:\d+$/.test(trimmed) || /^\d+$/.test(trimmed)) return null;
   return trimmed;
 }
 
-function normaliseKnownChatModel(name: string): string | null {
+function normaliseKnownChatModel(
+  name: string,
+  provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
+): string | null {
+  if (provider === 'antigravity') {
+    // MODEL_CHAT_23310 is Gemini 3.1 Flash Image — filtered out (separate pool, rarely used).
+    if (name === 'MODEL_CHAT_23310') return null;
+    // Other MODEL_CHAT_* are Gemini variants → fold into one bucket.
+    return 'Gemini';
+  }
   switch (name) {
     case 'MODEL_CHAT_20706': return 'Gemini 3 Flash';
     case 'MODEL_CHAT_23310': return 'Gemini 3.1 Flash Image';
@@ -380,6 +578,14 @@ function normaliseEnumModel(
   name: string,
   provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
 ): string | null {
+  if (provider === 'antigravity') {
+    if (name.includes('CLAUDE') || name.includes('ANTHROPIC')) return 'Claude';
+    if (name.includes('OPENAI') || name.includes('GPT')) return null;
+    if (name.includes('IMAGE')) return null;
+    if (name.includes('GEMINI') || name.includes('GOOGLE')) return 'Gemini';
+    return null;
+  }
+
   if (
     name.includes('OPENAI') ||
     name.includes('GPT') ||
@@ -388,17 +594,10 @@ function normaliseEnumModel(
   ) {
     return 'Claude/GPT';
   }
-  if (name.includes('GOOGLE_GEMINI_3_1_FLASH_IMAGE')) return 'Gemini 3.1 Flash Image';
-  if (name.includes('GOOGLE_GEMINI_3_1_PRO')) return 'Gemini 3.1 Pro Series';
-  if (name.includes('GOOGLE_GEMINI_3_FLASH')) return 'Gemini 3 Flash';
-  if (name.includes('GOOGLE_GEMINI_2_5_FLASH_LITE')) {
-    return provider === 'antigravity' ? 'Gemini 2.5 Flash Lite' : 'Gemini Flash Lite Series';
-  }
-  if (name.includes('GOOGLE_GEMINI_2_5_FLASH')) {
-    return provider === 'antigravity' ? 'Gemini 2.5 Flash' : 'Gemini Flash Series';
-  }
-  if (name.includes('GOOGLE_GEMINI_2_5_PRO')) {
-    return provider === 'antigravity' ? 'Gemini 3.1 Pro Series' : 'Gemini Pro Series';
+  if (name.includes('IMAGE')) return null;
+  if (name.includes('GEMINI') || name.includes('GOOGLE')) {
+    if (name.includes('PRO')) return 'Gemini Pro';
+    if (name.includes('FLASH')) return 'Gemini Flash';
   }
   return null;
 }
@@ -408,19 +607,12 @@ function googleWindowPriority(
   provider: Extract<ProviderId, 'gemini-cli' | 'antigravity'>,
 ): number {
   const antigravityOrder = [
-    'Claude/GPT',
-    'Gemini 3.1 Pro Series',
-    'Gemini 2.5 Flash',
-    'Gemini 2.5 Flash Lite',
-    'Gemini 3 Flash',
-    'Gemini 3.1 Flash Image',
+    'Claude',
+    'Gemini',
   ];
   const geminiCliOrder = [
-    'Gemini Flash Lite Series',
-    'Gemini Flash Series',
-    'Gemini Pro Series',
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-flash-lite-preview',
+    'Gemini Pro',
+    'Gemini Flash',
   ];
   const order = provider === 'antigravity' ? antigravityOrder : geminiCliOrder;
   const index = order.indexOf(name);

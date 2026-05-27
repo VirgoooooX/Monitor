@@ -235,6 +235,9 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  /* Reserve enough vertical space for two name lines + meta so cards
+     line up regardless of how long an account label runs. */
+  min-height: 56px;
 }
 
 .quota-account-card__identity {
@@ -293,6 +296,13 @@
   font-weight: 700;
   line-height: 1.32;
   overflow-wrap: anywhere;
+  /* Cap the name at two lines so a long account ID doesn't push the
+     header taller than its neighbours. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .quota-account-card__meta {

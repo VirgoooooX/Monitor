@@ -394,11 +394,8 @@ export type QuotaCapability =
  * at import time to seed `provider_auth.quota_capability`; existing
  * rows are never auto-rewritten when this map evolves.
  *
- * DeepSeek resolves to `health_only` per Q1 in
- * `cpa-quota-import/design.md` — local balance accounting stays in
- * `usage.service.ts` via the existing `deepseek.collector.ts` path,
- * so the quota aggregator only needs to confirm the `/user/balance`
- * endpoint is reachable.
+ * DeepSeek resolves to `official` because the first-party
+ * `/user/balance` endpoint returns account credits.
  */
 export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = {
   'claude-code': 'official',
@@ -406,7 +403,7 @@ export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = 
   'gemini-cli': 'official',
   antigravity: 'official',
   'gemini-api': 'health_only',
-  deepseek: 'health_only',
+  deepseek: 'official',
   xiaomi: 'health_only',
   'openai-compatible': 'health_only',
 };
@@ -923,6 +920,12 @@ export interface UpdateSecretInput {
   value: string;
 }
 
+/** Input for `desktop:resizeCompactWindow`. */
+export interface ResizeCompactWindowInput {
+  width?: number | undefined;
+  height: number;
+}
+
 // ---------------------------------------------------------------------------
 // Network Quick Actions (network-quick-actions feature)
 // ---------------------------------------------------------------------------
@@ -1070,6 +1073,7 @@ export interface DesktopApi {
   refreshNow(): Promise<void>;
   getUsageSummary(input: UsageSummaryInput): Promise<UsageSummary>;
   getQuotaStatus(): Promise<QuotaStatus>;
+  resizeCompactWindow(input: ResizeCompactWindowInput): Promise<void>;
   getSettings(): Promise<AppSettings>;
   updateSettings(input: Partial<AppSettings>): Promise<AppSettings>;
   updateSecret(input: UpdateSecretInput): Promise<void>;

@@ -10,6 +10,7 @@ import {
 import { createAntigravityAdapter } from './antigravity.adapter';
 import { createClaudeCodeAdapter } from './claude-code.adapter';
 import { createCodexAdapter } from './codex.adapter';
+import { createDeepSeekAdapter } from './deepseek.adapter';
 import { createGeminiCliAdapter } from './gemini-cli.adapter';
 import { parseGoogleCodeAssistWindows } from './google-code-assist';
 
@@ -224,17 +225,105 @@ describe('official quota adapters — Gemini CLI', () => {
     ]);
     expect(calls[0]!.body).toMatchObject({
       project: 'project-1',
-      userAgent: 'gemini-cli',
     });
+    expect(JSON.stringify(calls[0]!.body)).not.toContain('userAgent');
     expect(calls[1]!.body).toMatchObject({
       cloudaicompanionProject: 'project-1',
       metadata: { ideType: 'GEMINI_CLI' },
     });
     expect(snapshot.windows).toMatchObject([
       {
-        name: 'Gemini Pro Series',
+        name: 'Gemini Pro',
         percentLeft: 25,
       },
+    ]);
+  });
+
+  it('refreshes expired Google access tokens before querying quota', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      if (input.url === 'https://oauth2.googleapis.com/token') {
+        expect(input.body).toBeInstanceOf(URLSearchParams);
+        expect(String(input.body)).toContain('grant_type=refresh_token');
+        return { access_token: 'fresh-google-token', expires_in: 3600 } as T;
+      }
+      expect(input.headers?.Authorization).toBe('Bearer fresh-google-token');
+      if (input.url.endsWith(':retrieveUserQuota')) {
+        return {
+          buckets: [{
+            modelId: 'gemini-2.5-flash',
+            limit: 100,
+            remaining: 50,
+          }],
+        } as T;
+      }
+      return {} as T;
+    };
+    const adapter = createGeminiCliAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('gemini-cli', { projectId: 'project-1' }),
+      getSecret: () => ({
+        accessToken: 'expired-google-token',
+        refreshToken: 'google-refresh-token',
+        projectId: 'project-1',
+        expiresAt: NOW - 1000,
+      }),
+      now: NOW,
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://oauth2.googleapis.com/token',
+      'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
+      'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+    ]);
+    expect(snapshot.windows).toMatchObject([
+      { name: 'Gemini Flash', percentLeft: 50 },
+    ]);
+  });
+
+  it('refreshes and retries once when Google rejects the imported access token', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      if (input.url === 'https://oauth2.googleapis.com/token') {
+        return { access_token: 'fresh-google-token' } as T;
+      }
+      if (input.headers?.Authorization === 'Bearer stale-google-token') {
+        throw new ProviderAdapterError('upstream_unauthorized', 'upstream returned HTTP 401');
+      }
+      if (input.url.endsWith(':retrieveUserQuota')) {
+        return {
+          buckets: [{
+            modelId: 'gemini-2.5-flash-lite',
+            limit: 100,
+            remaining: 75,
+          }],
+        } as T;
+      }
+      return {} as T;
+    };
+    const adapter = createGeminiCliAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('gemini-cli', { projectId: 'project-1' }),
+      getSecret: () => ({
+        accessToken: 'stale-google-token',
+        refreshToken: 'google-refresh-token',
+        projectId: 'project-1',
+      }),
+      now: NOW,
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
+      'https://oauth2.googleapis.com/token',
+      'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
+      'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+    ]);
+    expect(snapshot.windows).toMatchObject([
+      { name: 'Gemini Flash', percentLeft: 75 },
     ]);
   });
 
@@ -275,15 +364,59 @@ describe('official quota adapters — Gemini CLI', () => {
     );
 
     expect(windows.map((window) => window.name)).toEqual([
-      'Gemini Flash Lite Series',
-      'Gemini Flash Series',
-      'Gemini Pro Series',
-      'gemini-3.1-flash-lite-preview',
+      'Gemini Pro',
+      'Gemini Flash',
     ]);
   });
 });
 
 describe('official quota adapters — Antigravity', () => {
+  it('uses the Antigravity OAuth client when refreshing Antigravity tokens', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      if (input.url === 'https://oauth2.googleapis.com/token') {
+        expect(String(input.body)).toContain(
+          'client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
+        );
+        return { access_token: 'fresh-antigravity-token' } as T;
+      }
+      expect(input.headers?.Authorization).toBe('Bearer fresh-antigravity-token');
+      if (input.url.endsWith(':fetchAvailableModels')) {
+        return {
+          models: {
+            'gemini-3.1-pro-high': {
+              displayName: 'Gemini 3.1 Pro High',
+              quotaInfo: { remainingFraction: 0.6 },
+            },
+          },
+        } as T;
+      }
+      return {} as T;
+    };
+    const adapter = createAntigravityAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('antigravity', { projectId: 'project-ag' }),
+      getSecret: () => ({
+        accessToken: 'expired-antigravity-token',
+        refreshToken: 'antigravity-refresh-token',
+        projectId: 'project-ag',
+        expiresAt: NOW - 1000,
+      }),
+      now: NOW,
+    });
+
+    expect(calls.map((call) => call.url).slice(0, 3)).toEqual([
+      'https://oauth2.googleapis.com/token',
+      'https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels',
+      'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+    ]);
+    expect(snapshot.windows).toMatchObject([
+      { name: 'Gemini', percentLeft: 60 },
+    ]);
+  });
+
   it('falls back across Antigravity bases and parses Code Assist windows', async () => {
     const calls: RequestJsonInput[] = [];
     const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
@@ -369,13 +502,55 @@ describe('official quota adapters — Antigravity', () => {
     );
 
     expect(windows.map((window) => window.name)).toEqual([
-      'Claude/GPT',
-      'Gemini 3.1 Pro Series',
-      'Gemini 2.5 Flash',
-      'Gemini 2.5 Flash Lite',
-      'Gemini 3 Flash',
-      'Gemini 3.1 Flash Image',
+      'Gemini',
     ]);
     expect(windows.some((window) => window.name.includes('PLACEHOLDER'))).toBe(false);
+    expect(windows.some((window) => window.name.includes('Claude'))).toBe(false);
+    expect(windows.some((window) => window.name.includes('GPT'))).toBe(false);
+  });
+});
+
+describe('official quota adapters — DeepSeek', () => {
+  it('calls the official balance endpoint and emits credits windows', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      return {
+        is_available: true,
+        balance_infos: [
+          {
+            currency: 'CNY',
+            total_balance: '110.00',
+            granted_balance: '10.00',
+            topped_up_balance: '100.00',
+          },
+        ],
+      } as T;
+    };
+    const adapter = createDeepSeekAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('deepseek'),
+      getSecret: () => ({ apiKey: 'sk-deepseek' }),
+      now: NOW,
+    });
+
+    expect(calls[0]).toMatchObject({
+      url: 'https://api.deepseek.com/user/balance',
+      method: 'GET',
+    });
+    expect(calls[0]!.headers?.Authorization).toBe('Bearer sk-deepseek');
+    expect(snapshot).toMatchObject({
+      provider: 'deepseek',
+      status: 'ok',
+      kind: 'credits',
+      rawPlanLabel: 'CNY 总额 110.00 / 赠金 10.00 / 充值 100.00',
+    });
+    expect(snapshot.windows).toMatchObject([
+      {
+        name: 'credits:CNY 总额 110.00 / 赠金 10.00 / 充值 100.00',
+        percentLeft: 100,
+      },
+    ]);
   });
 });

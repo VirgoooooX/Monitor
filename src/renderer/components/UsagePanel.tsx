@@ -13,7 +13,11 @@
 import { useEffect, useState, useCallback } from 'react';
 
 import { formatTokens } from '../lib/format';
-import { quotaWindowDisplayName, quotaWindowPriority } from '../lib/quota-display';
+import {
+  groupQuotaWindowsByDisplay,
+  quotaWindowDisplayName,
+  quotaWindowPriority,
+} from '../lib/quota-display';
 import type {
   CollectorStatus,
   QuotaSnapshot,
@@ -324,19 +328,10 @@ function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Eleme
 // ---------------------------------------------------------------------------
 
 function QuotaAccountCard({ snapshot }: { snapshot: QuotaSnapshot }): JSX.Element {
-  const windows = snapshot.windows
-    .map((window) => ({
-      window,
-      displayName: quotaWindowDisplayName(window.name, snapshot.provider),
-    }))
-    .filter((entry): entry is { window: QuotaWindow; displayName: string } =>
-      entry.displayName !== null,
-    )
-    .sort(
-      (a, b) =>
-        quotaWindowPriority(a.window.name, snapshot.provider) -
-        quotaWindowPriority(b.window.name, snapshot.provider),
-    );
+  // Group raw windows by display label so callers see at most one row
+  // per group (e.g. Claude 4.6 = Opus + Sonnet averaged). Sorted by
+  // `quotaWindowPriority` inside the helper.
+  const windows = groupQuotaWindowsByDisplay(snapshot.windows, snapshot.provider);
   const title = snapshotTitle(snapshot);
   const tone = snapshotStatusTone(snapshot);
 

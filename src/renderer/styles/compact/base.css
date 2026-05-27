@@ -1,8 +1,10 @@
 /*
  * Compact widget — base layout and shared slot primitives.
  *
- * The compact (floating) window is 360 × 240, frameless, transparent,
- * always-on-top. Every theme paints its own material inside the
+ * The compact (floating) window is 360px wide and 240px tall by
+ * default; its usage section scrolls, and the renderer can ask the
+ * main process to expand vertically when the user opens all details.
+ * Every theme paints its own material inside the
  * `.compact-frame` so the rounded corners read correctly over the
  * desktop wallpaper.
  *
@@ -67,6 +69,7 @@
      locally. */
   width: calc(100% - 12px);
   height: calc(100% - 12px);
+  min-height: 0;
   margin: 6px;
 
   border-radius: var(--compact-radius);
@@ -127,7 +130,7 @@
   width: 100%;
   height: 100%;
   display: grid;
-  grid-template-rows: 72px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   padding: 10px 14px;
   box-sizing: border-box;
   gap: 0;
@@ -143,6 +146,7 @@
   padding-bottom: 8px;
   border-bottom: 1px solid var(--compact-divider);
   min-height: 0;
+  flex: 0 0 auto;
 }
 
 .compact-network-slot__copy {
@@ -225,13 +229,291 @@
 /* ── Usage slot ────────────────────────────────────────────────── */
 
 .compact-usage-slot {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   padding-top: 8px;
-  flex: 1;
+  padding-bottom: 26px;
+  flex: 1 1 auto;
   min-height: 0;
   -webkit-app-region: no-drag;
+}
+
+.compact-usage-slot__scroll-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.compact-usage-slot__scroll {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 5px;
+  scrollbar-width: none;
+}
+
+.compact-usage-slot__scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.compact-scroll-cue {
+  position: absolute;
+  top: 2px;
+  right: -3px;
+  bottom: 2px;
+  width: 1px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(210, 232, 224, 0.16) 14%,
+    rgba(210, 232, 224, 0.16) 86%,
+    transparent
+  );
+  transition: opacity 0.18s ease;
+}
+
+.compact-scroll-cue[data-scrollable='true'] {
+  opacity: 0.58;
+}
+
+.compact-scroll-cue::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: var(--scroll-cue-thumb-top, 0);
+  width: 3px;
+  height: var(--scroll-cue-thumb-height, 18px);
+  min-height: 18px;
+  border-radius: 999px;
+  background: rgba(232, 255, 247, 0.44);
+  box-shadow:
+    0 0 0 1px rgba(20, 28, 28, 0.28),
+    0 0 7px rgba(52, 211, 153, 0.20);
+  transform: translateZ(0);
+}
+
+.compact-usage-slot:hover .compact-scroll-cue[data-scrollable='true'] {
+  opacity: 0.82;
+}
+
+.compact-frame[data-display-mode='expanded'] {
+  height: auto;
+}
+
+.compact-frame[data-display-mode='expanded'] .compact-frame__content {
+  height: auto;
+  grid-template-rows: auto auto;
+}
+
+.compact-frame[data-display-mode='expanded'] .compact-usage-slot {
+  flex: 0 0 auto;
+  padding-bottom: 18px;
+}
+
+.compact-frame[data-display-mode='expanded'] .compact-usage-slot__scroll-wrap,
+.compact-frame[data-display-mode='expanded'] .compact-usage-slot__scroll {
+  flex: 0 0 auto;
+  overflow: visible;
+  height: auto;
+}
+
+.compact-frame[data-display-mode='expanded'] .compact-scroll-cue {
+  display: none;
+}
+
+/* ── Toggle buttons — minimalist, reveal on hover ──────────────
+ *
+ * Both toggles (top-right "go-mini" and bottom-centre "expand")
+ * disappear into the chrome when nobody is interacting. Hovering the
+ * widget (or focusing it via keyboard) fades them up to a quiet 50 %
+ * opacity; hovering / focusing the button itself takes them to full
+ * accent. They use only theme tokens (no fills, no borders) so each
+ * theme's accent + muted colors automatically restyle them.
+ *
+ * Buttons keep `pointer-events: auto` while invisible so the area is
+ * still clickable; the .compact-frame :hover always fires before the
+ * cursor reaches a button inside it, so users see the fade-in begin
+ * the moment they enter the widget.
+ */
+.compact-mini-toggle-btn,
+.compact-expand-toggle-btn {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--compact-muted);
+  cursor: pointer;
+  outline: none;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
+  -webkit-app-region: no-drag;
+}
+
+.compact-mini-toggle-btn {
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.compact-expand-toggle-btn {
+  left: 50%;
+  bottom: 1px;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+/* Reveal buttons when the widget is hovered or focused (keyboard). */
+.compact-frame:hover .compact-mini-toggle-btn,
+.compact-frame:hover .compact-expand-toggle-btn,
+.compact-frame:focus-within .compact-mini-toggle-btn,
+.compact-frame:focus-within .compact-expand-toggle-btn {
+  opacity: 0.5;
+}
+
+/* Full strength on direct interaction. */
+.compact-mini-toggle-btn:hover,
+.compact-mini-toggle-btn:focus-visible,
+.compact-expand-toggle-btn:hover,
+.compact-expand-toggle-btn:focus-visible {
+  opacity: 1;
+  color: var(--compact-accent);
+  background: var(--compact-surface);
+}
+
+/* Calm motion: respect reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .compact-mini-toggle-btn,
+  .compact-expand-toggle-btn {
+    transition: none;
+  }
+}
+
+/* Shrink lucide-react SVG glyphs so they read as light hints rather
+   than chunky controls. */
+.compact-mini-toggle-btn > svg {
+  width: 12px;
+  height: 12px;
+}
+.compact-expand-toggle-btn > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.compact-frame--mini {
+  width: 48px;
+  height: calc(100% - 8px);
+  margin: 4px auto;
+  border-radius: 16px;
+  -webkit-app-region: drag;
+}
+
+.compact-mini-rail {
+  position: relative;
+  z-index: 2;
+  height: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 7px;
+  -webkit-app-region: drag;
+}
+
+.compact-mini-rail__network {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  transition: all 0.25s ease;
+  -webkit-app-region: no-drag;
+}
+
+.compact-mini-rail__network[data-tone='ok'] {
+  background: #22c55e;
+  box-shadow:
+    0 0 0 2px rgba(34, 197, 94, 0.25),
+    0 0 10px rgba(34, 197, 94, 0.8);
+}
+
+.compact-mini-rail__network[data-tone='warn'] {
+  background: #f5b400;
+  box-shadow:
+    0 0 0 2px rgba(245, 180, 0, 0.25),
+    0 0 8px rgba(245, 180, 0, 0.6);
+}
+
+.compact-mini-rail__network[data-tone='bad'] {
+  background: var(--color-bad, #ef4444);
+  box-shadow:
+    0 0 0 2px rgba(239, 68, 68, 0.25),
+    0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+.compact-mini-rail__divider {
+  width: 20px;
+  height: 1px;
+  background: var(--compact-divider);
+}
+
+.compact-mini-rail__provider {
+  --quota-color: var(--color-ok);
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background:
+    conic-gradient(
+      var(--quota-color) var(--quota-percent),
+      rgba(255, 255, 255, 0.12) 0
+    );
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.compact-mini-rail__provider::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 9px;
+  background: rgba(12, 18, 18, 0.82);
+  box-shadow: inset 0 0 0 1px var(--compact-border);
+}
+
+.compact-mini-rail__provider[data-tone='warn'] {
+  --quota-color: #f5b400;
+}
+
+.compact-mini-rail__provider[data-tone='critical'] {
+  --quota-color: var(--color-bad);
+}
+
+.compact-mini-rail__provider[data-tone='unknown'] {
+  --quota-color: rgba(255, 255, 255, 0.28);
+}
+
+.compact-mini-rail__icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
 }
 
 .compact-usage-summary {
@@ -306,52 +588,69 @@
    only inside `.compact-frame`. */
 
 .compact-frame .quota-strip {
-  gap: 4px;
+  gap: 8px;
   flex: 1;
+  justify-content: center;
 }
 
 .compact-frame .quota-strip__group {
-  gap: 8px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
   min-width: 0;
 }
 
 .compact-frame .quota-strip__provider {
-  width: 22px;
-  min-width: 22px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
   color: var(--compact-muted);
 }
 
 .compact-frame .quota-strip__windows {
-  gap: 3px;
+  gap: 8px;
 }
 
 .compact-frame .quota-strip__row {
+  align-items: stretch;
+  gap: 4px;
+  min-height: 26px;
+  height: auto;
+  min-width: 0;
+}
+
+.compact-frame .quota-strip__row-head {
   align-items: center;
-  height: 16px;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 
 .compact-frame .quota-strip__window-label {
-  flex: 0 0 46px;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  font-size: 9.5px;
-  font-weight: 600;
-  color: var(--compact-faint);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--compact-text);
+  letter-spacing: 0;
+  text-transform: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.compact-frame .quota-strip__meta {
+  gap: 8px;
+}
+
 .compact-frame .quota-strip__track {
-  flex: 1 1 auto;
-  height: 5px;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 4px;
   background: var(--compact-surface);
   border-radius: 999px;
   overflow: hidden;
-  border: 1px solid var(--compact-border);
+  border: 0;
 }
 
 .compact-frame .quota-strip__fill {
@@ -361,33 +660,59 @@
 }
 
 .compact-frame .quota-strip__fill--ok { background: var(--compact-accent); }
-.compact-frame .quota-strip__fill--warn { background: #f59e0b; }
+.compact-frame .quota-strip__fill--warn { background: #f5b400; }
 .compact-frame .quota-strip__fill--critical { background: #ef4444; }
 
 .compact-frame .quota-strip__percent {
   flex: 0 0 auto;
-  min-width: 30px;
-  font-size: 11px;
+  min-width: 32px;
+  font-size: 10.5px;
   font-weight: 700;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
   color: var(--compact-accent);
   text-align: right;
+  white-space: nowrap;
 }
 
 .compact-frame .quota-strip__row[data-urgency='critical'] .quota-strip__percent {
   color: #ef4444;
 }
 .compact-frame .quota-strip__row[data-urgency='warn'] .quota-strip__percent {
-  color: #f59e0b;
+  color: #f5b400;
+}
+
+/* Credits-style rows in the compact frame: no progress bar, currency
+   amount as the primary visual. */
+.compact-frame .quota-strip__row--credits .quota-strip__row-head {
+  align-items: baseline;
+}
+
+.compact-frame .quota-strip__credits-amount {
+  flex: 0 0 auto;
+  min-width: 32px;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--compact-accent);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compact-frame .quota-strip__row--credits[data-urgency='critical'] .quota-strip__credits-amount {
+  color: #ef4444;
 }
 
 .compact-frame .quota-strip__reset {
   flex: 0 0 auto;
-  font-size: 9.5px;
-  color: var(--compact-faint);
+  min-width: 64px;
+  font-size: 10px;
+  line-height: 1.15;
+  color: var(--compact-muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
-  min-width: 28px;
+  white-space: nowrap;
 }
 
 .compact-frame .quota-strip__warn-icon {
@@ -400,4 +725,30 @@
   border: 1px solid var(--compact-border);
   color: var(--compact-faint);
   font-size: 9px;
+}
+
+/* ── Display mode overrides ─────────────────────────────────── */
+.compact-frame[data-display-mode='full'] {
+  height: calc(100% - 12px);
+}
+
+.compact-frame[data-display-mode='full'] .compact-frame__content {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.compact-frame[data-display-mode='full'] .compact-usage-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 26px;
+}
+
+.compact-frame[data-display-mode='full'] .compact-usage-slot__scroll-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.compact-frame[data-display-mode='full'] .compact-usage-slot__scroll {
+  height: 100%;
+  overflow-y: auto;
 }

@@ -7,16 +7,17 @@
 .quota-strip {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .quota-strip__group {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   min-width: 0;
 }
 
@@ -25,8 +26,9 @@
   align-items: center;
   justify-content: center;
   color: var(--color-text-secondary);
-  min-width: 22px;
-  width: 22px;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
   align-self: center;
 }
 
@@ -56,47 +58,63 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
   min-width: 0;
 }
 
 .quota-strip__row {
-  /* Flex layout so trailing slots (reset / warn icon) collapse
-     when absent — a fixed-grid `auto` track still reserves the
-     gap, which left ~32 px of dead air to the right of the bar
-     when neither slot was rendered. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 3px;
+  min-height: 22px;
+  height: auto;
+  min-width: 0;
+}
+
+.quota-strip__row-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 16px;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
 }
 
 .quota-strip__window-label {
-  flex: 0 0 42px;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  font-size: 9px;
-  font-weight: 500;
-  color: var(--color-text-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--color-text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.quota-strip__meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .quota-strip__track {
-  /* Grow into all the space the trailing slots leave behind so
-     the bar reaches the same right edge as the sparkline above. */
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
   height: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .quota-strip__fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: 999px;
   transition: width 0.4s ease-out;
 }
 
@@ -105,7 +123,7 @@
 }
 
 .quota-strip__fill--warn {
-  background: var(--color-warn);
+  background: #f5b400;
 }
 
 .quota-strip__fill--critical {
@@ -114,12 +132,14 @@
 
 .quota-strip__percent {
   flex: 0 0 auto;
-  min-width: 30px;
-  font-size: 10px;
-  font-weight: 500;
+  min-width: 32px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary);
+  color: var(--color-ok);
   text-align: right;
+  white-space: nowrap;
 }
 
 .quota-strip__row[data-urgency='critical'] .quota-strip__percent {
@@ -127,15 +147,40 @@
 }
 
 .quota-strip__row[data-urgency='warn'] .quota-strip__percent {
-  color: var(--color-warn);
+  color: #f5b400;
+}
+
+/* Credits-style rows (DeepSeek balance, etc.) — no progress bar,
+   monetary amount as the primary visual instead of a percentage. */
+.quota-strip__row--credits .quota-strip__row-head {
+  align-items: baseline;
+}
+
+.quota-strip__credits-amount {
+  flex: 0 0 auto;
+  min-width: 32px;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ok);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.quota-strip__row--credits[data-urgency='critical'] .quota-strip__credits-amount {
+  color: var(--color-bad);
 }
 
 .quota-strip__reset {
   flex: 0 0 auto;
-  font-size: 9px;
+  min-width: 64px;
+  font-size: 10px;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   text-align: right;
+  white-space: nowrap;
 }
 
 .quota-strip__warn-icon {

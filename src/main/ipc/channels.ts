@@ -44,6 +44,7 @@ export const DESKTOP_INVOKE_CHANNELS = {
   refreshNow: 'desktop:refreshNow',
   getUsageSummary: 'desktop:getUsageSummary',
   getQuotaStatus: 'desktop:getQuotaStatus',
+  resizeCompactWindow: 'desktop:resizeCompactWindow',
   getSettings: 'desktop:getSettings',
   updateSettings: 'desktop:updateSettings',
   updateSecret: 'desktop:updateSecret',

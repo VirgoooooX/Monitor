@@ -104,6 +104,31 @@ body.mode-expanded {
   overflow: hidden;
 }
 
+body.local-browser-preview {
+  width: 360px;
+  min-height: 0;
+  height: 240px;
+  background: #eaf4f5;
+  overflow: visible;
+}
+
+body.local-browser-preview #root {
+  width: 360px;
+  height: 240px;
+  min-height: 0;
+}
+
+body.local-browser-preview:has(.compact-frame[data-display-mode='expanded']),
+body.local-browser-preview:has(.compact-frame[data-display-mode='expanded']) #root {
+  height: auto;
+}
+
+body.local-browser-preview:has(.compact-frame--mini),
+body.local-browser-preview:has(.compact-frame--mini) #root {
+  width: 56px;
+  height: 240px;
+}
+
 #root {
   height: 100%;
 }

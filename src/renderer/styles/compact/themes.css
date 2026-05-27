@@ -231,7 +231,7 @@
 .compact-frame[data-compact-theme='material-you'] .compact-frame__content {
   padding: 8px;
   gap: 8px;
-  grid-template-rows: 64px 1fr;
+  grid-template-rows: 64px minmax(0, 1fr);
 }
 
 .compact-frame[data-compact-theme='material-you'] .compact-network-slot {
@@ -293,7 +293,7 @@
 .compact-frame[data-compact-theme='material-you'] .quota-strip__track {
   background: rgba(81, 91, 87, 0.16);
   border: 0;
-  height: 5px;
+  height: 4px;
 }
 .compact-frame[data-compact-theme='material-you'][data-color-mode='dark']
   .quota-strip__track {
@@ -438,7 +438,7 @@
 .compact-frame[data-compact-theme='soft-neumorph'] .quota-strip__track {
   background: var(--neo-bg);
   border: 0;
-  height: 6px;
+  height: 4px;
   box-shadow:
     inset 2px 2px 4px var(--neo-shadow),
     inset -2px -2px 4px var(--neo-highlight);
@@ -572,7 +572,8 @@
 }
 
 .compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__row {
-  height: 17px;
+  min-height: 26px;
+  height: auto;
 }
 
 .compact-frame[data-compact-theme='paper-dashboard'] .quota-strip__track {
@@ -807,7 +808,7 @@
   /* Inset OLED screen — dark background regardless of color mode. */
   padding: 6px;
   gap: 4px;
-  grid-template-rows: 70px 1fr;
+  grid-template-rows: 70px minmax(0, 1fr);
 }
 
 .compact-frame[data-compact-theme='device-oled'] .compact-network-slot,
@@ -881,7 +882,7 @@
   background: rgba(53, 242, 160, 0.08);
   border: 1px solid rgba(53, 242, 160, 0.18);
   border-radius: 2px;
-  height: 6px;
+  height: 4px;
   position: relative;
   overflow: hidden;
 }
@@ -967,7 +968,7 @@
      compact window is `transparent: true` and any margin shows the
      wallpaper. */
   width: 100%;
-  height: 100%;
+  height: calc(100% - 8px);
   margin: 0;
   --compact-radius: 12px;
   --compact-radius-inner: 8px;
@@ -1173,7 +1174,7 @@
   color: var(--compact-muted);
   text-transform: none;
   letter-spacing: 0;
-  flex: 0 0 20px;
+  flex: 1 1 auto;
 }
 
 /* obsidian-glass — calm dark glass with cool rim. */
@@ -1445,4 +1446,296 @@
   0%   { opacity: 0.55; transform: scale(0.95); }
   60%  { opacity: 0;    transform: scale(1.6); }
   100% { opacity: 0;    transform: scale(1.6); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ * Legacy v1 themes — expanded-mode height fix.
+ *
+ * The shared block above pins `height: 100%` on `.compact-frame` and
+ * its `.compact-frame__content`, plus `flex: 1` on the usage slot, so
+ * legacy themes paint edge-to-edge in compact mode. Those rules are
+ * declared after `base.css`'s `[data-display-mode='expanded']`
+ * overrides, so they win specificity-wise and prevent the frame from
+ * collapsing to its natural content height when the window expands.
+ * The renderer measures `frame.scrollHeight` to size the BrowserWindow,
+ * but with `height: 100%` the frame just inherits the window height,
+ * leaving a large empty void below the content (visible in the
+ * obsidian-glass screenshot).
+ *
+ * Re-assert `height: auto` and release the flex grow on the usage
+ * slot when the legacy themes are in expanded mode, so measurement
+ * matches the v2 themes' behaviour.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='obsidian-glass'][data-display-mode='expanded'],
+.compact-frame[data-compact-theme='aurora-ring'][data-display-mode='expanded'],
+.compact-frame[data-compact-theme='holo-grid'][data-display-mode='expanded'],
+.compact-frame[data-compact-theme='liquid-metal'][data-display-mode='expanded'],
+.compact-frame[data-compact-theme='signal-pulse'][data-display-mode='expanded'] {
+  height: auto;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'][data-display-mode='expanded']
+  .compact-frame__content,
+.compact-frame[data-compact-theme='aurora-ring'][data-display-mode='expanded']
+  .compact-frame__content,
+.compact-frame[data-compact-theme='holo-grid'][data-display-mode='expanded']
+  .compact-frame__content,
+.compact-frame[data-compact-theme='liquid-metal'][data-display-mode='expanded']
+  .compact-frame__content,
+.compact-frame[data-compact-theme='signal-pulse'][data-display-mode='expanded']
+  .compact-frame__content {
+  height: auto;
+  /* Reserve room below the usage slot for the bottom-centre chevron
+     toggle (≈18 px tall + spacing) so it does not overlap the last
+     quota row. */
+  padding-bottom: 22px;
+}
+
+.compact-frame[data-compact-theme='obsidian-glass'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='aurora-ring'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='holo-grid'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='liquid-metal'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='signal-pulse'][data-display-mode='expanded']
+  .compact-usage-slot {
+  flex: 0 0 auto;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * Theme-tuned spacing.
+ *
+ * For three of the v2 themes — liquid-glass, paper-dashboard,
+ * mint-monitor — the default 26 px bottom gutter (reserved so the
+ * chevron toggle never overlaps the last quota row) wasted too much
+ * vertical real estate. The blocks below reclaim that space; the
+ * toggle buttons themselves are styled globally in `base.css` to be
+ * invisible until the widget is hovered, so they no longer need a
+ * dedicated gutter.
+ *
+ * Specificity note: each selector pairs `data-compact-theme` with
+ * `data-display-mode` (or carries the same attribute count as the
+ * generic full-mode rule in `base.css`) so these win against the
+ * default `.compact-frame[data-display-mode='full'] .compact-usage-slot`
+ * declarations without `!important`.
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ── Shared: tighter content padding + slim chevron ─────────── */
+.compact-frame[data-compact-theme='liquid-glass'] .compact-frame__content,
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-frame__content,
+.compact-frame[data-compact-theme='mint-monitor'] .compact-frame__content {
+  padding: 6px 10px;
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-display-mode='full']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='paper-dashboard'][data-display-mode='full']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='mint-monitor'][data-display-mode='full']
+  .compact-usage-slot {
+  /* Don't reserve a chevron gutter — the toggle button floats over
+     the content and clears it on its own. */
+  padding-top: 4px;
+  padding-bottom: 2px;
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='paper-dashboard'][data-display-mode='expanded']
+  .compact-usage-slot,
+.compact-frame[data-compact-theme='mint-monitor'][data-display-mode='expanded']
+  .compact-usage-slot {
+  padding-top: 4px;
+  padding-bottom: 2px;
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-expand-toggle-btn,
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-expand-toggle-btn,
+.compact-frame[data-compact-theme='mint-monitor'] .compact-expand-toggle-btn {
+  bottom: 1px;
+  width: 22px;
+  height: 12px;
+}
+
+/* Tighten the network slot's lower divider so it doesn't lock in
+   the legacy 8 px gap. */
+.compact-frame[data-compact-theme='liquid-glass'] .compact-network-slot,
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-network-slot,
+.compact-frame[data-compact-theme='mint-monitor'] .compact-network-slot {
+  padding-bottom: 4px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * liquid-glass — translucent glass-pill toggle buttons.
+ * Soft-blurred surface, white inner highlight, mint accent on hover.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='liquid-glass'] .compact-mini-toggle-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(18, 32, 28, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 2px 6px rgba(80, 120, 160, 0.18);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  backdrop-filter: blur(10px) saturate(1.3);
+  opacity: 0.85;
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-mini-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--compact-accent);
+  opacity: 1;
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-color-mode='dark']
+  .compact-mini-toggle-btn {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(244, 251, 248, 0.7);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 2px 6px rgba(0, 0, 0, 0.32);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-color-mode='dark']
+  .compact-mini-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--compact-accent);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-expand-toggle-btn {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(18, 32, 28, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 1px 4px rgba(80, 120, 160, 0.18);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  backdrop-filter: blur(10px) saturate(1.3);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'] .compact-expand-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--compact-accent);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-color-mode='dark']
+  .compact-expand-toggle-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(244, 251, 248, 0.6);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 1px 4px rgba(0, 0, 0, 0.28);
+}
+
+.compact-frame[data-compact-theme='liquid-glass'][data-color-mode='dark']
+  .compact-expand-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--compact-accent);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * paper-dashboard — quiet ledger toggles.
+ * Hairline border, no fill, ink-tone hover.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-mini-toggle-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--paper-surface);
+  color: var(--paper-muted);
+  border: 1px solid var(--paper-line);
+  box-shadow: none;
+  opacity: 0.85;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard']
+  .compact-mini-toggle-btn:hover {
+  background: #ebece8;
+  color: var(--paper-text);
+  border-color: rgba(31, 38, 35, 0.22);
+  opacity: 1;
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'][data-color-mode='dark']
+  .compact-mini-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'] .compact-expand-toggle-btn {
+  border-radius: 4px;
+  background: transparent;
+  color: var(--paper-muted);
+  border: 1px solid var(--paper-line);
+  /* The bottom hairline reads like a ledger underline, reinforcing
+     the paper metaphor. */
+  border-bottom-color: rgba(31, 38, 35, 0.18);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard']
+  .compact-expand-toggle-btn:hover {
+  background: var(--paper-surface);
+  color: var(--paper-text);
+  border-color: rgba(31, 38, 35, 0.22);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'][data-color-mode='dark']
+  .compact-expand-toggle-btn {
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+}
+
+.compact-frame[data-compact-theme='paper-dashboard'][data-color-mode='dark']
+  .compact-expand-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+ * mint-monitor — neon-ring toggles with mint glow.
+ * Subtle border in calm, full mint accent + glow on hover.
+ * ══════════════════════════════════════════════════════════════════ */
+.compact-frame[data-compact-theme='mint-monitor'] .compact-mini-toggle-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--mint-surface);
+  color: var(--mint-faint);
+  border: 1px solid var(--mint-border);
+  box-shadow: none;
+  opacity: 0.82;
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-mini-toggle-btn:hover {
+  background: var(--mint-accent-soft);
+  color: var(--mint-accent);
+  border-color: var(--mint-border-strong);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.32);
+  opacity: 1;
+}
+
+.compact-frame[data-compact-theme='mint-monitor'] .compact-expand-toggle-btn {
+  border-radius: 4px;
+  background: var(--mint-surface);
+  color: var(--mint-muted);
+  border: 1px solid var(--mint-border);
+}
+
+.compact-frame[data-compact-theme='mint-monitor']
+  .compact-expand-toggle-btn:hover {
+  background: var(--mint-accent-soft);
+  color: var(--mint-accent);
+  border-color: var(--mint-border-strong);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.28);
 }

@@ -153,13 +153,22 @@ export const requestJson: RequestJson = async <T>(
     const parsed = new URL(input.url);
     const mod = parsed.protocol === 'https:' ? https : http;
     const method = input.method ?? 'GET';
-    const bodyText = input.body === undefined ? undefined : JSON.stringify(input.body);
+    const bodyIsForm = input.body instanceof URLSearchParams;
+    const bodyText = input.body === undefined
+      ? undefined
+      : bodyIsForm
+        ? input.body.toString()
+        : JSON.stringify(input.body);
     const headers: Record<string, string> = {
       ...(input.headers ?? {}),
     };
 
     if (bodyText !== undefined) {
-      headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+      headers['Content-Type'] = headers['Content-Type'] ?? (
+        bodyIsForm
+          ? 'application/x-www-form-urlencoded'
+          : 'application/json'
+      );
       headers['Content-Length'] = Buffer.byteLength(bodyText).toString();
     }
 

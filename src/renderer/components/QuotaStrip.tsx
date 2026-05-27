@@ -5,14 +5,21 @@
 
 import { useEffect, useState } from 'react';
 import type { QuotaSnapshot, QuotaStatus, QuotaWindow } from '../lib/types';
-import { quotaWindowCompactLabel, quotaWindowPriority } from '../lib/quota-display';
+import {
+  currencySymbol,
+  groupQuotaWindowsByDisplay,
+  parseCreditsWindow,
+  type ParsedCreditsWindow,
+  quotaWindowDisplayName,
+  quotaWindowPriority,
+} from '../lib/quota-display';
 import { ProviderIcon } from './ProviderIcon';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface ProviderGroup {
+export interface ProviderGroup {
   key: string;
   provider: string;
   accountLabel: string | null;
@@ -26,7 +33,62 @@ interface CompactQuotaEntry {
   window: QuotaWindow;
 }
 
-const MAX_COMPACT_ROWS = 5;
+export const PREVIEW_QUOTA_STATUS: QuotaStatus = {
+  snapshots: [
+    {
+      provider: 'codex',
+      capturedAt: Date.now(),
+      source: 'imported_auth',
+      windows: [
+        {
+          name: '5h',
+          percentLeft: 85,
+          resetAt: new Date(2026, 4, 27, 12, 39).getTime(),
+          windowSeconds: 18_000,
+        },
+      ],
+      providerAuthId: 'codex-preview',
+      accountLabel: 'Codex',
+      accountId: null,
+      projectId: null,
+      kind: 'quota',
+      status: 'ok',
+      rawPlanLabel: 'Pro',
+      modelGroup: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    },
+    {
+      provider: 'antigravity',
+      capturedAt: Date.now(),
+      source: 'imported_auth',
+      windows: [
+        {
+          name: 'MODEL_CLAUDE_OPUS_4_6_THINKING',
+          percentLeft: 100,
+          resetAt: new Date(2026, 4, 27, 6, 1).getTime(),
+          windowSeconds: null,
+        },
+        {
+          name: 'MODEL_GOOGLE_GEMINI_3_1_PRO',
+          percentLeft: 80,
+          resetAt: new Date(2026, 4, 27, 6, 1).getTime(),
+          windowSeconds: null,
+        },
+      ],
+      providerAuthId: 'antigravity-preview',
+      accountLabel: 'Antigravity',
+      accountId: null,
+      projectId: null,
+      kind: 'quota',
+      status: 'ok',
+      rawPlanLabel: 'Pro',
+      modelGroup: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,13 +96,22 @@ const MAX_COMPACT_ROWS = 5;
 
 function formatResetCompact(resetAt: number | null): string {
   if (resetAt === null) return '';
-  const diff = resetAt - Date.now();
-  if (diff <= 0) return '即将';
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  if (hours > 24) return `${Math.floor(hours / 24)}d`;
-  if (hours > 0) return `${hours}h${minutes}m`;
-  return `${minutes}m`;
+  const resetDate = new Date(resetAt);
+  if (Number.isNaN(resetDate.getTime())) return '';
+
+  const month = String(resetDate.getMonth() + 1).padStart(2, '0');
+  const day = String(resetDate.getDate()).padStart(2, '0');
+  const hour = String(resetDate.getHours()).padStart(2, '0');
+  const minute = String(resetDate.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hour}:${minute}`;
+}
+
+function isLocalBrowserPreview(): boolean {
+  return (
+    !window.desktop &&
+    (window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === 'localhost')
+  );
 }
 
 function providerPriority(provider: string): number {
@@ -67,22 +138,20 @@ function entryPriority(entry: CompactQuotaEntry): number {
   return entry.window.percentLeft;
 }
 
-function buildCompactGroups(snapshots: QuotaSnapshot[]): {
-  groups: ProviderGroup[];
-  hiddenCount: number;
-} {
+export function buildCompactGroups(snapshots: QuotaSnapshot[]): ProviderGroup[] {
   const entries = snapshots.flatMap((snapshot, snapshotIndex): CompactQuotaEntry[] => {
     const key = snapshotKey(snapshot, snapshotIndex);
-    return snapshot.windows.flatMap((window): CompactQuotaEntry[] => {
-      const label = quotaWindowCompactLabel(window.name, snapshot.provider);
-      if (label === null) return [];
-      return [{
-        key,
-        provider: snapshot.provider,
-        accountLabel: snapshot.accountLabel,
-        window,
-      }];
-    });
+    // Pre-merge raw windows that share the same display label (e.g. Opus
+    // + Sonnet → "Claude 4.6"). Without this the strip would render two
+    // identical "Claude 4.6" rows when the cached snapshot still holds
+    // multiple raw model buckets.
+    const grouped = groupQuotaWindowsByDisplay(snapshot.windows, snapshot.provider);
+    return grouped.map(({ window }): CompactQuotaEntry => ({
+      key,
+      provider: snapshot.provider,
+      accountLabel: snapshot.accountLabel,
+      window,
+    }));
   });
 
   const orderedEntries = [...entries].sort((a, b) => {
@@ -100,10 +169,9 @@ function buildCompactGroups(snapshots: QuotaSnapshot[]): {
     return a.window.name.localeCompare(b.window.name, 'zh-CN');
   });
 
-  const visibleEntries = orderedEntries.slice(0, MAX_COMPACT_ROWS);
   const grouped = new Map<string, ProviderGroup>();
 
-  for (const entry of visibleEntries) {
+  for (const entry of orderedEntries) {
     const existing = grouped.get(entry.key);
     if (existing) {
       existing.windows.push(entry.window);
@@ -117,33 +185,28 @@ function buildCompactGroups(snapshots: QuotaSnapshot[]): {
     }
   }
 
-  return {
-    groups: [...grouped.values()],
-    hiddenCount: Math.max(0, orderedEntries.length - visibleEntries.length),
-  };
+  return [...grouped.values()];
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function QuotaStrip(): JSX.Element | null {
-  const [groups, setGroups] = useState<ProviderGroup[]>([]);
-  const [hiddenCount, setHiddenCount] = useState(0);
+export function useQuotaStatus(): QuotaStatus | null {
+  const [status, setStatus] = useState<QuotaStatus | null>(null);
 
   useEffect(() => {
     const desktop = window.desktop;
-    if (!desktop || !('getQuotaStatus' in desktop)) return;
+    if (!desktop || !('getQuotaStatus' in desktop)) {
+      if (isLocalBrowserPreview()) {
+        setStatus(PREVIEW_QUOTA_STATUS);
+      }
+      return;
+    }
 
     let cancelled = false;
 
     const fetch = (): void => {
-      desktop.getQuotaStatus().then((status: QuotaStatus) => {
-        if (cancelled) return;
-
-        const compact = buildCompactGroups(status.snapshots);
-        setGroups(compact.groups);
-        setHiddenCount(compact.hiddenCount);
+      desktop.getQuotaStatus().then((next: QuotaStatus) => {
+        if (!cancelled) {
+          setStatus(next);
+        }
       }).catch(() => {});
     };
 
@@ -156,6 +219,17 @@ export function QuotaStrip(): JSX.Element | null {
     };
   }, []);
 
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export function QuotaStrip(): JSX.Element | null {
+  const quotaStatus = useQuotaStatus();
+  const groups = quotaStatus ? buildCompactGroups(quotaStatus.snapshots) : [];
+
   if (groups.length === 0) return null;
 
   return (
@@ -166,7 +240,7 @@ export function QuotaStrip(): JSX.Element | null {
             className="quota-strip__provider"
             title={group.accountLabel ? `${group.provider} · ${group.accountLabel}` : group.provider}
           >
-            <ProviderIcon provider={group.provider} size={20} />
+            <ProviderIcon provider={group.provider} size={24} />
           </span>
           <div className="quota-strip__windows">
             {group.windows.map((w, i) => (
@@ -179,9 +253,6 @@ export function QuotaStrip(): JSX.Element | null {
           </div>
         </div>
       ))}
-      {hiddenCount > 0 && (
-        <span className="quota-strip__more">另 {hiddenCount} 项</span>
-      )}
     </div>
   );
 }
@@ -197,21 +268,26 @@ function QuotaRowItem({
   window: QuotaWindow;
   provider: string;
 }): JSX.Element {
+  // Credits-style rows (DeepSeek balance, etc.) carry a synthetic name
+  // like `credits:CNY 总额 4.25 / 赠金 0.00 / 充值 4.25`. Render those as
+  // a balance badge instead of a progress bar — a perpetually-100%
+  // green bar would be visually identical to "quota still full" and is
+  // misleading for an account that has no resetting allowance.
+  const credits = parseCreditsWindow(w.name);
+  if (credits !== null) {
+    return <CreditsRowItem credits={credits} />;
+  }
+
   const remaining = w.percentLeft ?? 100;
+  const fillPercent = Math.max(0, Math.min(remaining, 100));
   const isWarn = w.percentLeft !== null && w.percentLeft < 50;
   const isCritical = w.percentLeft !== null && w.percentLeft < 20;
-  const label = quotaWindowCompactLabel(w.name, provider) ?? w.name;
+  const label = quotaWindowDisplayName(w.name, provider) ?? w.name;
 
   let barColorClass = 'quota-strip__fill--ok';
   if (isCritical) barColorClass = 'quota-strip__fill--critical';
   else if (isWarn) barColorClass = 'quota-strip__fill--warn';
 
-  // Trailing decorations are conditional — when the IPC payload
-  // omits `resetAt` or the row is not critical, the corresponding
-  // span is NOT rendered. Reserving a fixed track for an empty
-  // span left ~32 px of dead air to the right of the bar, which
-  // pushed the percent column inward and made the row look
-  // unbalanced against the sparkline above it.
   const resetText = formatResetCompact(w.resetAt);
 
   return (
@@ -219,20 +295,61 @@ function QuotaRowItem({
       className="quota-strip__row"
       data-urgency={isCritical ? 'critical' : isWarn ? 'warn' : 'ok'}
     >
-      <span className="quota-strip__window-label" title={w.name}>{label}</span>
+      <div className="quota-strip__row-head">
+        <span className="quota-strip__window-label" title={w.name}>{label}</span>
+        <span className="quota-strip__meta">
+          <span className="quota-strip__percent">
+            {w.percentLeft !== null ? `${Math.round(w.percentLeft)}%` : '?'}
+          </span>
+          {resetText !== '' && (
+            <span className="quota-strip__reset">{resetText}</span>
+          )}
+          {isCritical && <span className="quota-strip__warn-icon">⚠</span>}
+        </span>
+      </div>
       <div className="quota-strip__track">
         <div
           className={`quota-strip__fill ${barColorClass}`}
-          style={{ width: `${Math.min(remaining, 100)}%` }}
+          style={{ width: `${fillPercent}%` }}
         />
       </div>
-      <span className="quota-strip__percent">
-        {w.percentLeft !== null ? `${Math.round(w.percentLeft)}%` : '?'}
-      </span>
-      {resetText !== '' && (
-        <span className="quota-strip__reset">{resetText}</span>
-      )}
-      {isCritical && <span className="quota-strip__warn-icon">⚠</span>}
+    </div>
+  );
+}
+
+// Credits balances render as a single-line badge: label on the left,
+// formatted balance on the right. No progress bar, no reset time.
+function CreditsRowItem({
+  credits,
+}: {
+  credits: ParsedCreditsWindow;
+}): JSX.Element {
+  const symbol = currencySymbol(credits.currency);
+  const amount = credits.total ?? credits.toppedUp ?? credits.granted ?? '—';
+  const display = symbol === '' ? `${amount} ${credits.currency}` : `${symbol}${amount}`;
+  const numeric = parseFloat(amount);
+  const isLow = Number.isFinite(numeric) && numeric < 1;
+  const fullName = `${credits.currency} ${[
+    credits.total === null ? null : `总额 ${credits.total}`,
+    credits.granted === null ? null : `赠金 ${credits.granted}`,
+    credits.toppedUp === null ? null : `充值 ${credits.toppedUp}`,
+  ].filter(Boolean).join(' / ')}`;
+
+  return (
+    <div
+      className="quota-strip__row quota-strip__row--credits"
+      data-urgency={isLow ? 'critical' : 'ok'}
+      title={fullName}
+    >
+      <div className="quota-strip__row-head">
+        <span className="quota-strip__window-label">余额</span>
+        <span className="quota-strip__meta">
+          <span className="quota-strip__credits-amount">{display}</span>
+          {symbol !== '' && credits.currency.length > 0 && (
+            <span className="quota-strip__reset">{credits.currency}</span>
+          )}
+        </span>
+      </div>
     </div>
   );
 }
