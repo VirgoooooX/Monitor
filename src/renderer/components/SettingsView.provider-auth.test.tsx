@@ -96,6 +96,7 @@ function buildAppSettings(): AppSettings {
       colorMode: 'dark',
       compactTheme: 'mint-monitor',
       fontScale: 1,
+      compactZoom: 1,
     },
   };
 }

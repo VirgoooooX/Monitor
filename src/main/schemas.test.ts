@@ -70,6 +70,7 @@ function validBase(): AppSettings {
       colorMode: 'dark',
       compactTheme: 'mint-monitor',
       fontScale: 1,
+      compactZoom: 1,
     },
     kiroTokenRefresh: {
       enabled: true,
@@ -390,7 +391,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         const base = validBase();
         const settings: AppSettings = {
           ...base,
-          appearance: { colorMode, compactTheme, fontScale: 1 },
+          appearance: { colorMode, compactTheme, fontScale: 1, compactZoom: 1 },
         };
         const result = appSettingsSchema.safeParse(settings);
         expect(result.success).toBe(true);
@@ -406,6 +407,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         colorMode: 'sepia',
         compactTheme: 'mint-monitor',
         fontScale: 1,
+        compactZoom: 1,
       },
     };
     const result = appSettingsSchema.safeParse(settings);
@@ -420,6 +422,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         colorMode: 'dark',
         compactTheme: 'rainbow-explosion',
         fontScale: 1,
+        compactZoom: 1,
       },
     };
     const result = appSettingsSchema.safeParse(settings);
@@ -434,6 +437,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
         colorMode: 'dark',
         compactTheme: 'mint-monitor',
         fontScale: 1,
+        compactZoom: 1,
         accent: '#ff0000',
       },
     };
@@ -449,6 +453,7 @@ describe('appSettingsSchema appearance (theme system)', () => {
           colorMode: 'dark',
           compactTheme: 'mint-monitor',
           fontScale,
+          compactZoom: 1,
         },
       };
       expect(appSettingsSchema.safeParse(settings).success).toBe(true);
@@ -463,6 +468,37 @@ describe('appSettingsSchema appearance (theme system)', () => {
           colorMode: 'dark',
           compactTheme: 'mint-monitor',
           fontScale,
+          compactZoom: 1,
+        },
+      };
+      expect(appSettingsSchema.safeParse(settings).success).toBe(false);
+    }
+  });
+
+  it('accepts the bounded compactZoom range', () => {
+    for (const compactZoom of [1, 1.25, 1.5, 2]) {
+      const settings: AppSettings = {
+        ...validBase(),
+        appearance: {
+          colorMode: 'dark',
+          compactTheme: 'mint-monitor',
+          fontScale: 1,
+          compactZoom,
+        },
+      };
+      expect(appSettingsSchema.safeParse(settings).success).toBe(true);
+    }
+  });
+
+  it('rejects compactZoom outside the supported range', () => {
+    for (const compactZoom of [0.99, 2.01, 0, -1]) {
+      const settings: AppSettings = {
+        ...validBase(),
+        appearance: {
+          colorMode: 'dark',
+          compactTheme: 'mint-monitor',
+          fontScale: 1,
+          compactZoom,
         },
       };
       expect(appSettingsSchema.safeParse(settings).success).toBe(false);

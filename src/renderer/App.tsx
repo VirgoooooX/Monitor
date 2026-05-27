@@ -53,6 +53,7 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorMode: 'dark',
   compactTheme: 'mint-monitor',
   fontScale: 1,
+  compactZoom: 1,
 };
 
 /**
@@ -239,9 +240,7 @@ export function App(): JSX.Element | null {
   }
 
   return <ExpandedRoot appearance={appearance} />;
-}
-
-// ---------------------------------------------------------------------------
+}// ---------------------------------------------------------------------------
 // Compact root — fetches the dashboard and subscribes to live updates.
 // ---------------------------------------------------------------------------
 
@@ -270,6 +269,22 @@ function CompactRoot({
   ));
   const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
   const [displayMode, setDisplayMode] = useState<CompactDisplayMode>('expanded');
+
+  // Apply the user's compact-window zoom locally via the preload
+  // bridge's `webFrame.setZoomFactor` wrapper. This is scoped to
+  // THIS renderer process and never touches the shared
+  // `(session, host)` host-zoom-map — important because the expanded
+  // window shares the same `file://` host in production, and using
+  // `webContents.setZoomFactor` from the main process would leak the
+  // compact zoom into it. The expanded root deliberately does not
+  // run this hook so it stays at 1.0.
+  useEffect(() => {
+    const desktop = window.desktop;
+    if (!desktop || !desktop.setLocalZoomFactor) {
+      return;
+    }
+    desktop.setLocalZoomFactor(appearance.compactZoom);
+  }, [appearance.compactZoom]);
 
   useEffect(() => {
     const desktop = window.desktop;

@@ -72,6 +72,14 @@ const BOUNDS_SAVE_DEBOUNCE_MS = 250;
 /** Compact-window startup size; renderer content drives the final height. */
 export const COMPACT_DEFAULT_SIZE = { width: 360, height: 40 } as const;
 
+/**
+ * Upper bound for the compact-window zoom factor. Mirrors
+ * `appearance.compactZoom` in `schemas.ts`. The compact
+ * `BrowserWindow` is constructed with `maxWidth = base × this` so a
+ * later `setZoomFactor` + physical resize is not silently clamped.
+ */
+export const COMPACT_MAX_ZOOM = 2;
+
 /** Expanded-window default size (design.md §Window Strategy). */
 export const EXPANDED_DEFAULT_SIZE = { width: 760, height: 560 } as const;
 
@@ -580,7 +588,15 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
     height: COMPACT_DEFAULT_SIZE.height,
     minWidth: 56,
     minHeight: 40,
-    maxWidth: COMPACT_DEFAULT_SIZE.width,
+    // Widened from the designed `COMPACT_DEFAULT_SIZE.width` so the
+    // post-load `applyCompactZoom` can grow the physical window to
+    // `width × compactZoom` without Electron silently clamping. The
+    // renderer still measures its own content in CSS pixels at the
+    // designed 360 px width — the multiplication into device pixels
+    // happens entirely in the main process via `setZoomFactor` plus
+    // the matching `setSize`, so the widget's CSS layout is
+    // unchanged when zoom == 1.
+    maxWidth: COMPACT_DEFAULT_SIZE.width * COMPACT_MAX_ZOOM,
     transparent: true,
     frame: false,
     /*

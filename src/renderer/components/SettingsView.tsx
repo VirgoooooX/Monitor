@@ -82,6 +82,7 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorMode: 'dark',
   compactTheme: 'mint-monitor',
   fontScale: 1,
+  compactZoom: 1,
 };
 
 /**
@@ -1331,6 +1332,33 @@ export function SettingsView(): JSX.Element {
                 <span className="settings-view__range-value">
                   {Math.round(
                     (settings.appearance ?? DEFAULT_APPEARANCE).fontScale *
+                      100,
+                  )}
+                  %
+                </span>
+              </div>
+            </Field>
+
+            <Field
+              label="悬浮窗缩放"
+              hint="放大悬浮窗物理像素，让 360px 宽的悬浮窗在高分屏上更清晰；同时按比例放大窗口。"
+            >
+              <div className="settings-view__range-control">
+                <input
+                  className="settings-view__range"
+                  type="range"
+                  min={1}
+                  max={2}
+                  step={0.1}
+                  value={(settings.appearance ?? DEFAULT_APPEARANCE).compactZoom}
+                  onChange={(e) =>
+                    updateAppearance({ compactZoom: Number(e.target.value) })
+                  }
+                  aria-label="悬浮窗缩放比例"
+                />
+                <span className="settings-view__range-value">
+                  {Math.round(
+                    (settings.appearance ?? DEFAULT_APPEARANCE).compactZoom *
                       100,
                   )}
                   %

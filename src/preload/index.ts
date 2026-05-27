@@ -23,7 +23,7 @@
 //     of the IPC boundary, where rejecting bad inputs early matters
 //     most — Property 12).
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, type IpcRendererEvent } from 'electron';
 
 import {
   DESKTOP_INVOKE_CHANNELS,
@@ -225,6 +225,34 @@ const desktopApi: DesktopApi = {
 
   openExpanded(): Promise<void> {
     return invoke<void>(DESKTOP_INVOKE_CHANNELS.openExpanded);
+  },
+
+  /**
+   * Set the renderer's local zoom factor. Used by the compact-window
+   * root to scale the widget's rasterisation without touching the
+   * shared host-zoom-map: `webContents.setZoomFactor` persists by
+   * `(session, host)` and would leak across windows that share the
+   * same `file://` origin (compact + expanded). `webFrame` is scoped
+   * to this renderer process, so the zoom stays local.
+   *
+   * The factor is clamped to `[0.5, 3]` defensively. Callers in the
+   * codebase pass values in `[1, 2]` (the `appearance.compactZoom`
+   * range); this preload-side clamp is just a belt-and-braces guard.
+   */
+  setLocalZoomFactor(factor: number): void {
+    if (typeof factor !== 'number' || !Number.isFinite(factor)) {
+      return;
+    }
+    const clamped = Math.min(3, Math.max(0.5, factor));
+    try {
+      // Lock visual (pinch / Ctrl-wheel) zoom so the user-driven
+      // zoom path cannot stack on top of our value.
+      webFrame.setVisualZoomLevelLimits(1, 1);
+    } catch {
+      // Older Electron releases throw on this call inside a sandboxed
+      // renderer; ignore. The setZoomFactor below still applies.
+    }
+    webFrame.setZoomFactor(clamped);
   },
 
   // -------------------------------------------------------------------------

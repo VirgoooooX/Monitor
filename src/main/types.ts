@@ -875,6 +875,18 @@ export interface AppearanceSettings {
    * or Windows scaling makes small text feel cramped.
    */
   fontScale: number;
+  /**
+   * Compact (floating) window zoom factor. `1` is the designed
+   * baseline; raising this multiplies both the renderer's
+   * `webContents.setZoomFactor` and the BrowserWindow physical size
+   * so the widget renders into more device pixels. Useful on
+   * high-DPI / Windows-scaled displays where the transparent
+   * frameless 360 px-wide widget reads as soft.
+   *
+   * Bounded to `[1.0, 2.0]` by `appearanceSchema`. Pre-feature
+   * settings rows are normalised to `1` by `normalizeAppSettings`.
+   */
+  compactZoom: number;
 }
 
 /**
@@ -1280,6 +1292,21 @@ export interface DesktopApi {
   updateSecret(input: UpdateSecretInput): Promise<void>;
   getDiagnostics(): Promise<DiagnosticsReport>;
   openExpanded(): Promise<void>;
+  /**
+   * Set the renderer's local zoom factor (compact window only).
+   * Implemented in preload via `webFrame.setZoomFactor`, which is
+   * scoped to the calling renderer process and so does NOT leak
+   * across windows the way `webContents.setZoomFactor` would (the
+   * latter persists by `(session, host)` and would propagate the
+   * compact widget's zoom into the expanded window because both
+   * share the `file://` host in production).
+   *
+   * Synchronous + non-IPC: this never round-trips through the main
+   * process. The factor is clamped defensively to `[0.5, 3]` inside
+   * preload; production callers pass values in the
+   * `appearance.compactZoom` range `[1, 2]`.
+   */
+  setLocalZoomFactor(factor: number): void;
   // Network Quick Actions panel (network-quick-actions task 14.1).
   // Channel names are whitelisted in `src/main/ipc/channels.ts` and
   // every payload is validated by the zod schemas in

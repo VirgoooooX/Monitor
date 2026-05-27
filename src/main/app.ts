@@ -156,6 +156,7 @@ export function buildDefaultAppSettings(): AppSettings {
       colorMode: 'dark',
       compactTheme: 'mint-monitor',
       fontScale: 1,
+      compactZoom: 1,
     },
     kiroTokenRefresh: {
       enabled: true,
@@ -208,10 +209,16 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
     rawTheme !== undefined && VALID_COMPACT_THEMES.has(rawTheme)
       ? (rawTheme as AppearanceSettings['compactTheme'])
       : ('mint-monitor' as const);
+  const rawZoom = raw.appearance?.compactZoom;
+  const compactZoom =
+    typeof rawZoom === 'number' && Number.isFinite(rawZoom)
+      ? Math.min(2, Math.max(1, rawZoom))
+      : 1;
   const appearance = {
     colorMode: raw.appearance?.colorMode ?? ('dark' as const),
     compactTheme,
     fontScale: raw.appearance?.fontScale ?? 1,
+    compactZoom,
   };
   const cliproxy = raw.cliproxy ?? {
     enabled: false,
@@ -363,6 +370,24 @@ const COMPACT_AUTO_MAX_HEIGHT = 720;
 const COMPACT_AUTO_MIN_WIDTH = 56;
 const COMPACT_AUTO_MAX_WIDTH = 360;
 
+/**
+ * Maximum supported compact-window zoom factor. Mirrors the
+ * `appearance.compactZoom` schema upper bound. Used to clamp the
+ * BrowserWindow's `maxWidth/maxHeight` so a zoomed widget can grow
+ * to its true device-pixel footprint.
+ */
+const COMPACT_MAX_ZOOM = 2;
+
+/**
+ * Last CSS-pixel size reported by the renderer's auto-measure hook
+ * (`desktop:resizeCompactWindow`). The renderer measures content in
+ * CSS pixels (independent of `webContents.setZoomFactor`); we
+ * multiply by the live `appearance.compactZoom` to derive the
+ * physical DIP size. Cached so a zoom change can re-apply the size
+ * without waiting for the next renderer tick.
+ */
+let _lastCompactCssSize: { width: number; height: number } | null = null;
+
 async function boot(): Promise<void> {
   // 1. Open the application database and apply migrations.
   const db = openDatabase();
@@ -423,6 +448,15 @@ async function boot(): Promise<void> {
     session: session.defaultSession,
   });
   _compactWindow = compactWindow;
+
+  // Apply the persisted compact zoom as soon as the renderer is
+  // ready. `setZoomFactor` only takes effect on a live webContents;
+  // calling it before `did-finish-load` is a no-op, so we guard with
+  // the same event the renderer uses for first paint. The settings
+  // patch path (`applyAppSettingsPatch`) re-applies on every change.
+  compactWindow.webContents.once('did-finish-load', () => {
+    applyCompactZoom();
+  });
 
   // 8. Construct the OpenClash HTTP client and its derived services.
   //    `controllerUrl` is read live so user edits in Settings (task
@@ -990,13 +1024,54 @@ function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInpu
   if (_compactWindow === null || _compactWindow.isDestroyed()) {
     return;
   }
+  // Renderer measures in CSS pixels (untouched by setZoomFactor); we
+  // own the multiplication into device-independent pixels here so a
+  // later zoom change can re-apply the size against the cached CSS
+  // measurement without waiting for a re-render.
+  const cssWidth = Math.round(input.width ?? COMPACT_AUTO_MAX_WIDTH);
+  const cssHeight = Math.round(input.height);
+  _lastCompactCssSize = {
+    width: Math.max(COMPACT_AUTO_MIN_WIDTH, cssWidth),
+    height: Math.max(COMPACT_AUTO_MIN_HEIGHT, cssHeight),
+  };
+  applyCompactPhysicalSize();
+}
+
+/**
+ * Reconcile the compact window's physical (DIP) size with the most
+ * recent CSS-pixel measurement and the live `appearance.compactZoom`.
+ * No-ops when no measurement has been received yet.
+ *
+ * Called from:
+ *   - `applyCompactWindowSize` (renderer auto-measure tick),
+ *   - `applyCompactZoom` (settings change; re-stretch to new zoom).
+ */
+function applyCompactPhysicalSize(): void {
+  if (_compactWindow === null || _compactWindow.isDestroyed()) {
+    return;
+  }
+  // Fall back to the designed compact-window size when the renderer
+  // has not yet reported its measurement. This makes a settings-side
+  // zoom change (`applyCompactZoom`) work even before the first
+  // `resizeCompactWindow` IPC tick lands.
+  const cssSize = _lastCompactCssSize ?? {
+    width: COMPACT_AUTO_MAX_WIDTH,
+    height: COMPACT_DEFAULT_SIZE.height,
+  };
+  const zoom = currentCompactZoom();
   const nextWidth = Math.min(
-    COMPACT_AUTO_MAX_WIDTH,
-    Math.max(COMPACT_AUTO_MIN_WIDTH, Math.round(input.width ?? 360)),
+    COMPACT_AUTO_MAX_WIDTH * COMPACT_MAX_ZOOM,
+    Math.max(
+      COMPACT_AUTO_MIN_WIDTH,
+      Math.round(cssSize.width * zoom),
+    ),
   );
   const nextHeight = Math.min(
-    COMPACT_AUTO_MAX_HEIGHT,
-    Math.max(COMPACT_AUTO_MIN_HEIGHT, Math.round(input.height)),
+    COMPACT_AUTO_MAX_HEIGHT * COMPACT_MAX_ZOOM,
+    Math.max(
+      COMPACT_AUTO_MIN_HEIGHT,
+      Math.round(cssSize.height * zoom),
+    ),
   );
   const size = _compactWindow.getSize();
   const currentWidth = size[0] ?? 360;
@@ -1019,8 +1094,8 @@ function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInpu
   // Temporarily widen / narrow the maxWidth constraint so Electron
   // does not silently clamp the requested width.
   _compactWindow.setMaximumSize(
-    Math.max(COMPACT_AUTO_MAX_WIDTH, nextWidth),
-    COMPACT_AUTO_MAX_HEIGHT,
+    Math.max(COMPACT_AUTO_MAX_WIDTH * COMPACT_MAX_ZOOM, nextWidth),
+    COMPACT_AUTO_MAX_HEIGHT * COMPACT_MAX_ZOOM,
   );
 
   // On Windows, `setBounds` on transparent frameless windows can be
@@ -1030,8 +1105,8 @@ function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInpu
 
   // Restore the maxWidth constraint for the new mode.
   _compactWindow.setMaximumSize(
-    Math.max(COMPACT_AUTO_MAX_WIDTH, nextWidth),
-    COMPACT_AUTO_MAX_HEIGHT,
+    Math.max(COMPACT_AUTO_MAX_WIDTH * COMPACT_MAX_ZOOM, nextWidth),
+    COMPACT_AUTO_MAX_HEIGHT * COMPACT_MAX_ZOOM,
   );
 
   if (!wasResizable) {
@@ -1041,6 +1116,37 @@ function applyCompactWindowSize(input: import('./types').ResizeCompactWindowInpu
       }
     }, 100);
   }
+}
+
+/**
+ * Read the current compact zoom factor, clamped to the supported
+ * `[1, COMPACT_MAX_ZOOM]` range. Falls back to `1` when settings
+ * have not been loaded yet (extremely early boot).
+ */
+function currentCompactZoom(): number {
+  const raw = _settings?.appearance?.compactZoom;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return 1;
+  }
+  return Math.min(COMPACT_MAX_ZOOM, Math.max(1, raw));
+}
+
+/**
+ * Re-apply the compact window's physical (DIP) size after a zoom
+ * change. The renderer owns the rasterisation scale itself via
+ * `webFrame.setZoomFactor` (see preload `setCompactZoom`); we
+ * deliberately do NOT call `webContents.setZoomFactor` here because
+ * Electron's host-zoom-map persists zoom by `(session, host)`, and
+ * the compact and expanded windows share the same `file://` host —
+ * touching it would leak the compact zoom into the expanded window.
+ *
+ * Idempotent; safe to call repeatedly.
+ */
+function applyCompactZoom(): void {
+  if (_compactWindow === null || _compactWindow.isDestroyed()) {
+    return;
+  }
+  applyCompactPhysicalSize();
 }
 
 /**
@@ -1111,6 +1217,22 @@ function applyAppSettingsPatch(
   // Side-effect: sync the OS login-item setting when `autostart` changes.
   if (patch.autostart !== undefined) {
     setAutostart(next.autostart);
+  }
+
+  // Side-effect: re-apply compact-window zoom whenever
+  // `appearance.compactZoom` changes. The renderer is unaffected by
+  // the renderer-side `appearance` push (it never reads compactZoom);
+  // the actual rasterisation scale is owned by the main process via
+  // `webContents.setZoomFactor`, paired with a corresponding
+  // BrowserWindow physical resize so the widget keeps the same
+  // CSS-pixel layout but renders into more device pixels.
+  const appearancePatch = patch.appearance;
+  const zoomChanged =
+    appearancePatch !== undefined &&
+    'compactZoom' in appearancePatch &&
+    appearancePatch.compactZoom !== current.appearance.compactZoom;
+  if (zoomChanged) {
+    applyCompactZoom();
   }
 
   // Side-effect: rebuild CSP connect-src and per-window will-navigate
@@ -1220,6 +1342,9 @@ function handleActivate(): void {
     managementUrl: _settings.managementInterface.url,
     settings: _repositories.settings,
     session: session.defaultSession,
+  });
+  _compactWindow.webContents.once('did-finish-load', () => {
+    applyCompactZoom();
   });
 }
 

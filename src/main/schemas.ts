@@ -474,12 +474,14 @@ const compactThemeSchema = z.enum([
 ]);
 
 const fontScaleSchema = z.number().min(0.9).max(1.2);
+const compactZoomSchema = z.number().min(1).max(2);
 
 export const appearanceSchema = z
   .object({
     colorMode: colorModeSchema,
     compactTheme: compactThemeSchema,
     fontScale: fontScaleSchema,
+    compactZoom: compactZoomSchema,
   })
   .strict();
 
@@ -488,6 +490,7 @@ const appearancePatchSchema = z
     colorMode: colorModeSchema.optional(),
     compactTheme: compactThemeSchema.optional(),
     fontScale: fontScaleSchema.optional(),
+    compactZoom: compactZoomSchema.optional(),
   })
   .strict();
 
