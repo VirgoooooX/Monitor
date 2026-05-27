@@ -9,7 +9,7 @@
 //   - design.md §Architecture (`app.ts (entry, wiring)`)
 //   - PLAN.md §Main Process Implementation — `app.ts`
 
-import { app, BrowserWindow, dialog, safeStorage, session, Tray } from 'electron';
+import { app, BrowserWindow, dialog, Menu, safeStorage, session, Tray } from 'electron';
 
 import { setAutostart } from './autostart';
 import { registerIpcHandlers, type InflightConfigSwitchRegistry, type IpcRegistry } from './ipc';
@@ -907,9 +907,9 @@ async function boot(): Promise<void> {
       // In packaged app, extraResources lands in process.resourcesPath.
       // In dev, use the build/ folder relative to project root.
       if (app.isPackaged) {
-        return path.join(process.resourcesPath, 'tray-icon.png');
+        return path.join(process.resourcesPath, 'icon.ico');
       }
-      return path.join(__dirname, '..', '..', 'build', 'tray-icon.png');
+      return path.join(__dirname, '..', '..', 'build', 'icon.ico');
     },
   });
 }
@@ -1212,6 +1212,8 @@ let _started = false;
 export function main(): void {
   if (_started) return;
   _started = true;
+
+  Menu.setApplicationMenu(null);
 
   app.on('window-all-closed', handleWindowAllClosed);
   app.on('activate', handleActivate);

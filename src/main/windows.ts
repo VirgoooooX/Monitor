@@ -602,6 +602,7 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
      */
     hasShadow: false,
     alwaysOnTop: true,
+    autoHideMenuBar: true,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -662,6 +663,7 @@ export function createExpandedWindow(deps: CreateWindowDeps): BrowserWindow {
     minHeight: 360,
     transparent: false,
     frame: true,
+    autoHideMenuBar: true,
     resizable: true,
     show: false,
     icon: resolveWindowIconPath(),

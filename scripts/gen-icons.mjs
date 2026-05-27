@@ -24,7 +24,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDeflateRaw } from 'node:zlib';
+import { createDeflate } from 'node:zlib';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const buildDir = resolve(__dirname, '..', 'build');
@@ -461,7 +461,7 @@ function encodePng(rgba, width, height) {
       rgba.copy(raw, y * rowSize + 1, y * width * 4, (y + 1) * width * 4);
     }
 
-    const deflate = createDeflateRaw({ level: 9 });
+    const deflate = createDeflate({ level: 9 });
     const chunks = [];
     deflate.on('data', (c) => chunks.push(c));
     deflate.on('end', () => {
