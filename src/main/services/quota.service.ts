@@ -671,10 +671,29 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
       }
     };
 
+    // `persistSecret` lets adapters that perform OAuth refresh
+    // round-trips write rotated tokens back to the encrypted store.
+    // We also poke the in-process `secretCache` so a subsequent
+    // `getSecret()` inside the same adapter call sees the new
+    // payload without a redundant decryption round-trip.
+    //
+    // Failures are swallowed: persistence is best-effort. If the
+    // write fails, the adapter keeps the new in-memory tokens for
+    // the current call and the next refresh tick will re-acquire.
+    const persistSecret = (payload: ProviderAuthSecretPayload): void => {
+      try {
+        deps.secrets.set(account.secretKey, JSON.stringify(payload));
+        secretCache = payload;
+      } catch {
+        // Swallowed by design — see comment above.
+      }
+    };
+
     const refreshInput: ProviderAdapterRefreshInput = {
       account,
       getSecret,
       now,
+      persistSecret,
     };
     const snapshot = await adapter.refresh(refreshInput);
 

@@ -641,6 +641,59 @@ describe('Provider_Auth IPC handlers — success envelopes & redaction', () => {
     assertEnvelopeIsRedacted(result);
   });
 
+  it('deleteProviderAuth kicks quotaService.refresh({ id }) so the cached snapshot is dropped', async () => {
+    // Regression: deleting an account left its `QuotaSnapshot` in
+    // the in-memory cache (and the persisted
+    // `settings.quota.snapshots` blob), so the QuotaStrip /
+    // ProviderAuthList kept rendering a card for the gone row
+    // (e.g. an `auth_expired` Kiro IDE row) until the next full
+    // refresh tick. The handler must invoke
+    // `quotaService.refresh({ id })` after `service.remove` so the
+    // targeted refresh evicts the orphan cache entry.
+    let refreshSeen: { id?: string; provider?: ProviderId } | undefined;
+    harness.providerAuth.remove = (id: string) => {
+      harness.providerAuth.counts.remove += 1;
+      void id;
+    };
+    harness.quota.refresh = async (input) => {
+      harness.quota.counts.refresh += 1;
+      refreshSeen = input;
+      return { snapshots: [] };
+    };
+    const result = await harness.invoke<void>(
+      DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
+      { id: 'aaaaaaaa-1111-4abc-9def-000000000001' },
+    );
+    expect(result.ok).toBe(true);
+    expect(harness.providerAuth.counts.remove).toBe(1);
+    expect(harness.quota.counts.refresh).toBe(1);
+    expect(refreshSeen).toEqual({
+      id: 'aaaaaaaa-1111-4abc-9def-000000000001',
+    });
+    assertEnvelopeIsRedacted(result);
+  });
+
+  it('deleteProviderAuth survives a quotaService.refresh rejection (cache cleanup is best-effort)', async () => {
+    // The cache cleanup must never turn a successful row delete
+    // into a failure envelope. A rejected refresh is swallowed —
+    // the next scheduled refresh tick will reconcile the cache.
+    harness.providerAuth.remove = () => {
+      harness.providerAuth.counts.remove += 1;
+    };
+    harness.quota.refresh = async () => {
+      harness.quota.counts.refresh += 1;
+      throw new Error('cache cleanup hiccup');
+    };
+    const result = await harness.invoke<void>(
+      DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
+      { id: 'aaaaaaaa-1111-4abc-9def-000000000001' },
+    );
+    expect(result.ok).toBe(true);
+    expect(harness.providerAuth.counts.remove).toBe(1);
+    expect(harness.quota.counts.refresh).toBe(1);
+    assertEnvelopeIsRedacted(result);
+  });
+
   it('refreshProviderQuota forwards id+provider and returns the QuotaStatus envelope', async () => {
     const refreshOutput: QuotaStatus = { snapshots: [] };
     let seen: { id?: string; provider?: ProviderId } | undefined;

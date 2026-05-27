@@ -1692,6 +1692,17 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
   // is a no-op so a double-click on the renderer's Delete button
   // never produces an error envelope.
   //
+  // After the row is gone we kick `quotaService.refresh({ id })` so
+  // the in-memory snapshot cache (and the persisted
+  // `settings.quota.snapshots` blob) drop the deleted account.
+  // Without this step the QuotaStrip / ProviderAuthList would keep
+  // surfacing a stale snapshot (e.g. an `auth_expired` Kiro IDE card)
+  // until the next full refresh tick. The targeted refresh against a
+  // missing id short-circuits inside `refresh()` — it hits the
+  // `targets.length === 0` branch which deletes the cache entry
+  // without dispatching any adapter call. Mirrors the disable path
+  // in `setProviderAuthEnabled`.
+  //
   // Validates: Requirements 1.1, 1.4, 9.2, 9.6
   ipcMain.handle(
     DESKTOP_INVOKE_CHANNELS.deleteProviderAuth,
@@ -1713,6 +1724,20 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       }
       try {
         service.remove(parsed.data.id);
+        // Drop the deleted account's quota cache before broadcasting
+        // so the renderer's `provider-auth.updated` payload carries
+        // a `QuotaStatus` that no longer mentions the removed row.
+        // Failure here is non-fatal — the next scheduled refresh
+        // will reconcile the cache, and a successful row delete must
+        // not turn into a failure envelope just because the cache
+        // cleanup hiccupped.
+        if (deps.quotaService !== undefined) {
+          try {
+            await deps.quotaService.refresh({ id: parsed.data.id });
+          } catch {
+            // best-effort
+          }
+        }
         broadcastProviderAuthUpdate('deleted');
         return { ok: true, value: undefined };
       } catch (err) {

@@ -189,12 +189,29 @@ export function readCapabilityResults(
  * 5. Record success/failure in collector health
  *
  * Catches all errors and records them as failures; never throws.
+ *
+ * Capability persistence: every result is written under TWO keys —
+ * the collector id (`usage.<provider>`, used by the diagnostics
+ * export so legacy logs keep their shape) AND the bare provider id
+ * (e.g. `kiro-ide`, used by `usage.service.ts` to decide which
+ * provider rows surface in the panel). Without the bare-provider
+ * key the usage service falls back to `unavailable` for every
+ * provider whose collector id has the `usage.` prefix, which
+ * shows up in the UI as a "不可用" badge even when the collector
+ * is happily writing rows.
  */
 export async function runUsageCollector(
   collector: UsageCollector,
   opts: RunUsageCollectorOptions,
 ): Promise<void> {
   const now = opts.now ?? Date.now();
+
+  const persistBoth = (result: CapabilityResult): void => {
+    persistCapabilityResult(opts.settings, collector.id, result);
+    if (collector.provider !== collector.id) {
+      persistCapabilityResult(opts.settings, collector.provider, result);
+    }
+  };
 
   let capResult: CapabilityResult;
   try {
@@ -203,7 +220,7 @@ export async function runUsageCollector(
     // Capability check itself failed — treat as unavailable.
     const message = e instanceof Error ? e.message : String(e);
     opts.collectorHealth.recordFailure(collector.id, now, message);
-    persistCapabilityResult(opts.settings, collector.id, {
+    persistBoth({
       status: 'unavailable',
       reason: `capabilityCheck threw: ${message}`,
     });
@@ -212,7 +229,7 @@ export async function runUsageCollector(
 
   // If not ok or degraded, skip the tick entirely.
   if (capResult.status === 'unavailable' || capResult.status === 'disabled') {
-    persistCapabilityResult(opts.settings, collector.id, capResult);
+    persistBoth(capResult);
     // Still record that we ran (but no success).
     opts.collectorHealth.recordFailure(
       collector.id,
@@ -234,7 +251,7 @@ export async function runUsageCollector(
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     opts.collectorHealth.recordFailure(collector.id, now, message);
-    persistCapabilityResult(opts.settings, collector.id, capResult);
+    persistBoth(capResult);
     return;
   }
 
@@ -242,6 +259,6 @@ export async function runUsageCollector(
   const finalResult = applyEmptyWindowGuard(capResult, collector.provider, opts);
 
   // Persist and record success.
-  persistCapabilityResult(opts.settings, collector.id, finalResult);
+  persistBoth(finalResult);
   opts.collectorHealth.recordSuccess(collector.id, now);
 }

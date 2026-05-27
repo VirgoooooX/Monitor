@@ -42,6 +42,7 @@ import type {
   ColorMode,
   CompactTheme,
   CreateProviderAuthApiKeyInput,
+  KiroTokenRefreshSettings,
   ManagementConfigFileEntry,
   ManualApiKeyProvider,
   ProviderAuthMetadata,
@@ -81,6 +82,18 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorMode: 'dark',
   compactTheme: 'mint-monitor',
   fontScale: 1,
+};
+
+/**
+ * Default policy for the Kiro IDE auto-refresh feature when the
+ * persisted settings row predates this block. Mirrors
+ * `buildDefaultAppSettings` / `normalizeAppSettings` in `app.ts` so
+ * a renderer running against a not-yet-normalised payload still
+ * produces a coherent UI.
+ */
+const DEFAULT_KIRO_TOKEN_REFRESH: KiroTokenRefreshSettings = {
+  enabled: true,
+  writeBackAuthFile: true,
 };
 
 interface CompactThemeOption {
@@ -644,6 +657,28 @@ export function SettingsView(): JSX.Element {
           ? { ...prev, refreshIntervals: { ...prev.refreshIntervals, [key]: value } }
           : prev,
       );
+      setSaveSuccess(false);
+    },
+    [],
+  );
+
+  /**
+   * Patch the Kiro IDE auto-refresh policy. Same shape as
+   * `updateAppearance` — the renderer locally tolerates a
+   * not-yet-normalised settings row by falling back to
+   * {@link DEFAULT_KIRO_TOKEN_REFRESH}.
+   */
+  const updateKiroTokenRefresh = useCallback(
+    (patch: Partial<KiroTokenRefreshSettings>) => {
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const current: KiroTokenRefreshSettings =
+          prev.kiroTokenRefresh ?? DEFAULT_KIRO_TOKEN_REFRESH;
+        return {
+          ...prev,
+          kiroTokenRefresh: { ...current, ...patch },
+        };
+      });
       setSaveSuccess(false);
     },
     [],
@@ -1743,8 +1778,8 @@ export function SettingsView(): JSX.Element {
           <Section id="accounts" section={SECTIONS[8]!}>
             <div className="settings-view__row">
               <Field
-                label="账号类型 (CPA 文件)"
-                hint="选择这份 CPA 认证文件对应的服务"
+                label="账号类型 (auth 认证)"
+                hint="选择这份 auth 认证文件对应的服务"
               >
                 <select
                   className="settings-view__input"
@@ -1752,7 +1787,7 @@ export function SettingsView(): JSX.Element {
                   onChange={(e) =>
                     setProviderPick(e.target.value as ProviderId)
                   }
-                  aria-label="账号类型 (CPA 文件)"
+                  aria-label="账号类型 (auth 认证)"
                   disabled={providerAuthBusyId === '__import__'}
                 >
                   {FILE_IMPORT_PICKER_ORDER.map((id) => (
@@ -1778,7 +1813,7 @@ export function SettingsView(): JSX.Element {
                     <Plus size={13} strokeWidth={2} aria-hidden="true" />
                     {providerAuthBusyId === '__import__'
                       ? '导入中…'
-                      : '导入 CPA 认证文件'}
+                      : '导入 auth 认证文件'}
                   </button>
                   <button
                     type="button"
@@ -1806,7 +1841,7 @@ export function SettingsView(): JSX.Element {
                 <div className="settings-view__row">
                   <Field
                     label="账号类型"
-                    hint="只支持纯 API key 的服务；OAuth 类账号请使用 CPA 文件导入"
+                    hint="只支持纯 API key 的服务；OAuth 类账号请使用 auth 认证文件导入"
                   >
                     <select
                       className="settings-view__input"
@@ -2117,6 +2152,10 @@ export function SettingsView(): JSX.Element {
               onToggleEnabled={(id, enabled) =>
                 void toggleProviderAuthEnabled(id, enabled)
               }
+              kiroTokenRefresh={
+                settings.kiroTokenRefresh ?? DEFAULT_KIRO_TOKEN_REFRESH
+              }
+              onKiroRefreshSettingsChange={updateKiroTokenRefresh}
               busyId={providerAuthBusyId}
             />
           </Section>

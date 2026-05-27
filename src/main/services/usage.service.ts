@@ -64,6 +64,26 @@ export function deriveKnownProviders(
   return Array.from(set).sort();
 }
 
+/**
+ * Providers that maintain a local on-disk token log and may therefore
+ * legitimately produce `usage_events` even when the user has not
+ * imported a `provider_auth` row for them. Surfacing only this small
+ * allowlist keeps the unification invariant — arbitrary or unknown
+ * provider strings still cannot reach the panel via events alone.
+ *
+ *   - `claude-code`: `~/.claude/projects/<ws>/<sid>.jsonl` per-message
+ *     `message.usage` block.
+ *   - `codex`:       `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
+ *     `payload.info.last_token_usage` block.
+ *   - `kiro-ide`:    `tokens_generated.jsonl` under the per-platform
+ *     `Kiro/User/globalStorage/kiro.kiroagent/dev_data/` path.
+ */
+export const LOCAL_LOG_ONLY_PROVIDERS: ReadonlySet<string> = new Set([
+  'claude-code',
+  'codex',
+  'kiro-ide',
+]);
+
 // ---------------------------------------------------------------------------
 // Time range helpers
 // ---------------------------------------------------------------------------
@@ -151,13 +171,38 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
       // 2. Read the last capability results to determine status per provider.
       const capabilityMap = readCapabilityResults(deps.settings);
 
-      // 3. Derive the provider set at query time from the enabled
-      //    `provider_auth` rows. The legacy `settings.collectors`
-      //    map is intentionally not consulted — the unified AI
-      //    Accounts panel makes per-account `enabled` toggles the
-      //    only way a provider becomes visible.
+      // 3. Derive the provider set at query time. The unified AI
+      //    Accounts plan keeps `provider_auth` as the primary source
+      //    of truth — only enabled accounts visible there reach the
+      //    summary — so legacy `settings.collectors` toggles never
+      //    leak in (planning doc §Renderer UI 设计).
+      //
+      //    Narrow widening for local-log providers: a small,
+      //    explicitly-listed set of providers (Claude Code, Codex,
+      //    Kiro IDE) keeps a local JSONL log on disk independent of
+      //    any imported credential. Surfacing those from
+      //    `usage_events` lets the panel reflect real consumption
+      //    when the user signed in to the CLI/IDE but never went
+      //    through the CPA auth-file import path. We deliberately
+      //    DO NOT widen beyond this list — that would re-open the
+      //    "settings toggle leaks unaffiliated providers" hole the
+      //    unification closed. A `provider_auth` row with
+      //    `enabled: false` still wins: a paused row hides the
+      //    provider even when local-log events accumulate.
       const providerAuthRows = deps.providerAuth?.list() ?? [];
-      const knownProviders = deriveKnownProviders(providerAuthRows);
+      const authProviders = deriveKnownProviders(providerAuthRows);
+      const disabledProviders = new Set<string>(
+        providerAuthRows.filter((r) => !r.enabled).map((r) => r.provider),
+      );
+      const eventOnlyProviders = aggregates
+        .filter((a) => a.eventCount > 0)
+        .map((a) => a.provider)
+        .filter(
+          (p) => LOCAL_LOG_ONLY_PROVIDERS.has(p) && !disabledProviders.has(p),
+        );
+      const knownProviders = Array.from(
+        new Set<string>([...authProviders, ...eventOnlyProviders]),
+      ).sort();
 
       // Get quota snapshots
       const snapshots = deps.quotaSnapshots?.() ?? [];

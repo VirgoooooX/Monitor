@@ -85,6 +85,7 @@ export type {
   CompactTheme,
   ManagementInterfaceSettings,
   ManagementConfigFileEntry,
+  KiroTokenRefreshSettings,
 
   // Diagnostics
   CollectorHealthRow,

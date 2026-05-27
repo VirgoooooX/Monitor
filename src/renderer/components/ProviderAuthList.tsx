@@ -43,6 +43,7 @@ import { RefreshCw, Trash2, AlertCircle, KeyRound, Clock } from 'lucide-react';
 
 import { ProviderIcon } from './ProviderIcon';
 import type {
+  KiroTokenRefreshSettings,
   ProviderAuthErrorCode,
   ProviderAuthMetadata,
   ProviderId,
@@ -302,6 +303,16 @@ export interface ProviderAuthListProps {
    *  rendering rows with the toggle hidden — the action is visible
    *  only when this callback is supplied. */
   readonly onToggleEnabled?: (id: string, enabled: boolean) => void;
+  /**
+   * Kiro IDE auto-refresh policy + change handler. Surfaced as two
+   * pill toggles on the `kiro-ide` row's action bar (other providers
+   * never render them). Both fields must be supplied together;
+   * omitting either hides the toggles.
+   */
+  readonly kiroTokenRefresh?: KiroTokenRefreshSettings;
+  readonly onKiroRefreshSettingsChange?: (
+    patch: Partial<KiroTokenRefreshSettings>,
+  ) => void;
   /** ID of the row whose refresh / delete IPC is currently in flight,
    *  or `null` when no row is busy. Used to disable both the firing
    *  row's buttons (avoid double-fire) and signal "切换中" state. */
@@ -317,6 +328,8 @@ export function ProviderAuthList({
   onRefresh,
   onDelete,
   onToggleEnabled,
+  kiroTokenRefresh,
+  onKiroRefreshSettingsChange,
   busyId,
 }: ProviderAuthListProps): JSX.Element {
   // Stable ascending sort by `importedAt`, ties broken by `id` for
@@ -363,6 +376,13 @@ export function ProviderAuthList({
           {...(onToggleEnabled !== undefined
             ? { onToggleEnabled }
             : {})}
+          {...(kiroTokenRefresh !== undefined &&
+          onKiroRefreshSettingsChange !== undefined
+            ? {
+                kiroTokenRefresh,
+                onKiroRefreshSettingsChange,
+              }
+            : {})}
         />
       ))}
     </ul>
@@ -380,6 +400,10 @@ interface ProviderAuthRowProps {
   readonly onRefresh: (id: string) => void;
   readonly onDelete: (id: string) => void;
   readonly onToggleEnabled?: (id: string, enabled: boolean) => void;
+  readonly kiroTokenRefresh?: KiroTokenRefreshSettings;
+  readonly onKiroRefreshSettingsChange?: (
+    patch: Partial<KiroTokenRefreshSettings>,
+  ) => void;
 }
 
 function ProviderAuthRow({
@@ -389,6 +413,8 @@ function ProviderAuthRow({
   onRefresh,
   onDelete,
   onToggleEnabled,
+  kiroTokenRefresh,
+  onKiroRefreshSettingsChange,
 }: ProviderAuthRowProps): JSX.Element {
   // Email-shaped labels get a partial mask in the rendered text so
   // the user can recognise the account without exposing the full
@@ -604,6 +630,24 @@ function ProviderAuthRow({
           </label>
         )}
 
+        {/* ── Kiro IDE — auto-refresh pills ───────────────────
+              Two compact pill switches that drive
+              `settings.kiroTokenRefresh.{enabled,writeBackAuthFile}`
+              directly on the per-account card, so the user can
+              flip them without leaving the row. The "回写 IDE 文件"
+              pill is disabled when "自动续期" is off — file
+              write-back without an actual refresh would be a no-op.
+        */}
+        {row.provider === 'kiro-ide' &&
+          kiroTokenRefresh !== undefined &&
+          onKiroRefreshSettingsChange !== undefined && (
+            <KiroRefreshPills
+              settings={kiroTokenRefresh}
+              onChange={onKiroRefreshSettingsChange}
+              disabled={busy}
+            />
+          )}
+
         <button
           type="button"
           className="provider-auth-list__btn provider-auth-list__btn--refresh"
@@ -639,6 +683,115 @@ function ProviderAuthRow({
         </button>
       </div>
     </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Kiro IDE — auto-refresh pill toggles
+// ---------------------------------------------------------------------------
+
+/**
+ * Two compact pill switches surfaced on the `kiro-ide` provider's
+ * row. They drive `settings.kiroTokenRefresh.{enabled,
+ * writeBackAuthFile}` directly so the user can flip the policy
+ * inline. We deliberately do NOT show the more verbose copy from
+ * the (removed) section-level block — the labels alone are enough
+ * once the controls live next to the account they affect, and a
+ * tooltip carries the longer explanation for users who hover.
+ *
+ * The `writeBackAuthFile` pill auto-disables when `enabled` is
+ * false: writing back the IDE file without an active refresh chain
+ * is a no-op, so the UI mirrors the runtime contract.
+ */
+function KiroRefreshPills({
+  settings,
+  onChange,
+  disabled,
+}: {
+  readonly settings: KiroTokenRefreshSettings;
+  readonly onChange: (patch: Partial<KiroTokenRefreshSettings>) => void;
+  readonly disabled: boolean;
+}): JSX.Element {
+  return (
+    <div
+      className="provider-auth-list__kiro-pills"
+      data-testid="provider-auth-list-kiro-pills"
+      role="group"
+      aria-label="Kiro IDE 凭据自动续期"
+    >
+      <PillToggle
+        checked={settings.enabled}
+        disabled={disabled}
+        onChange={(next) => onChange({ enabled: next })}
+        label="自动续期"
+        ariaLabel="Kiro IDE 自动续期"
+        title="到期前自动用 refresh token 换新 access token"
+        testId="kiro-refresh-enabled-pill"
+      />
+      <PillToggle
+        checked={settings.writeBackAuthFile}
+        disabled={disabled || !settings.enabled}
+        onChange={(next) => onChange({ writeBackAuthFile: next })}
+        label="写回 IDE 文件"
+        ariaLabel="刷新成功后写回 Kiro IDE 凭据文件"
+        title="刷新成功后同步写回 ~/.aws/sso/cache/kiro-auth-token.json，让 Kiro 桌面端共用同一条凭据链"
+        testId="kiro-refresh-writeback-pill"
+      />
+    </div>
+  );
+}
+
+/**
+ * Pill-shaped toggle switch. Same visual form as the existing
+ * `已启用 / 已停用` switch — a track with a sliding thumb plus a
+ * label to its right — so the row's three switches share the same
+ * rhythm. We render the same DOM shape (label > hidden checkbox >
+ * track > thumb > label-text) to inherit every existing CSS
+ * variable / focus / disabled state without copy-pasting them.
+ */
+function PillToggle({
+  checked,
+  disabled,
+  onChange,
+  label,
+  ariaLabel,
+  title,
+  testId,
+}: {
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (next: boolean) => void;
+  readonly label: string;
+  readonly ariaLabel?: string;
+  readonly title?: string;
+  readonly testId?: string;
+}): JSX.Element {
+  return (
+    <label
+      className="provider-auth-list__toggle"
+      title={title}
+      {...(testId !== undefined ? { 'data-testid': testId } : {})}
+    >
+      <input
+        type="checkbox"
+        className="provider-auth-list__toggle-input"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={ariaLabel ?? label}
+      />
+      <span
+        className={
+          checked
+            ? 'provider-auth-list__toggle-track provider-auth-list__toggle-track--on'
+            : 'provider-auth-list__toggle-track'
+        }
+        aria-hidden="true"
+      >
+        <span className="provider-auth-list__toggle-thumb" />
+      </span>
+      <span className="provider-auth-list__toggle-label">{label}</span>
+    </label>
   );
 }
 
@@ -727,7 +880,7 @@ function SourceBadge({
 }: {
   readonly source: ProviderAuthMetadata['source'];
 }): JSX.Element {
-  const label = source === 'cpa-auth-file' ? 'CPA 文件' : '手动 API Key';
+  const label = source === 'cpa-auth-file' ? 'auth 认证' : '手动 API Key';
   return (
     <span
       className="provider-auth-list__source"

@@ -109,7 +109,7 @@ function providerTone(provider: string): string {
 
 function sourceDisplayName(source: QuotaSnapshot['source']): string {
   switch (source) {
-    case 'imported_auth': return 'CPA 文件';
+    case 'imported_auth': return 'auth 认证';
     case 'remote_api': return '官方 API';
     case 'local_log': return '本地日志';
     case 'health_check': return '健康检查';
@@ -119,12 +119,22 @@ function sourceDisplayName(source: QuotaSnapshot['source']): string {
 function cleanAccountLabel(label: string, provider: string): string {
   let cleaned = label.trim();
 
-  // 1. Strip common suffixes first (like .json)
+  // 1. Strip the auto-discovery suffix so downstream pattern checks
+  //    (placeholder detection, email extraction, UUID shortening) all
+  //    operate on the "core" label. The suffix carries no identity
+  //    signal — it just records that the row was found by the
+  //    auto-discovery scan rather than picked from the file dialog —
+  //    so dropping it before pattern matching is purely simplifying.
+  if (cleaned.endsWith(' (自动发现)')) {
+    cleaned = cleaned.slice(0, -' (自动发现)'.length).trim();
+  }
+
+  // 2. Strip common suffixes (like .json)
   if (cleaned.endsWith('.json')) {
     cleaned = cleaned.slice(0, -5);
   }
 
-  // 2. Strip common prefixes based on provider
+  // 3. Strip common prefixes based on provider
   if (provider === 'gemini-cli') {
     cleaned = cleaned.replace(/^Gemini CLI\s*\(([^)]+)\)$/i, '$1');
   } else if (provider === 'antigravity') {
@@ -134,14 +144,14 @@ function cleanAccountLabel(label: string, provider: string): string {
   // Generic prefix strip
   cleaned = cleaned.replace(/^(codex_oauth_|claude_code_oauth_|gemini_cli_|antigravity_|deepseek_)/, '');
 
-  // 3. Try to extract email from the remaining part
+  // 4. Try to extract email from the remaining part
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
   const match = emailRegex.exec(cleaned);
   if (match) {
     return match[0];
   }
 
-  // 4. If it is a UUID (like 37957071-dbb0-48c4-a120-2f50829dc2c9)
+  // 5. If it is a UUID (like 37957071-dbb0-48c4-a120-2f50829dc2c9)
   const uuidRegex = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
   const uuidMatch = uuidRegex.exec(cleaned);
   if (uuidMatch) {
@@ -151,6 +161,24 @@ function cleanAccountLabel(label: string, provider: string): string {
   }
 
   return cleaned;
+}
+
+/**
+ * The CPA auth-file parser falls back to `<provider>:imported`
+ * (e.g. `kiro-ide:imported`) when it cannot derive an email or
+ * accountId from the file. The auto-discovery scanner then appends
+ * ` (自动发现)`. That fallback string carries no identity — it is
+ * just "we have a row and nothing to call it" — so the quota card
+ * subtitle should hide it instead of rendering a noisy
+ * `KIRO-IDE:IMPORTED` chip next to the plan label.
+ *
+ * Matches both the bare fallback (`<id>:imported`, any case) and
+ * the UPPERCASE form some files ship with (`KIRO-IDE:IMPORTED`).
+ * The `(自动发现)` suffix is stripped upstream by
+ * {@link cleanAccountLabel} so we only need the colon-pattern here.
+ */
+function isParserPlaceholderLabel(cleaned: string): boolean {
+  return /^[a-z0-9-]+:imported$/i.test(cleaned.trim());
 }
 
 function snapshotTitle(snapshot: QuotaSnapshot): string {
@@ -229,7 +257,11 @@ export function UsagePanel(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Fetch usage data
+  // Fetch usage data — initial pull on `range` change, then refresh
+  // every 60 s so newly-collected `usage_events` reach the panel
+  // without the user having to flip the range tab. Also re-runs
+  // when a `provider-auth.updated` push arrives, since adding /
+  // pausing an account changes which providers the summary shows.
   useEffect(() => {
     const desktop = window.desktop;
     if (!desktop) {
@@ -238,26 +270,56 @@ export function UsagePanel(): JSX.Element {
     }
 
     let cancelled = false;
-    setLoading(true);
+    let firstFetch = true;
 
-    desktop
-      .getUsageSummary({ range })
-      .then((summary) => {
-        if (!cancelled) {
-          setUsageData(summary);
-          setError(null);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch usage data');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const fetchUsage = (): void => {
+      // Show the spinner only on the first fetch for this range —
+      // background refresh ticks should not flash the loading
+      // state and unmount the cards.
+      if (firstFetch) {
+        setLoading(true);
+        firstFetch = false;
+      }
+      desktop
+        .getUsageSummary({ range })
+        .then((summary) => {
+          if (!cancelled) {
+            setUsageData(summary);
+            setError(null);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : 'Failed to fetch usage data');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
 
-    return () => { cancelled = true; };
+    fetchUsage();
+    const interval = setInterval(fetchUsage, 60_000);
+
+    // Refetch on provider-auth pushes (account add / delete / refresh)
+    // because the visible provider set is derived in part from
+    // `provider_auth` rows.
+    let unsubscribe: (() => void) | undefined;
+    if ('on' in desktop && typeof desktop.on === 'function') {
+      try {
+        unsubscribe = desktop.on('provider-auth.updated', () => {
+          if (!cancelled) fetchUsage();
+        });
+      } catch {
+        // No-op — the 60s interval still drives updates.
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      if (unsubscribe) unsubscribe();
+    };
   }, [range]);
 
   // Fetch quota data & provider auths
@@ -463,7 +525,7 @@ function QuotaAccountCard({
   if (snapshot.providerAuthId) {
     const matched = providerAuths.find((p) => p.id === snapshot.providerAuthId);
     if (matched) {
-      typeLabel = matched.source === 'cpa-auth-file' ? 'CPA 文件' : '手动 API Key';
+      typeLabel = matched.source === 'cpa-auth-file' ? 'auth 认证' : '手动 API Key';
     }
   }
   const typeText = typeLabel || sourceDisplayName(snapshot.source);
@@ -486,7 +548,13 @@ function QuotaAccountCard({
   //      surfaced project_id signals that the email enrichment
   //      hasn't reached this row yet (network failure, or a row
   //      imported before enrichment landed and not yet re-scanned).
-  let uniqueId = '';
+  //
+  // Each branch carries a `kind` so the renderer can prefix
+  // project / account ids with a 项目 / 账号 hint (a bare
+  // `vivid-course-453615-u9` looks like a status code without it),
+  // while emails and human-readable labels render verbatim.
+  type UniqueIdKind = 'email' | 'project' | 'account' | 'label';
+  let uniqueId: { kind: UniqueIdKind; text: string } | null = null;
   if (snapshot.accountLabel) {
     const cleaned = cleanAccountLabel(snapshot.accountLabel, snapshot.provider);
     const lowerCleaned = cleaned.toLowerCase();
@@ -500,26 +568,58 @@ function QuotaAccountCard({
     const isExactProvider =
       lowerCleaned === lowerProvider ||
       lowerCleaned === snapshot.provider.toLowerCase();
-    if (!isGenericKey && !isExactProvider) {
+    // The parser fallback (`<provider>:imported`, e.g. `kiro-ide:imported`)
+    // also lands here when the file carried no email or accountId. It
+    // is no more informative than the generic placeholders above, so
+    // suppress it from the subtitle.
+    const isParserPlaceholder = isParserPlaceholderLabel(cleaned);
+    if (!isGenericKey && !isExactProvider && !isParserPlaceholder) {
       const masked = maskedEmailLabel(cleaned);
-      uniqueId = masked ?? cleaned;
+      if (masked !== null) {
+        uniqueId = { kind: 'email', text: masked };
+      } else if (snapshot.projectId && cleaned === snapshot.projectId) {
+        // The label was derived from the project id (e.g. an old
+        // `Gemini CLI (vivid-course-453615-u9)` wrapper that
+        // `cleanAccountLabel` unwrapped). Promote it to kind='project'
+        // so the renderer can prefix it with 项目, otherwise the
+        // bare GCP slug reads like a status code under the parent
+        // `text-transform: uppercase` rule.
+        uniqueId = { kind: 'project', text: cleaned };
+      } else if (snapshot.accountId && cleaned === snapshot.accountId) {
+        uniqueId = { kind: 'account', text: cleaned };
+      } else {
+        uniqueId = { kind: 'label', text: cleaned };
+      }
     }
   }
 
-  if (!uniqueId) {
+  if (uniqueId === null) {
     if (snapshot.projectId) {
-      uniqueId = snapshot.projectId;
+      uniqueId = { kind: 'project', text: snapshot.projectId };
     } else if (snapshot.accountId) {
-      uniqueId = cleanAccountLabel(snapshot.accountId, snapshot.provider);
+      uniqueId = {
+        kind: 'account',
+        text: cleanAccountLabel(snapshot.accountId, snapshot.provider),
+      };
     }
   }
+
+  // The aria-label / unique-id rendering mirror the same hint copy.
+  const uniqueIdAriaText =
+    uniqueId === null
+      ? ''
+      : uniqueId.kind === 'project'
+        ? `项目 ${uniqueId.text}`
+        : uniqueId.kind === 'account'
+          ? `账号 ${uniqueId.text}`
+          : uniqueId.text;
 
   return (
     <article
       className="quota-account-card"
       data-provider={providerTone(snapshot.provider)}
       data-status={tone}
-      aria-label={`${providerLabel} ${uniqueId} 配额`}
+      aria-label={`${providerLabel} ${uniqueIdAriaText} 配额`}
     >
       {/* 1. 顶部身份区 */}
       <header className="quota-account-card__header">
@@ -539,11 +639,20 @@ function QuotaAccountCard({
                   </span>
                 </>
               )}
-              {uniqueId && (
+              {uniqueId !== null && (
                 <>
                   {' · '}
-                  <span className="quota-account-card__unique-id">
-                    {uniqueId}
+                  {(uniqueId.kind === 'project' || uniqueId.kind === 'account') && (
+                    <span className="quota-account-card__id-hint">
+                      {uniqueId.kind === 'project' ? '项目' : '账号'}{' '}
+                    </span>
+                  )}
+                  <span
+                    className="quota-account-card__unique-id"
+                    data-id-kind={uniqueId.kind}
+                    title={uniqueId.text}
+                  >
+                    {uniqueId.text}
                   </span>
                 </>
               )}

@@ -43,10 +43,30 @@ const SOURCE = 'codex.jsonl';
 /**
  * Fields we look for in each JSONL record to extract token counts.
  * Codex may use different naming conventions across versions.
+ *
+ * Current Codex desktop ships a nested shape:
+ *   { type: 'event_msg',
+ *     payload: { type: 'token_count',
+ *                info: { last_token_usage: { input_tokens, cached_input_tokens,
+ *                                            output_tokens, reasoning_output_tokens, ... },
+ *                        total_token_usage: { ... } } } }
+ *
+ * `last_token_usage` is the per-turn delta, which is what we want to
+ * sum across events. `total_token_usage` is cumulative — summing
+ * those would multiply-count usage across the same session.
  */
 const INPUT_TOKEN_FIELDS = ['input_tokens', 'inputTokens', 'prompt_tokens'] as const;
 const OUTPUT_TOKEN_FIELDS = ['output_tokens', 'outputTokens', 'completion_tokens'] as const;
-const CACHE_TOKEN_FIELDS = ['cache_tokens', 'cacheTokens', 'cached_tokens'] as const;
+const CACHE_TOKEN_FIELDS = [
+  'cache_tokens',
+  'cacheTokens',
+  'cached_tokens',
+  'cached_input_tokens',
+] as const;
+const REASONING_OUTPUT_TOKEN_FIELDS = [
+  'reasoning_output_tokens',
+  'reasoningOutputTokens',
+] as const;
 
 /**
  * Fields that MUST NOT be stored. We strip these from consideration
@@ -162,14 +182,72 @@ function extractNumericField(
 }
 
 /**
- * Check if a record contains any token-bearing field. A line must have
- * at least one non-zero token count to be considered valid.
+ * Token counters extracted from one Codex JSONL line. `null` means
+ * the line did not carry a token-count event at all (skip it).
  */
-function hasTokenFields(record: Record<string, unknown>): boolean {
-  const input = extractNumericField(record, INPUT_TOKEN_FIELDS);
-  const output = extractNumericField(record, OUTPUT_TOKEN_FIELDS);
-  const cache = extractNumericField(record, CACHE_TOKEN_FIELDS);
-  return input > 0 || output > 0 || cache > 0;
+interface TokenCounters {
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+}
+
+/**
+ * Walk a Codex JSONL record and find the per-turn token delta.
+ *
+ * Codex writes both flat shapes (older versions, where the top-level
+ * record is itself the token usage) and nested shapes (current
+ * desktop builds, where the counters live under
+ * `payload.info.last_token_usage`). We support both.
+ *
+ * The nested branch is preferred when present so we sum per-turn
+ * deltas instead of cumulative totals (`total_token_usage`).
+ */
+function extractTokenCounters(record: Record<string, unknown>): TokenCounters | null {
+  // 1. Nested Codex desktop shape: payload.info.last_token_usage
+  const payload = record['payload'];
+  if (
+    payload !== null &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    (payload as Record<string, unknown>)['type'] === 'token_count'
+  ) {
+    const info = (payload as Record<string, unknown>)['info'];
+    if (info !== null && typeof info === 'object' && !Array.isArray(info)) {
+      const last = (info as Record<string, unknown>)['last_token_usage'];
+      const total = (info as Record<string, unknown>)['total_token_usage'];
+      const block =
+        (last !== null && typeof last === 'object' && !Array.isArray(last))
+          ? (last as Record<string, unknown>)
+          : (total !== null && typeof total === 'object' && !Array.isArray(total))
+            ? (total as Record<string, unknown>)
+            : null;
+      if (block !== null) {
+        const inputTokens = extractNumericField(block, INPUT_TOKEN_FIELDS);
+        const baseOutput = extractNumericField(block, OUTPUT_TOKEN_FIELDS);
+        const reasoning = extractNumericField(block, REASONING_OUTPUT_TOKEN_FIELDS);
+        const cacheTokens = extractNumericField(block, CACHE_TOKEN_FIELDS);
+        // `output_tokens` in the Codex schema is the visible-output
+        // count; `reasoning_output_tokens` is the hidden CoT cost
+        // billed alongside it. Roll them together so the dashboard
+        // total matches the upstream invoice.
+        const outputTokens = baseOutput + reasoning;
+        if (inputTokens > 0 || outputTokens > 0 || cacheTokens > 0) {
+          return { inputTokens, outputTokens, cacheTokens };
+        }
+      }
+    }
+    // payload was a token_count event but had no usable counters.
+    return null;
+  }
+
+  // 2. Flat shape (older Codex / generic): top-level fields.
+  const inputTokens = extractNumericField(record, INPUT_TOKEN_FIELDS);
+  const outputTokens = extractNumericField(record, OUTPUT_TOKEN_FIELDS);
+  const cacheTokens = extractNumericField(record, CACHE_TOKEN_FIELDS);
+  if (inputTokens > 0 || outputTokens > 0 || cacheTokens > 0) {
+    return { inputTokens, outputTokens, cacheTokens };
+  }
+  return null;
 }
 
 /**
@@ -384,16 +462,15 @@ export function createCodexCollector(deps?: CodexCollectorDeps): UsageCollector 
             continue;
           }
 
-          // Check for token fields
-          if (!hasTokenFields(record)) {
-            // No token data in this line — skip
+          // Extract per-turn token counters. Returns null when the
+          // line is not a token-count event (most lines are prompts,
+          // tool calls, or other event types we don't bill).
+          const counters = extractTokenCounters(record);
+          if (counters === null) {
             continue;
           }
 
-          // Extract fields (NEVER store prompt/response/cookies/auth)
-          const inputTokens = extractNumericField(record, INPUT_TOKEN_FIELDS);
-          const outputTokens = extractNumericField(record, OUTPUT_TOKEN_FIELDS);
-          const cacheTokens = extractNumericField(record, CACHE_TOKEN_FIELDS);
+          // Extract metadata fields (NEVER store prompt/response/cookies/auth)
           const timestamp = extractTimestamp(record, ctx.now());
           const model = extractModel(record);
           const eventId = extractEventId(record);
@@ -403,9 +480,9 @@ export function createCodexCollector(deps?: CodexCollectorDeps): UsageCollector 
             timestamp,
             provider: PROVIDER,
             model,
-            inputTokens,
-            outputTokens,
-            cacheTokens,
+            inputTokens: counters.inputTokens,
+            outputTokens: counters.outputTokens,
+            cacheTokens: counters.cacheTokens,
             costUsd: null,
             source: SOURCE,
             sourcePath: normalizedPath,

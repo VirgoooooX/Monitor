@@ -34,6 +34,16 @@ export interface ProviderAdapterRefreshInput {
   readonly getSecret: () => ProviderAuthSecretPayload | null;
   readonly now: number;
   readonly signal?: AbortSignal;
+  /**
+   * Persist a rotated secret payload back to the encrypted store
+   * (and refresh `getSecret`'s in-memory cache). Threaded in by
+   * `quota.service.ts`; only adapters that perform OAuth refresh
+   * round-trips need this — others can ignore the field.
+   *
+   * Currently used by the Kiro IDE adapter; v1.1 will extend this
+   * to Codex / Claude / Google when their refresh paths land here.
+   */
+  readonly persistSecret?: (payload: ProviderAuthSecretPayload) => void;
 }
 
 /**

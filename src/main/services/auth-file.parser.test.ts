@@ -46,6 +46,13 @@ const ALLOWED_PAYLOAD_KEYS: ReadonlySet<keyof ProviderAuthSecretPayload> =
     'rawMetadata',
     'rawAttributes',
     'kiroProfileArn',
+    'kiroAuthMethod',
+    'kiroSourceFilePath',
+    'xiaomiPassToken',
+    'xiaomiUserId',
+    'deepseekUserToken',
+    'opencodeAuthCookie',
+    'opencodeWorkspaceUrl',
   ]);
 
 /**

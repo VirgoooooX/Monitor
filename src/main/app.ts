@@ -157,6 +157,10 @@ export function buildDefaultAppSettings(): AppSettings {
       compactTheme: 'mint-monitor',
       fontScale: 1,
     },
+    kiroTokenRefresh: {
+      enabled: true,
+      writeBackAuthFile: true,
+    },
   };
 }
 
@@ -223,12 +227,17 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
   };
   const configSwitchVerifyWindowMs =
     raw.configSwitchVerifyWindowMs ?? 8_000;
+  const kiroTokenRefresh = raw.kiroTokenRefresh ?? {
+    enabled: true,
+    writeBackAuthFile: true,
+  };
   return {
     ...raw,
     managementInterface,
     configSwitchVerifyWindowMs,
     cliproxy,
     appearance,
+    kiroTokenRefresh,
   };
 }
 
@@ -573,7 +582,7 @@ async function boot(): Promise<void> {
   // `getQuotaStatus` IPC needs.
   const { createQuotaService } = require('./services/quota.service') as typeof import('./services/quota.service');
   const { createSecretsAdmin } = require('./security/secrets.admin') as typeof import('./security/secrets.admin');
-  const { adapterRegistry } = require('./services/quota/adapters') as typeof import('./services/quota/adapters');
+  const { buildAdapterRegistry } = require('./services/quota/adapters') as typeof import('./services/quota/adapters');
   // Codex local-log fallback (`parseLocalRateLimits`) is intentionally
   // NOT wired in. The AI Accounts unification makes the per-account
   // `provider_auth` row the single source of truth for which providers
@@ -583,6 +592,13 @@ async function boot(): Promise<void> {
   // imported account. Removing the dep collapses the fallback branch
   // inside `quotaService.refresh`.
   const secretsAdmin = createSecretsAdmin(secretsModule);
+  // The Kiro IDE adapter consults `kiroTokenRefresh` settings on
+  // every refresh, so pass it a thunk pointing at the live
+  // memoised `_settings` rather than a snapshot — a Settings UI
+  // toggle then takes effect on the next quota tick without restart.
+  const adapterRegistry = buildAdapterRegistry({
+    getSettings: () => _settings ?? settings,
+  });
   const quotaService = createQuotaService({
     settings: repositories.settings,
     providerAuth: repositories.providerAuth,
@@ -886,6 +902,8 @@ async function boot(): Promise<void> {
   const { createGeminiCollector } = require('./collectors/usage/gemini.collector') as typeof import('./collectors/usage/gemini.collector');
   const { createAntigravityCollector } = require('./collectors/usage/antigravity.collector') as typeof import('./collectors/usage/antigravity.collector');
   const { createOpenCodeCollector } = require('./collectors/usage/opencode.collector') as typeof import('./collectors/usage/opencode.collector');
+  const { createClaudeCodeCollector } = require('./collectors/usage/claudeCode.collector') as typeof import('./collectors/usage/claudeCode.collector');
+  const { createKiroCollector } = require('./collectors/usage/kiro.collector') as typeof import('./collectors/usage/kiro.collector');
 
   scheduler.register(
     createUsageCollectorTask({
@@ -894,6 +912,8 @@ async function boot(): Promise<void> {
         createGeminiCollector(),
         createAntigravityCollector(),
         createOpenCodeCollector(),
+        createClaudeCodeCollector(),
+        createKiroCollector(),
       ],
       repositories: {
         usageEvents: repositories.usageEvents,
@@ -1067,6 +1087,10 @@ function applyAppSettingsPatch(
     appearance: {
       ...current.appearance,
       ...(patch.appearance ?? {}),
+    },
+    kiroTokenRefresh: {
+      ...current.kiroTokenRefresh,
+      ...(patch.kiroTokenRefresh ?? {}),
     },
   };
   writeAppSettings(repositories.settings, next);

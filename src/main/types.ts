@@ -709,6 +709,26 @@ export interface ProviderAuthSecretPayload {
    * of stashing it in `accountId`. NEVER logged.
    */
   kiroProfileArn?: string;
+  /**
+   * Kiro IDE only — `authMethod` field copied verbatim from
+   * `~/.aws/sso/cache/kiro-auth-token.json`. Drives which OAuth
+   * refresh endpoint we hit:
+   *   - `'social'` (Google / GitHub / Microsoft) → POST
+   *     `https://prod.<region>.auth.desktop.kiro.dev/refreshToken`
+   *   - `'sso'` / `'idc'` (AWS IAM Identity Center) → POST
+   *     `https://oidc.<region>.amazonaws.com/token`
+   * v1 only auto-refreshes the `social` path; SSO falls back to the
+   * existing "凭据已过期" prompt.
+   */
+  kiroAuthMethod?: string;
+  /**
+   * Kiro IDE only — absolute path to the `kiro-auth-token.json`
+   * file that auto-discovery imported this row from. Stored so the
+   * adapter can (a) re-read the file before refreshing to detect
+   * IDE-side races, and (b) write the rotated token back so the
+   * IDE keeps working too. NEVER logged.
+   */
+  kiroSourceFilePath?: string;
   /** Verbatim `metadata.*` block from the CPA file (minus secret keys). */
   rawMetadata?: Record<string, unknown>;
   /** Verbatim `attributes.*` block from the CPA file (minus secret keys). */
@@ -900,6 +920,37 @@ export interface AppSettings {
    * older settings rows that predate this field.
    */
   appearance: AppearanceSettings;
+  /**
+   * Kiro IDE token auto-refresh policy. When `enabled` is true and
+   * the access token in `~/.aws/sso/cache/kiro-auth-token.json` is
+   * within `KIRO_REFRESH_THRESHOLD_MS` of expiring, the adapter
+   * exchanges the refresh token for a fresh access token before
+   * each `getUsageLimits` call. When `writeBackAuthFile` is also
+   * true, the rotated tokens are persisted back to the source JSON
+   * so the Kiro desktop IDE picks up the new refresh-token chain
+   * on its next read.
+   *
+   * The boot sequence normalizes older settings rows that predate
+   * this block to `{ enabled: true, writeBackAuthFile: true }`.
+   */
+  kiroTokenRefresh: KiroTokenRefreshSettings;
+}
+
+/**
+ * Per-`kiro-ide` row auto-refresh policy. See
+ * {@link AppSettings.kiroTokenRefresh} for the semantics.
+ */
+export interface KiroTokenRefreshSettings {
+  /** When false, the adapter behaves as it did pre-feature: refuse on expired access token. */
+  enabled: boolean;
+  /**
+   * When true, every successful refresh atomically rewrites
+   * `~/.aws/sso/cache/kiro-auth-token.json` with the rotated tokens
+   * so the Kiro IDE can keep using the same refresh-token chain.
+   * When false, only the in-process `secrets` row is updated — the
+   * IDE will fall back to its own refresh on next read.
+   */
+  writeBackAuthFile: boolean;
 }
 
 // ---------------------------------------------------------------------------

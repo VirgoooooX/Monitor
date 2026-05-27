@@ -197,6 +197,21 @@ function fingerprintsFor(payload: ProviderAuthSecretPayload, provider: ProviderI
   if (email !== null) {
     out.push(`${provider}::email::${email.toLowerCase()}`);
   }
+  // Kiro IDE specific: the auth file ships with neither an account
+  // id nor an email, and the access token rotates on every IDE
+  // refresh — leaving the token-only fingerprint useless. The
+  // CodeWhisperer profile ARN is the single stable identifier for a
+  // Kiro account on a given machine, so promote it to a first-class
+  // dedup dimension. Without this, every IDE-side token rotation
+  // produces a brand-new "auto-discovered" row on the next Monitor
+  // launch.
+  if (
+    provider === 'kiro-ide' &&
+    typeof payload.kiroProfileArn === 'string' &&
+    payload.kiroProfileArn.length > 0
+  ) {
+    out.push(`${provider}::kiroProfileArn::${payload.kiroProfileArn}`);
+  }
   return out;
 }
 
@@ -293,6 +308,17 @@ export async function runDiscovery(
   const readFile = deps.readFile ?? defaultReadFile;
   const fileExists = deps.fileExists ?? defaultFileExists;
 
+  // Pre-compaction: merge any pre-existing duplicate Kiro IDE rows
+  // before we build the dedup index. Users who installed Monitor
+  // before the `kiroProfileArn` fingerprint shipped accumulated one
+  // new row per IDE-side token rotation; this collapses them into
+  // a single row keyed by ARN so the rest of the pass treats them
+  // as one logical account.
+  const compactedReport = compactDuplicateKiroRows(
+    deps.providerAuthRepo,
+    deps.secrets,
+  );
+
   const fingerprints = buildExistingFingerprintIndex(
     deps.providerAuthRepo,
     deps.secrets,
@@ -300,8 +326,8 @@ export async function runDiscovery(
   const refreshedIdsThisScan = new Set<string>();
 
   let imported = 0;
-  let skipped = 0;
-  let failed = 0;
+  let skipped = compactedReport.skipped;
+  let failed = compactedReport.failed;
   let missing = 0;
 
   // Phase 1: read + parse every probe in parallel.
@@ -333,6 +359,13 @@ export async function runDiscovery(
             parsed,
             deps.fetchEmailForAccessToken,
           );
+        }
+        // Kiro IDE specific: stash the source file path on the
+        // payload so the adapter knows where to write rotated
+        // tokens back. Other providers don't need this — their
+        // adapters never touch the source file.
+        if (probe.provider === 'kiro-ide') {
+          parsed.payload.kiroSourceFilePath = probe.filePath;
         }
         return { kind: 'parsed', provider: probe.provider, parsed };
       } catch {
@@ -545,4 +578,124 @@ function chooseRefreshLabel(
     return currentLabel;
   }
   return `${parsed.email} (自动发现)`;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-existing duplicate Kiro IDE rows
+// ---------------------------------------------------------------------------
+
+interface CompactReport {
+  /** Rows merged into a kept survivor (deleted from the repo). */
+  readonly skipped: number;
+  /** Rows that could not be deleted because of a repository error. */
+  readonly failed: number;
+}
+
+/**
+ * Collapse Kiro IDE `provider_auth` rows that share the same
+ * CodeWhisperer profile ARN into a single row, keeping the one
+ * with the most recent `updatedAt` timestamp. Older Monitor
+ * versions did not include `kiroProfileArn` in the dedup
+ * fingerprint, which let every IDE-side access-token rotation
+ * leak a brand-new "auto-discovered" row each time the user
+ * relaunched Monitor. Running this pass at the start of every
+ * `runDiscovery` cleans up the accumulated duplicates without
+ * forcing the user to delete them by hand.
+ *
+ * Compaction rules:
+ *   - Only `kiro-ide` rows are considered. Other providers ship
+ *     stable identifiers (Google email, Codex / Claude account id)
+ *     and never accumulate this kind of duplicate.
+ *   - The "winner" of a duplicate group is the row with the
+ *     largest `updatedAt`. Ties break on `lastValidatedAt`, then
+ *     on `importedAt`. This naturally prefers the row whose
+ *     `provider_auth` lifecycle is most active (i.e. the one the
+ *     user most recently saw refresh successfully).
+ *   - Loser rows have their secrets removed and their repo row
+ *     deleted. Failures are counted but never abort the scan.
+ *   - Rows whose secret payload cannot be decrypted are left
+ *     untouched — better to preserve a stale row than to silently
+ *     destroy an account whose ARN we can't read.
+ */
+function compactDuplicateKiroRows(
+  repo: ProviderAuthRepository,
+  secrets: SecretsAdmin,
+): CompactReport {
+  // Bucket rows by `kiroProfileArn`.
+  type Bucket = ReadonlyArray<ProviderAuthRow>;
+  const buckets = new Map<string, ProviderAuthRow[]>();
+
+  for (const row of repo.list()) {
+    if (row.provider !== 'kiro-ide') continue;
+    let arn: string | null = null;
+    try {
+      const ciphertext = secrets.get(row.secretKey);
+      if (ciphertext === null) continue;
+      const payload = JSON.parse(ciphertext) as ProviderAuthSecretPayload;
+      arn =
+        typeof payload.kiroProfileArn === 'string' &&
+        payload.kiroProfileArn.length > 0
+          ? payload.kiroProfileArn
+          : null;
+    } catch {
+      // Ciphertext unreadable — skip silently. Returning here
+      // keeps the row in place; the user can clean it up via the
+      // settings UI if needed.
+      continue;
+    }
+    if (arn === null) continue;
+    const list = buckets.get(arn);
+    if (list === undefined) buckets.set(arn, [row]);
+    else list.push(row);
+  }
+
+  let skipped = 0;
+  let failed = 0;
+  for (const [, group] of buckets) {
+    if (group.length < 2) continue;
+    const sorted = [...group].sort(compareKiroRows);
+    const survivor = sorted[0]!;
+    const losers = sorted.slice(1);
+    for (const loser of losers) {
+      try {
+        // Best-effort: remove the secret first so a half-deleted
+        // row never leaves orphaned ciphertext lying around.
+        try {
+          secrets.remove(loser.secretKey);
+        } catch {
+          // ignore — row delete is the load-bearing step
+        }
+        repo.remove(loser.id);
+        skipped += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    void survivor; // explicit no-op; the survivor is implicitly kept.
+  }
+
+  return { skipped, failed };
+}
+
+/**
+ * Sort comparator used by {@link compactDuplicateKiroRows}. Returns a
+ * negative number when `a` is "more recent" than `b` so the survivor
+ * lands at index 0 after `sort`. Ordering signals (descending
+ * priority):
+ *   1. error-free row beats an erroring row (even an older error-free
+ *      row — Requirement: never elect an `auth_expired` survivor when
+ *      a healthy peer exists).
+ *   2. larger `updatedAt`
+ *   3. larger `lastValidatedAt`
+ *   4. larger `importedAt`
+ */
+function compareKiroRows(a: ProviderAuthRow, b: ProviderAuthRow): number {
+  const aErr = a.lastErrorCode !== null ? 1 : 0;
+  const bErr = b.lastErrorCode !== null ? 1 : 0;
+  if (aErr !== bErr) return aErr - bErr;
+  const byUpdated = (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+  if (byUpdated !== 0) return byUpdated;
+  const byValidated = (b.lastValidatedAt ?? 0) - (a.lastValidatedAt ?? 0);
+  if (byValidated !== 0) return byValidated;
+  return (b.importedAt ?? 0) - (a.importedAt ?? 0);
 }

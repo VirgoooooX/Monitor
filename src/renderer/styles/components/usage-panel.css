@@ -359,6 +359,33 @@
   font-weight: 700;
 }
 
+/*
+ * The `provider-label` row applies `text-transform: uppercase` and
+ * `letter-spacing: 0.04em` for the all-caps "auth 认证 · KIRO PRO+"
+ * meta look. That treatment looks coherent on plan labels and on
+ * source tags, but it turns kebab-case GCP project ids
+ * (`vivid-course-453615-u9`) and lowercase emails into shouty
+ * status-code strings. Reset both properties on the unique-id slot
+ * so emails / project ids / account ids render in their natural
+ * casing. The `__id-hint` is a sibling so the prefix word ("项目"
+ * / "账号") inherits the same reset.
+ */
+.quota-account-card__unique-id,
+.quota-account-card__id-hint {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.quota-account-card__id-hint {
+  color: var(--usage-text-faint);
+  font-weight: 500;
+}
+
+.quota-account-card__unique-id {
+  color: var(--usage-text-mute);
+  font-weight: 600;
+}
+
 .quota-account-card__content {
   flex: 1;
   display: flex;

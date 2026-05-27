@@ -71,6 +71,10 @@ function validBase(): AppSettings {
       compactTheme: 'mint-monitor',
       fontScale: 1,
     },
+    kiroTokenRefresh: {
+      enabled: true,
+      writeBackAuthFile: true,
+    },
   };
 }
 

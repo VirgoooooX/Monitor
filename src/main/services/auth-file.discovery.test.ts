@@ -321,3 +321,205 @@ describe('runDiscovery — fingerprint deduplication', () => {
     expect(repo.list()).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Kiro IDE — `kiroProfileArn` fingerprint + duplicate compaction
+// ---------------------------------------------------------------------------
+
+const KIRO_PROFILE_ARN_AAA =
+  'arn:aws:codewhisperer:us-east-1:111111111111:profile/AAA';
+
+function makeKiroAuthFile(opts: {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  profileArn?: string;
+  authMethod?: string;
+}): string {
+  return JSON.stringify({
+    accessToken: opts.accessToken,
+    refreshToken: opts.refreshToken,
+    profileArn: opts.profileArn ?? KIRO_PROFILE_ARN_AAA,
+    expiresAt: opts.expiresAt,
+    authMethod: opts.authMethod ?? 'social',
+    provider: 'Google',
+  });
+}
+
+function insertKiroRow(
+  repo: ProviderAuthRepository,
+  secrets: SecretsAdmin,
+  opts: {
+    id: string;
+    accessToken: string;
+    profileArn: string;
+    updatedAt?: number;
+    lastValidatedAt?: number;
+    importedAt?: number;
+    lastErrorCode?: 'auth_expired' | null;
+  },
+): void {
+  const secretKey = `cpaAuth.providerAuth.${opts.id}`;
+  secrets.set(
+    secretKey,
+    JSON.stringify({
+      accessToken: opts.accessToken,
+      refreshToken: 'rt-' + opts.id,
+      kiroProfileArn: opts.profileArn,
+      expiresAt: 1_700_000_000_000,
+    }),
+  );
+  repo.insert({
+    id: opts.id,
+    provider: 'kiro-ide',
+    label: 'kiro-ide:imported (自动发现)',
+    source: 'cpa-auth-file',
+    accountId: null,
+    projectId: null,
+    quotaCapability: 'official',
+    importedAt: opts.importedAt ?? 1,
+    updatedAt: opts.updatedAt ?? 1,
+    lastValidatedAt: opts.lastValidatedAt ?? null,
+    lastQuotaAt: null,
+    lastErrorCode: opts.lastErrorCode ?? null,
+    lastErrorMessage: null,
+    enabled: true,
+    secretKey,
+  });
+}
+
+describe('runDiscovery — Kiro IDE profileArn fingerprint', () => {
+  it('dedupes a Kiro auth file against an existing row when only the access token rotated', async () => {
+    const repo = createMemRepo();
+    const secrets = createMemSecrets();
+    insertKiroRow(repo, secrets, {
+      id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
+      accessToken: 'old-rotated-access-token',
+      profileArn: KIRO_PROFILE_ARN_AAA,
+      updatedAt: 1_000,
+    });
+
+    const probes = [
+      {
+        provider: 'kiro-ide' as ProviderId,
+        filePath: '/h/.aws/sso/cache/kiro-auth-token.json',
+      },
+    ];
+    const files = new Map<string, string>([
+      [
+        '/h/.aws/sso/cache/kiro-auth-token.json',
+        makeKiroAuthFile({
+          accessToken: 'fresh-access-token',
+          refreshToken: 'fresh-refresh-token',
+          expiresAt: '2030-01-01T00:00:00.000Z',
+          profileArn: KIRO_PROFILE_ARN_AAA,
+        }),
+      ],
+    ]);
+
+    const report = await runDiscovery({
+      providerAuthRepo: repo,
+      secrets,
+      probes,
+      fileExists: async (p) => files.has(p),
+      readFile: async (p) => files.get(p) ?? '',
+      uuid: () => 'new-id',
+      now: () => 1_700_000_000_000,
+    });
+
+    // Even though the access token rotated, the ARN matched and we
+    // refreshed the existing row instead of inserting a new one.
+    expect(report).toEqual({ imported: 0, skipped: 1, failed: 0, missing: 0 });
+    expect(repo.list()).toHaveLength(1);
+    expect(repo.list()[0]!.id).toBe('00000000-0000-4000-8000-aaaaaaaaaaaa');
+  });
+});
+
+describe('runDiscovery — Kiro IDE duplicate row compaction', () => {
+  it('merges two pre-existing Kiro rows that share a profile ARN, keeping the healthier one', async () => {
+    const repo = createMemRepo();
+    const secrets = createMemSecrets();
+
+    // Older expired row (recreated by every Monitor relaunch before
+    // the dedup fix shipped).
+    insertKiroRow(repo, secrets, {
+      id: '00000000-0000-4000-8000-aaaaaaaaaaaa',
+      accessToken: 'expired-access',
+      profileArn: KIRO_PROFILE_ARN_AAA,
+      updatedAt: 2_000,
+      lastValidatedAt: 1_000,
+      lastErrorCode: 'auth_expired',
+    });
+    // Newer healthy row from the latest relaunch.
+    insertKiroRow(repo, secrets, {
+      id: '00000000-0000-4000-8000-bbbbbbbbbbbb',
+      accessToken: 'fresh-access',
+      profileArn: KIRO_PROFILE_ARN_AAA,
+      updatedAt: 1_500, // even though older, the err-free row wins
+      lastValidatedAt: 1_500,
+      lastErrorCode: null,
+    });
+
+    const report = await runDiscovery({
+      providerAuthRepo: repo,
+      secrets,
+      probes: [], // no probes — we just want compaction to run
+      fileExists: async () => false,
+      readFile: async () => '',
+    });
+
+    // The compaction pre-pass merged one duplicate into the survivor
+    // before the (empty) probe list ran, so it is counted under
+    // `skipped` per the report contract.
+    expect(report.skipped).toBe(1);
+    const remaining = repo.list();
+    expect(remaining).toHaveLength(1);
+    // Healthy (lastErrorCode === null) row wins even with smaller updatedAt.
+    expect(remaining[0]!.id).toBe('00000000-0000-4000-8000-bbbbbbbbbbbb');
+    expect(remaining[0]!.lastErrorCode).toBeNull();
+    // Loser's secret blob is removed.
+    expect(secrets.get('cpaAuth.providerAuth.00000000-0000-4000-8000-aaaaaaaaaaaa')).toBeNull();
+  });
+
+  it('keeps rows for distinct ARNs untouched', async () => {
+    const repo = createMemRepo();
+    const secrets = createMemSecrets();
+    insertKiroRow(repo, secrets, {
+      id: 'aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa',
+      accessToken: 'at-a',
+      profileArn: KIRO_PROFILE_ARN_AAA,
+    });
+    insertKiroRow(repo, secrets, {
+      id: 'bbbbbbbb-0000-4000-8000-bbbbbbbbbbbb',
+      accessToken: 'at-b',
+      profileArn:
+        'arn:aws:codewhisperer:us-east-1:111111111111:profile/BBB',
+    });
+
+    const report = await runDiscovery({
+      providerAuthRepo: repo,
+      secrets,
+      probes: [],
+      fileExists: async () => false,
+      readFile: async () => '',
+    });
+
+    expect(report.skipped).toBe(0);
+    expect(repo.list()).toHaveLength(2);
+  });
+
+  it('does nothing when no Kiro rows are present', async () => {
+    const repo = createMemRepo();
+    const secrets = createMemSecrets();
+
+    const report = await runDiscovery({
+      providerAuthRepo: repo,
+      secrets,
+      probes: [],
+      fileExists: async () => false,
+      readFile: async () => '',
+    });
+
+    expect(report).toEqual({ imported: 0, skipped: 0, failed: 0, missing: 0 });
+  });
+});

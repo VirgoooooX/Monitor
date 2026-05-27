@@ -491,6 +491,27 @@ const appearancePatchSchema = z
   })
   .strict();
 
+/**
+ * Kiro IDE auto-refresh policy. See
+ * `types.ts#KiroTokenRefreshSettings` for the semantics. Both
+ * defaults are `true` — `buildDefaultAppSettings` seeds the same
+ * pair, and `normalizeAppSettings` patches in the same defaults
+ * for older settings rows that predate this block.
+ */
+export const kiroTokenRefreshSchema = z
+  .object({
+    enabled: z.boolean(),
+    writeBackAuthFile: z.boolean(),
+  })
+  .strict();
+
+const kiroTokenRefreshPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    writeBackAuthFile: z.boolean().optional(),
+  })
+  .strict();
+
 export const appSettingsSchema = z
   .object({
     controllerUrl: controllerUrlSchema,
@@ -516,6 +537,7 @@ export const appSettingsSchema = z
     managementInterface: managementInterfaceSchema,
     cliproxy: cliproxySettingsSchema,
     appearance: appearanceSchema,
+    kiroTokenRefresh: kiroTokenRefreshSchema,
   })
   .strict();
 
@@ -544,6 +566,7 @@ export const appSettingsPatchSchema = z
     managementInterface: managementInterfaceSchema.optional(),
     cliproxy: cliproxySettingsSchema.optional(),
     appearance: appearancePatchSchema.optional(),
+    kiroTokenRefresh: kiroTokenRefreshPatchSchema.optional(),
   })
   .strict();
 

@@ -455,6 +455,21 @@
   text-transform: uppercase;
 }
 
+/* ── Kiro IDE auto-refresh toggles ───────────────────────────────
+   Two extra slider switches surfaced on `kiro-ide` rows next to the
+   primary enable toggle. They share the existing
+   `provider-auth-list__toggle*` styles so the three switches stay
+   visually coherent. The wrapper just controls inline spacing and
+   keeps the whole group together when the action row wraps onto a
+   second line. */
+
+.provider-auth-list__kiro-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 /* Stack the API-key form fields with the same rhythm as other
    settings sub-sections. */
 .settings-view__api-key-form {

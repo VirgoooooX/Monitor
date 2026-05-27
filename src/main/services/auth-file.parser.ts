@@ -458,6 +458,12 @@ export function parseAuthFile(provider: ProviderId, raw: string): ParseResult {
   if (provider === 'kiro-ide') {
     const profileArn = findFirstString(parsed, [['profileArn']]);
     if (profileArn !== null) payload.kiroProfileArn = profileArn;
+    // `authMethod` selects which OAuth refresh endpoint the
+    // `kiro-ide.adapter` hits. We hoist it onto a first-class
+    // payload field for the same reason we hoist `profileArn`:
+    // the adapter must not re-parse `rawMetadata` to discover it.
+    const authMethod = findFirstString(parsed, [['authMethod']]);
+    if (authMethod !== null) payload.kiroAuthMethod = authMethod;
   }
 
   // Label derivation: metadata.label → attributes.label → email →
