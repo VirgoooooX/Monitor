@@ -92,6 +92,7 @@ export const DESKTOP_PUSH_CHANNELS = [
   'openclash.updated',
   'navigate-tab',
   'settings.updated',
+  'provider-auth.updated',
 ] as const satisfies readonly DesktopPushChannel[];
 
 /**

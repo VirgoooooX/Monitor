@@ -325,6 +325,33 @@ export interface QuotaSnapshot {
   lastErrorCode: ProviderAuthErrorCode | null;
   /** ≤80 chars, pre-redacted; `null` iff there is no error. */
   lastErrorMessage: string | null;
+  /**
+   * Optional daily-usage history surfaced by per-account adapters
+   * that have access to it (currently Xiaomi MiMo). Each entry is one
+   * day of aggregate spend / consumption; renderers turn this into
+   * the inline sparkline that sits next to the credits amount.
+   *
+   * `null` / undefined means the adapter did not collect this data
+   * (most adapters don't); an empty array means it tried but the
+   * range was empty. Decimal strings are preserved verbatim to avoid
+   * float drift on monetary values, mirroring the credits-window
+   * convention.
+   */
+  dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
+}
+
+/**
+ * One day of aggregated AI usage. Produced by adapters that expose
+ * a per-day usage endpoint (Xiaomi MiMo `/api/v1/usage/detail/list`)
+ * and consumed by the QuotaStrip sparkline.
+ */
+export interface DailyUsagePoint {
+  /** ISO date string `YYYY-MM-DD`. */
+  readonly date: string;
+  /** Total cost spent that day, decimal string preserving precision. */
+  readonly cost: string;
+  /** Total tokens consumed that day. */
+  readonly totalTokens: number;
 }
 
 /**
@@ -936,13 +963,38 @@ export type DesktopPushChannel =
   | 'dashboard.updated'
   | 'openclash.updated'
   | 'navigate-tab'
-  | 'settings.updated';
+  | 'settings.updated'
+  | 'provider-auth.updated';
+
+/**
+ * Payload pushed on the `provider-auth.updated` channel after any
+ * change to the `provider_auth` table (create / delete / import /
+ * setEnabled / quota refresh) so renderers that mirror the list or
+ * the quota strip can react without waiting on their polling tick.
+ *
+ * `reason` lets the renderer decide whether to re-fetch on top of
+ * the embedded payload (e.g. background quota refresh follow-up).
+ *
+ * `quotaStatus` is included so the floating widget and dashboard
+ * can update without an extra `getQuotaStatus()` round-trip.
+ */
+export interface ProviderAuthUpdatedPayload {
+  readonly reason:
+    | 'created'
+    | 'deleted'
+    | 'updated'
+    | 'imported'
+    | 'quota-refreshed';
+  readonly rows: readonly ProviderAuthMetadata[];
+  readonly quotaStatus: QuotaStatus;
+}
 
 export interface DesktopPushPayloads {
   'dashboard.updated': DashboardState;
   'openclash.updated': OpenClashDetails;
   'navigate-tab': string;
   'settings.updated': AppSettings;
+  'provider-auth.updated': ProviderAuthUpdatedPayload;
 }
 
 export interface UpdateSecretInput {

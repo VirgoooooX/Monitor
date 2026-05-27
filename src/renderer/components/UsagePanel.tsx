@@ -235,9 +235,25 @@ export function UsagePanel(): JSX.Element {
         .catch(() => {});
     }, 60_000);
 
+    // Subscribe to provider-auth push events so add/delete/refresh
+    // is reflected in the usage panel within a single round-trip.
+    let unsubscribe: (() => void) | undefined;
+    if ('on' in desktop && typeof desktop.on === 'function') {
+      try {
+        unsubscribe = desktop.on('provider-auth.updated', (payload) => {
+          if (!cancelled && payload?.quotaStatus !== undefined) {
+            setQuotaData(payload.quotaStatus);
+          }
+        });
+      } catch {
+        // Ignore — polling tick remains as the fallback.
+      }
+    }
+
     return () => {
       cancelled = true;
       clearInterval(interval);
+      if (unsubscribe) unsubscribe();
     };
   }, []);
 

@@ -620,6 +620,26 @@ describe('official quota adapters — Xiaomi MiMo', () => {
     },
   });
 
+  const SUCCESS_USAGE_BODY = JSON.stringify({
+    code: 0,
+    data: [
+      {
+        date: '2026-05-26',
+        model: 'mimo-v2.5-pro',
+        apiKey: 'sk-x',
+        totalToken: 1234,
+        consumedAmount: '0.42',
+      },
+      {
+        date: '2026-05-27',
+        model: 'mimo-v2.5-pro',
+        apiKey: 'sk-x',
+        totalToken: 800,
+        consumedAmount: '0.10',
+      },
+    ],
+  });
+
   const SERVICE_LOGIN_BODY = '&&&START&&&' + JSON.stringify({
     code: 0,
     nonce: FAKE_NONCE,
@@ -650,6 +670,10 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         urlContains: '/api/v1/balance',
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
+      {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
+      },
     ]);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -673,9 +697,15 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       'credits:CNY 总额 24.63 / 现金 24.63 / 赠金 0.00',
     );
     expect(snapshot.windows[0]!.percentLeft).toBeNull();
+    // Daily-usage points are aggregated by date, ascending order.
+    expect(snapshot.dailyUsage).toEqual([
+      { date: '2026-05-26', cost: '0.4200', totalTokens: 1234 },
+      { date: '2026-05-27', cost: '0.1000', totalTokens: 800 },
+    ]);
 
-    // Verify the request order and the cookie headers.
-    expect(calls).toHaveLength(3);
+    // Verify the request order and the cookie headers. The fourth call
+    // is the daily-usage POST.
+    expect(calls).toHaveLength(4);
     expect(calls[0]!.url).toContain('sid=api-platform');
     expect(calls[0]!.headers?.Cookie).toBe(
       `passToken=${FAKE_PASS_TOKEN}; userId=${FAKE_USER_ID}`,
@@ -687,6 +717,10 @@ describe('official quota adapters — Xiaomi MiMo', () => {
     expect(calls[2]!.headers?.Cookie).toBe(
       `api-platform_serviceToken=${FAKE_SERVICE_TOKEN}; userId=${FAKE_USER_ID}`,
     );
+    expect(calls[3]!.url).toBe(
+      'https://platform.xiaomimimo.com/api/v1/usage/detail/list',
+    );
+    expect(calls[3]!.method).toBe('POST');
   });
 
   it('returns auth_missing when the passToken cookie is absent', async () => {
@@ -724,13 +758,24 @@ describe('official quota adapters — Xiaomi MiMo', () => {
           body: '',
         }),
       },
+      // First refresh: balance + usage.
       {
         urlContains: '/api/v1/balance',
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
+      },
+      // Second refresh: balance + usage (cached token reused, no
+      // serviceLogin / sts roundtrip).
+      {
         urlContains: '/api/v1/balance',
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+      {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -757,10 +802,14 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       now: NOW + 1000,
     });
 
-    // Three calls for the first refresh + one for the second (cached).
-    expect(calls).toHaveLength(4);
-    expect(calls[3]!.url).toBe(
+    // First refresh: serviceLogin + sts + balance + usage = 4 calls.
+    // Second refresh: cached token reused, only balance + usage = 2 more.
+    expect(calls).toHaveLength(6);
+    expect(calls[4]!.url).toBe(
       'https://platform.xiaomimimo.com/api/v1/balance',
+    );
+    expect(calls[5]!.url).toBe(
+      'https://platform.xiaomimimo.com/api/v1/usage/detail/list',
     );
     expect(cache.get(account.id)).toBe(FAKE_SERVICE_TOKEN);
   });
@@ -796,6 +845,11 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         urlContains: '/api/v1/balance',
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
+      // Daily usage POST follows.
+      {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
+      },
     ]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
@@ -813,7 +867,8 @@ describe('official quota adapters — Xiaomi MiMo', () => {
     });
 
     expect(snapshot.status).toBe('ok');
-    expect(calls).toHaveLength(4);
+    // 5 calls total: stale balance (401) + login + sts + balance retry + usage.
+    expect(calls).toHaveLength(5);
     expect(cache.get('xiaomi-id')).toBe(FAKE_SERVICE_TOKEN);
   });
 
@@ -878,6 +933,10 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       {
         urlContains: '/api/v1/balance',
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+      {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);
 

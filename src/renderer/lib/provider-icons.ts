@@ -32,6 +32,35 @@ import groqMono from '@lobehub/icons-static-svg/icons/groq.svg?raw';
 import openrouterMono from '@lobehub/icons-static-svg/icons/openrouter.svg?raw';
 
 // ---------------------------------------------------------------------------
+// SVG transforms
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip the opaque rounded-square background from the Codex glyph so
+ * the gradient mark renders directly on whatever surface hosts it
+ * (otherwise we get a #fff card under the icon, which looks out of
+ * place inside dark/transparent themes).
+ *
+ * The upstream asset starts with a single `<path … fill="#fff"></path>`
+ * before the gradient strokes; we remove only that node and leave the
+ * rest of the markup unchanged.
+ *
+ * Without the background card the gradient glyph only occupies the
+ * inner 18 × 18 area of the original 24 × 24 viewBox, which makes
+ * Codex visually ~25 % smaller than its peers (Gemini, Claude, …)
+ * that fill their full canvas. Re-cropping the viewBox to the glyph
+ * bounds restores parity.
+ */
+const codexNoBackground = codexColor
+  .replace(
+    /<path d="M19\.503 0[^"]*"[^>]*fill="#fff"[^>]*><\/path>/,
+    '',
+  )
+  .replace(/viewBox="0 0 24 24"/, 'viewBox="3 3 18 18"');
+
+
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -42,7 +71,7 @@ import openrouterMono from '@lobehub/icons-static-svg/icons/openrouter.svg?raw';
  * so all spelling variants resolve to the same icon.
  */
 export const PROVIDER_ICON_SVG: Record<string, string> = {
-  codex: codexColor,
+  codex: codexNoBackground,
   gemini: geminiColor,
   claude: claudeColor,
   anthropic: claudeColor,

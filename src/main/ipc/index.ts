@@ -90,6 +90,9 @@ import {
   type ProviderAuthService,
   type ProviderAuthValidationResult,
 } from '../services/provider_auth.service';
+import {
+  buildProviderAuthUpdatedPayload,
+} from '../services/provider_auth.broadcast';
 import type { QuotaService } from '../services/quota.service';
 import type {
   AppSettings,
@@ -265,6 +268,19 @@ export interface IpcRegistryDeps {
    * Optional for the same reason as `providerAuthService`.
    */
   quotaService?: QuotaService;
+  /**
+   * Push-channel broadcaster invoked at the end of every successful
+   * `provider_auth` mutation IPC (create / delete / import /
+   * setEnabled / refresh) so the floating window and the expanded
+   * window can update their cached `ProviderAuthMetadata[]` and
+   * `QuotaStatus` without waiting on their polling tick.
+   *
+   * Optional so unit tests that only exercise the IPC envelope
+   * shape can omit it; production wires it up in `app.ts`.
+   */
+  providerAuthBroadcaster?: import(
+    '../services/provider_auth.broadcast'
+  ).ProviderAuthBroadcaster;
   /** Future service (task 9.3). When absent the IPC returns `not_implemented`. */
   getDiagnostics?: () => Promise<DiagnosticsReport> | DiagnosticsReport;
   /** Future trigger (task 5.x). When absent the IPC returns `not_implemented`. */
@@ -947,6 +963,49 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
   }
 
   // -------------------------------------------------------------------------
+  // Push helpers
+  // -------------------------------------------------------------------------
+  //
+  // After every successful mutation of the `provider_auth` table we
+  // fan out a `provider-auth.updated` event so the floating widget
+  // and expanded settings window can re-render without waiting on
+  // their 30s polling tick. The renderer ultimately treats the
+  // event as a hint to drop its cached `QuotaStatus` and replace
+  // it with the embedded payload.
+  //
+  // Errors here are intentionally silent — a broadcast failure must
+  // never mask the IPC return value (the user's mutation succeeded;
+  // the fallback poll will pick up the change later).
+  function broadcastProviderAuthUpdate(
+    reason: import('../types').ProviderAuthUpdatedPayload['reason'],
+  ): void {
+    const broadcaster = deps.providerAuthBroadcaster;
+    const authService = deps.providerAuthService;
+    if (broadcaster === undefined || authService === undefined) return;
+    try {
+      const rows = authService.list();
+      // The QuotaStatus snapshot is best-effort; missing service or
+      // a thrown read collapses to a synthetic empty status so the
+      // renderer can still re-render the row list immediately.
+      const quotaStatus =
+        deps.getQuotaStatus !== undefined
+          ? Promise.resolve(deps.getQuotaStatus()).catch(() => null)
+          : Promise.resolve(null);
+      void quotaStatus.then((status) => {
+        broadcaster.broadcast(
+          buildProviderAuthUpdatedPayload(
+            reason,
+            rows,
+            status ?? { snapshots: [] },
+          ),
+        );
+      });
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // getDashboard
   // -------------------------------------------------------------------------
   ipcMain.handle(
@@ -1601,6 +1660,21 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       }
       try {
         const value = await service.importFromFile(parsed.data);
+        // Schedule a background quota refresh so the snapshot lands
+        // before the user looks at the floating widget. The first
+        // broadcast carries the row addition; the second (after
+        // refresh) carries the fresh snapshot.
+        broadcastProviderAuthUpdate('imported');
+        if (deps.quotaService !== undefined) {
+          void deps.quotaService
+            .refresh({ id: value.id })
+            .then(() => broadcastProviderAuthUpdate('quota-refreshed'))
+            .catch(() => {
+              // Refresh failure already lands on the row's
+              // lastErrorCode; the quota-refreshed broadcast is
+              // best-effort.
+            });
+        }
         return { ok: true, value };
       } catch (err) {
         return mapProviderAuthError(err);
@@ -1639,6 +1713,7 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       }
       try {
         service.remove(parsed.data.id);
+        broadcastProviderAuthUpdate('deleted');
         return { ok: true, value: undefined };
       } catch (err) {
         return mapProviderAuthError(err);
@@ -1691,6 +1766,7 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
         if (parsed.data.id !== undefined) input.id = parsed.data.id;
         if (parsed.data.provider !== undefined) input.provider = parsed.data.provider;
         const value = await service.refresh(input);
+        broadcastProviderAuthUpdate('quota-refreshed');
         return { ok: true, value };
       } catch (err) {
         return mapProviderAuthError(err);
@@ -1788,6 +1864,20 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
           input.xiaomiUserId = parsed.data.xiaomiUserId;
         }
         const value = service.createApiKey(input);
+        // Push the row addition immediately so the UI flips from
+        // "saving" to "imported" without polling. Then schedule a
+        // background quota refresh so the snapshot lands in the
+        // floating widget within a few seconds.
+        broadcastProviderAuthUpdate('created');
+        if (deps.quotaService !== undefined) {
+          void deps.quotaService
+            .refresh({ id: value.id })
+            .then(() => broadcastProviderAuthUpdate('quota-refreshed'))
+            .catch(() => {
+              // Best-effort: refresh failure is already persisted
+              // on the row's lastErrorCode by quota.service.
+            });
+        }
         return { ok: true, value };
       } catch (err) {
         return mapProviderAuthError(err);
@@ -1845,6 +1935,24 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
           } catch {
             // best-effort
           }
+        }
+        // Re-enable should also kick a refresh so the floating
+        // widget picks up snapshots for the newly-active account
+        // without waiting on the next polling tick.
+        if (
+          value !== null &&
+          parsed.data.enabled === true &&
+          deps.quotaService !== undefined
+        ) {
+          void deps.quotaService
+            .refresh({ id: parsed.data.id })
+            .then(() => broadcastProviderAuthUpdate('quota-refreshed'))
+            .catch(() => {
+              // best-effort
+            });
+        }
+        if (value !== null) {
+          broadcastProviderAuthUpdate('updated');
         }
         return { ok: true, value };
       } catch (err) {

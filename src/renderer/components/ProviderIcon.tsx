@@ -19,6 +19,7 @@ interface ProviderIconProps {
 
 export function ProviderIcon({ provider, size = 18 }: ProviderIconProps): JSX.Element {
   const svg = getProviderIconSvg(provider);
+  const dataProvider = provider.trim().toLowerCase();
 
   // Fallback: a generic AI dot in `currentColor` if the provider is unknown.
   if (svg === null) {
@@ -27,6 +28,7 @@ export function ProviderIcon({ provider, size = 18 }: ProviderIconProps): JSX.El
         className="provider-icon provider-icon--fallback"
         style={{ fontSize: `${size}px`, width: `${size}px`, height: `${size}px` }}
         aria-label={provider}
+        data-provider={dataProvider}
         role="img"
       >
         <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor">
@@ -42,6 +44,7 @@ export function ProviderIcon({ provider, size = 18 }: ProviderIconProps): JSX.El
       className="provider-icon"
       style={{ fontSize: `${size}px`, width: `${size}px`, height: `${size}px` }}
       aria-label={provider}
+      data-provider={dataProvider}
       role="img"
       // The SVG markup ships with the package and is not user-supplied.
       // eslint-disable-next-line react/no-danger

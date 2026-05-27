@@ -4,7 +4,12 @@
 // Within each provider, sorted by window duration (5h before weekly).
 
 import { useEffect, useState } from 'react';
-import type { QuotaSnapshot, QuotaStatus, QuotaWindow } from '../lib/types';
+import type {
+  DailyUsagePoint,
+  QuotaSnapshot,
+  QuotaStatus,
+  QuotaWindow,
+} from '../lib/types';
 import {
   currencySymbol,
   groupQuotaWindowsByDisplay,
@@ -24,6 +29,12 @@ export interface ProviderGroup {
   provider: string;
   accountLabel: string | null;
   windows: QuotaWindow[];
+  /**
+   * Per-day usage history surfaced by the snapshot, when the
+   * adapter exposes it (currently only Xiaomi MiMo). Forwarded
+   * verbatim to the credits-row sparkline.
+   */
+  dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
 }
 
 interface CompactQuotaEntry {
@@ -31,6 +42,7 @@ interface CompactQuotaEntry {
   provider: string;
   accountLabel: string | null;
   window: QuotaWindow;
+  dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
 }
 
 export const PREVIEW_QUOTA_STATUS: QuotaStatus = {
@@ -86,6 +98,106 @@ export const PREVIEW_QUOTA_STATUS: QuotaStatus = {
       modelGroup: null,
       lastErrorCode: null,
       lastErrorMessage: null,
+    },
+    // Preview snapshot for the DeepSeek credits row — exercises the
+    // CreditsRowItem layout with a plausible 30-day spend curve.
+    {
+      provider: 'deepseek',
+      capturedAt: Date.now(),
+      source: 'imported_auth',
+      windows: [
+        {
+          name: 'credits:CNY 总额 4.25 / 赠金 0.00 / 充值 4.25',
+          percentLeft: null,
+          resetAt: null,
+          windowSeconds: null,
+        },
+      ],
+      providerAuthId: 'deepseek-preview',
+      accountLabel: 'DeepSeek',
+      accountId: null,
+      projectId: null,
+      kind: 'credits',
+      status: 'ok',
+      rawPlanLabel: null,
+      modelGroup: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      dailyUsage: [
+        { date: '2026-05-01', cost: '0.12', totalTokens: 1200 },
+        { date: '2026-05-02', cost: '0.30', totalTokens: 3000 },
+        { date: '2026-05-03', cost: '0.04', totalTokens: 400 },
+        { date: '2026-05-04', cost: '0.55', totalTokens: 5500 },
+        { date: '2026-05-05', cost: '0.18', totalTokens: 1800 },
+        { date: '2026-05-06', cost: '0.00', totalTokens: 0 },
+        { date: '2026-05-07', cost: '0.42', totalTokens: 4200 },
+        { date: '2026-05-08', cost: '0.61', totalTokens: 6100 },
+        { date: '2026-05-09', cost: '0.05', totalTokens: 500 },
+        { date: '2026-05-10', cost: '0.27', totalTokens: 2700 },
+        { date: '2026-05-11', cost: '0.85', totalTokens: 8500 },
+        { date: '2026-05-12', cost: '0.34', totalTokens: 3400 },
+        { date: '2026-05-13', cost: '0.10', totalTokens: 1000 },
+        { date: '2026-05-14', cost: '0.21', totalTokens: 2100 },
+        { date: '2026-05-15', cost: '0.49', totalTokens: 4900 },
+        { date: '2026-05-16', cost: '0.00', totalTokens: 0 },
+        { date: '2026-05-17', cost: '0.18', totalTokens: 1800 },
+        { date: '2026-05-18', cost: '0.66', totalTokens: 6600 },
+        { date: '2026-05-19', cost: '0.13', totalTokens: 1300 },
+        { date: '2026-05-20', cost: '0.40', totalTokens: 4000 },
+        { date: '2026-05-21', cost: '0.92', totalTokens: 9200 },
+        { date: '2026-05-22', cost: '0.05', totalTokens: 500 },
+        { date: '2026-05-23', cost: '0.31', totalTokens: 3100 },
+        { date: '2026-05-24', cost: '0.07', totalTokens: 700 },
+        { date: '2026-05-25', cost: '0.20', totalTokens: 2000 },
+        { date: '2026-05-26', cost: '0.58', totalTokens: 5800 },
+        { date: '2026-05-27', cost: '0.16', totalTokens: 1600 },
+      ],
+    },
+    // Preview snapshot for the Xiaomi credits row.
+    {
+      provider: 'xiaomi',
+      capturedAt: Date.now(),
+      source: 'imported_auth',
+      windows: [
+        {
+          name: 'credits:CNY 总额 24.63 / 现金 24.63 / 赠金 0.00',
+          percentLeft: null,
+          resetAt: null,
+          windowSeconds: null,
+        },
+      ],
+      providerAuthId: 'xiaomi-preview',
+      accountLabel: 'Xiaomi MiMo',
+      accountId: null,
+      projectId: null,
+      kind: 'credits',
+      status: 'ok',
+      rawPlanLabel: null,
+      modelGroup: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      dailyUsage: [
+        { date: '2026-05-08', cost: '0.02', totalTokens: 200 },
+        { date: '2026-05-09', cost: '0.15', totalTokens: 1500 },
+        { date: '2026-05-10', cost: '0.08', totalTokens: 800 },
+        { date: '2026-05-11', cost: '0.22', totalTokens: 2200 },
+        { date: '2026-05-12', cost: '0.45', totalTokens: 4500 },
+        { date: '2026-05-13', cost: '0.00', totalTokens: 0 },
+        { date: '2026-05-14', cost: '0.30', totalTokens: 3000 },
+        { date: '2026-05-15', cost: '0.50', totalTokens: 5000 },
+        { date: '2026-05-16', cost: '0.10', totalTokens: 1000 },
+        { date: '2026-05-17', cost: '0.04', totalTokens: 400 },
+        { date: '2026-05-18', cost: '0.18', totalTokens: 1800 },
+        { date: '2026-05-19', cost: '0.65', totalTokens: 6500 },
+        { date: '2026-05-20', cost: '0.25', totalTokens: 2500 },
+        { date: '2026-05-21', cost: '0.07', totalTokens: 700 },
+        { date: '2026-05-22', cost: '0.33', totalTokens: 3300 },
+        { date: '2026-05-23', cost: '0.12', totalTokens: 1200 },
+        { date: '2026-05-24', cost: '0.40', totalTokens: 4000 },
+        { date: '2026-05-25', cost: '0.06', totalTokens: 600 },
+        { date: '2026-05-26', cost: '0.28', totalTokens: 2800 },
+        { date: '2026-05-27', cost: '0.14', totalTokens: 1400 },
+      ],
     },
   ],
 };
@@ -151,6 +263,9 @@ export function buildCompactGroups(snapshots: QuotaSnapshot[]): ProviderGroup[] 
       provider: snapshot.provider,
       accountLabel: snapshot.accountLabel,
       window,
+      ...(snapshot.dailyUsage !== undefined && snapshot.dailyUsage !== null
+        ? { dailyUsage: snapshot.dailyUsage }
+        : {}),
     }));
   });
 
@@ -175,12 +290,24 @@ export function buildCompactGroups(snapshots: QuotaSnapshot[]): ProviderGroup[] 
     const existing = grouped.get(entry.key);
     if (existing) {
       existing.windows.push(entry.window);
+      // Keep the first non-null dailyUsage we see — every entry from
+      // the same snapshot carries the same array reference, so the
+      // assignment is idempotent in practice.
+      if (
+        existing.dailyUsage === undefined &&
+        entry.dailyUsage !== undefined
+      ) {
+        existing.dailyUsage = entry.dailyUsage;
+      }
     } else {
       grouped.set(entry.key, {
         key: entry.key,
         provider: entry.provider,
         accountLabel: entry.accountLabel,
         windows: [entry.window],
+        ...(entry.dailyUsage !== undefined
+          ? { dailyUsage: entry.dailyUsage }
+          : {}),
       });
     }
   }
@@ -213,9 +340,33 @@ export function useQuotaStatus(): QuotaStatus | null {
     fetch();
     const interval = setInterval(fetch, 30_000);
 
+    // Subscribe to provider-auth push events. Every successful
+    // mutation in main fans out a `provider-auth.updated` event
+    // carrying the fresh QuotaStatus, so the floating widget
+    // reflects add/delete/refresh within ~one IPC round-trip
+    // instead of waiting on the 30s polling tick.
+    //
+    // The `desktop.on` API only exists in production builds —
+    // local browser preview does not provide it; guard with the
+    // `'on' in desktop` check.
+    let unsubscribe: (() => void) | undefined;
+    if ('on' in desktop && typeof desktop.on === 'function') {
+      try {
+        unsubscribe = desktop.on('provider-auth.updated', (payload) => {
+          if (!cancelled && payload?.quotaStatus !== undefined) {
+            setStatus(payload.quotaStatus);
+          }
+        });
+      } catch {
+        // Channel rejection (preload allowlist drift) — fall back
+        // to the polling tick.
+      }
+    }
+
     return () => {
       cancelled = true;
       clearInterval(interval);
+      if (unsubscribe) unsubscribe();
     };
   }, []);
 
@@ -248,6 +399,7 @@ export function QuotaStrip(): JSX.Element | null {
                 key={`${w.name}-${i}`}
                 window={w}
                 provider={group.provider}
+                dailyUsage={group.dailyUsage ?? null}
               />
             ))}
           </div>
@@ -264,9 +416,11 @@ export function QuotaStrip(): JSX.Element | null {
 function QuotaRowItem({
   window: w,
   provider,
+  dailyUsage,
 }: {
   window: QuotaWindow;
   provider: string;
+  dailyUsage: ReadonlyArray<DailyUsagePoint> | null;
 }): JSX.Element {
   // Credits-style rows (DeepSeek balance, etc.) carry a synthetic name
   // like `credits:CNY 总额 4.25 / 赠金 0.00 / 充值 4.25`. Render those as
@@ -275,7 +429,7 @@ function QuotaRowItem({
   // misleading for an account that has no resetting allowance.
   const credits = parseCreditsWindow(w.name);
   if (credits !== null) {
-    return <CreditsRowItem credits={credits} />;
+    return <CreditsRowItem credits={credits} dailyUsage={dailyUsage} />;
   }
 
   const remaining = w.percentLeft ?? 100;
@@ -318,15 +472,20 @@ function QuotaRowItem({
 }
 
 // Credits balances render as a single-line badge: amount on the left
-// as the focal point (matching the visual weight of the model-name
-// label on quota rows), with a muted "余额 · CCY" tag on the right.
+// (fixed-width column so all rows align), a daily-usage sparkline in
+// the middle (occupies a constant slot whether or not data is
+// available, so all providers start the bar chart at the same x), and
+// a muted "余额 · CCY" tag on the right.
+//
 // No progress bar — a perpetually-100% green bar would be visually
 // indistinguishable from "quota still full" and is misleading for a
 // monetary balance with no reset semantics.
 function CreditsRowItem({
   credits,
+  dailyUsage,
 }: {
   credits: ParsedCreditsWindow;
+  dailyUsage: ReadonlyArray<DailyUsagePoint> | null;
 }): JSX.Element {
   const symbol = currencySymbol(credits.currency);
   const amount = credits.total ?? credits.toppedUp ?? credits.granted ?? '—';
@@ -347,6 +506,11 @@ function CreditsRowItem({
     >
       <div className="quota-strip__row-head">
         <span className="quota-strip__credits-amount">{display}</span>
+        <UsageSparkline
+          dailyUsage={dailyUsage}
+          currencySymbol={symbol}
+          currencyCode={credits.currency}
+        />
         <span className="quota-strip__meta">
           <span className="quota-strip__credits-tag">
             余额{credits.currency.length > 0 ? ` · ${credits.currency}` : ''}
@@ -355,4 +519,191 @@ function CreditsRowItem({
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// UsageSparkline — fixed-width inline bar chart of recent daily spend.
+// ---------------------------------------------------------------------------
+//
+// The slot has constant outer dimensions so every credits row in the
+// strip starts the chart at the same horizontal position. When the
+// adapter does not surface usage data the slot still occupies the
+// space (filled with a faint grid / placeholder) — this keeps the
+// "余额 · CCY" tag aligned across providers.
+//
+// Visual model:
+//   - 14-day rolling window. Older days fall off; missing days
+//     between data points get a 1px grey tick so the day count is
+//     visually preserved (no collapsing zeros).
+//   - Bars within the most recent 7 days render at full opacity;
+//     bars older than 7 days fade out smoothly to ~35% so the eye
+//     is drawn to recent activity.
+//   - The last bar (today, or the latest known day) is rendered at
+//     a slightly brighter shade so the "current" position is easy
+//     to find.
+function UsageSparkline({
+  dailyUsage,
+  currencySymbol: symbol,
+  currencyCode,
+}: {
+  dailyUsage: ReadonlyArray<DailyUsagePoint> | null;
+  currencySymbol: string;
+  currencyCode: string;
+}): JSX.Element {
+  const MAX_BARS = 14;
+  const RECENT_BARS = 7; // last N days at full opacity
+  // Outer SVG layout — kept in sync with the `.quota-strip__sparkline`
+  // CSS so the bar widths land on near-integer pixel values.
+  const VIEW_W = 90;
+  const VIEW_H = 18;
+  const GAP = 1;
+
+  // Trim to the most recent MAX_BARS entries, then back-fill any
+  // missing calendar days with zero-cost placeholders so the
+  // sparkline shows a stable "one tick per day" rhythm even when
+  // the adapter response skips days with no usage.
+  const filled = fillMissingDays(dailyUsage ?? [], MAX_BARS);
+
+  const values = filled.map((p) => Number(p.cost));
+  const max = values.reduce((m, v) => (v > m ? v : m), 0);
+  const barWidth = (VIEW_W - GAP * (MAX_BARS - 1)) / MAX_BARS;
+  const hasData = filled.some((p) => Number(p.cost) > 0);
+
+  return (
+    <span
+      className="quota-strip__sparkline"
+      data-has-data={hasData ? 'true' : 'false'}
+      aria-label="近期 14 天每日用量"
+    >
+      <svg
+        width={VIEW_W}
+        height={VIEW_H}
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        preserveAspectRatio="none"
+        role="img"
+      >
+        {/* Baseline so the slot is visible even with no data. */}
+        <line
+          x1="0"
+          x2={VIEW_W}
+          y1={VIEW_H - 0.5}
+          y2={VIEW_H - 0.5}
+          className="quota-strip__sparkline-base"
+        />
+        {filled.map((point, idx) => {
+          const value = Number.isFinite(values[idx]) ? values[idx]! : 0;
+          const x = idx * (barWidth + GAP);
+          const tip = `${point.date} · ${symbol}${point.cost}${
+            currencyCode ? ` ${currencyCode}` : ''
+          }`;
+
+          // Recency fade: most recent RECENT_BARS days at 100%,
+          // older days drop off linearly toward 35%. Total span
+          // is `MAX_BARS - RECENT_BARS` slots.
+          const distanceFromLast = filled.length - 1 - idx;
+          const isToday = idx === filled.length - 1;
+          const isRecent = distanceFromLast < RECENT_BARS;
+          const fadeT = isRecent
+            ? 0
+            : Math.min(
+                1,
+                (distanceFromLast - (RECENT_BARS - 1)) /
+                  Math.max(1, MAX_BARS - RECENT_BARS),
+              );
+          const opacity = 1 - fadeT * 0.65;
+
+          // Zero-day placeholder: 1px grey tick so the day rhythm
+          // is preserved without a misleading colored bar.
+          if (max <= 0 || value <= 0) {
+            return (
+              <rect
+                key={point.date}
+                x={x}
+                y={VIEW_H - 1}
+                width={barWidth}
+                height={1}
+                className="quota-strip__sparkline-zero"
+              >
+                <title>{`${point.date} · ${symbol}0`}</title>
+              </rect>
+            );
+          }
+
+          const h = Math.max(1, (value / max) * (VIEW_H - 1));
+          const y = VIEW_H - h;
+          return (
+            <rect
+              key={point.date}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={h}
+              opacity={opacity}
+              className={
+                isToday
+                  ? 'quota-strip__sparkline-bar quota-strip__sparkline-bar--today'
+                  : 'quota-strip__sparkline-bar'
+              }
+            >
+              <title>{tip}</title>
+            </rect>
+          );
+        })}
+      </svg>
+    </span>
+  );
+}
+
+/**
+ * Trim `points` to the most-recent `maxBars` calendar days and
+ * back-fill any gaps with zero-cost placeholders so the bar chart
+ * always renders exactly `maxBars` slots in chronological order.
+ *
+ * Anchors the right edge to the last available date (or "today" if
+ * `points` is empty). When points span fewer days than the window,
+ * the earlier slots are zero-filled — i.e. a brand-new account on
+ * day 3 will render 11 zero ticks followed by 3 real bars.
+ */
+function fillMissingDays(
+  points: ReadonlyArray<DailyUsagePoint>,
+  maxBars: number,
+): DailyUsagePoint[] {
+  if (maxBars <= 0) return [];
+  const byDate = new Map<string, DailyUsagePoint>();
+  for (const p of points) byDate.set(p.date, p);
+
+  // Anchor: last date in the input, falling back to today (UTC).
+  const anchorIso =
+    points.length > 0
+      ? points[points.length - 1]!.date
+      : isoDateOnly(new Date());
+
+  const out: DailyUsagePoint[] = [];
+  for (let i = maxBars - 1; i >= 0; i--) {
+    const iso = shiftDateIso(anchorIso, -i);
+    const existing = byDate.get(iso);
+    out.push(
+      existing ?? {
+        date: iso,
+        cost: '0',
+        totalTokens: 0,
+      },
+    );
+  }
+  return out;
+}
+
+function isoDateOnly(d: Date): string {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function shiftDateIso(iso: string, deltaDays: number): string {
+  // Parse `YYYY-MM-DD` as a UTC instant so DST cannot shift the
+  // resulting date by ±1 day.
+  const [y, m, d] = iso.split('-').map((s) => Number(s));
+  const t = Date.UTC(y!, m! - 1, d!) + deltaDays * 86_400_000;
+  return isoDateOnly(new Date(t));
 }

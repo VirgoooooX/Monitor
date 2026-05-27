@@ -67,6 +67,7 @@ import {
   unavailableSnapshot,
 } from './common';
 import type { ProviderAdapter } from './types';
+import type { DailyUsagePoint } from '../../../types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -76,6 +77,8 @@ const SERVICE_LOGIN_URL =
   'https://account.xiaomi.com/pass/serviceLogin?sid=api-platform&_json=true';
 const BALANCE_URL =
   'https://platform.xiaomimimo.com/api/v1/balance';
+const USAGE_DETAIL_LIST_URL =
+  'https://platform.xiaomimimo.com/api/v1/usage/detail/list';
 
 /** The platform gateway uses this prefixed cookie name; older
  *  documentation might refer to a plain `serviceToken`. */
@@ -312,29 +315,42 @@ export function createXiaomiAdapter(
   }
 
   /**
-   * Read the balance endpoint. On 401 invalidates the cached token
-   * and retries once via `exchangePassToken` -> retry. Any 401 after
-   * the retry is reported as `auth_expired`.
+   * Read a platform endpoint with the cached / refreshed
+   * serviceToken cookie. On 401 invalidates the cache, exchanges a
+   * fresh token via passToken, and retries once. Any 401 after the
+   * retry is reported as `auth_expired`.
+   *
+   * Generic over GET/POST so both the balance read (GET, no body)
+   * and the usage detail list (POST, JSON body) can share the
+   * cookie-management logic.
    */
-  async function fetchBalance(
+  async function callWithCookie(
     accountId: string,
     passToken: string,
     userId: string,
     signal: AbortSignal | undefined,
+    request: {
+      url: string;
+      method: 'GET' | 'POST';
+      body?: unknown;
+      label: string;
+    },
   ): Promise<unknown> {
-    const callBalance = async (token: string): Promise<{
+    const send = async (token: string): Promise<{
       readonly status: number;
       readonly body: string;
     }> => {
+      const headers: Record<string, string> = {
+        Cookie: `${SERVICE_TOKEN_COOKIE}=${token}; userId=${userId}`,
+        'User-Agent': 'Mozilla/5.0',
+        Accept: 'application/json',
+      };
       const r = await doRequest({
-        url: BALANCE_URL,
-        method: 'GET',
+        url: request.url,
+        method: request.method,
         ...(signal !== undefined ? { signal } : {}),
-        headers: {
-          Cookie: `${SERVICE_TOKEN_COOKIE}=${token}; userId=${userId}`,
-          'User-Agent': 'Mozilla/5.0',
-          Accept: 'application/json',
-        },
+        headers,
+        ...(request.body !== undefined ? { body: request.body } : {}),
       });
       return { status: r.status, body: r.body };
     };
@@ -342,7 +358,7 @@ export function createXiaomiAdapter(
     // Try the cached token first, fall back to a fresh exchange on 401.
     let token = cache.get(accountId);
     if (token !== undefined) {
-      const r = await callBalance(token);
+      const r = await send(token);
       if (r.status !== 401) {
         if (r.status >= 200 && r.status < 300) {
           try {
@@ -350,13 +366,13 @@ export function createXiaomiAdapter(
           } catch {
             throw new ProviderAdapterError(
               'upstream_changed',
-              'balance response was not JSON',
+              `${request.label} response was not JSON`,
             );
           }
         }
         throw new ProviderAdapterError(
           'upstream_changed',
-          `balance returned HTTP ${r.status}`,
+          `${request.label} returned HTTP ${r.status}`,
         );
       }
       cache.delete(accountId);
@@ -365,18 +381,18 @@ export function createXiaomiAdapter(
     // Exchange + retry (one attempt only).
     token = await exchangePassToken(passToken, userId, signal);
     cache.set(accountId, token);
-    const r = await callBalance(token);
+    const r = await send(token);
     if (r.status === 401 || r.status === 403) {
       cache.delete(accountId);
       throw new ProviderAdapterError(
         'auth_expired',
-        'balance rejected freshly-issued serviceToken',
+        `${request.label} rejected freshly-issued serviceToken`,
       );
     }
     if (r.status < 200 || r.status >= 300) {
       throw new ProviderAdapterError(
         'upstream_changed',
-        `balance returned HTTP ${r.status}`,
+        `${request.label} returned HTTP ${r.status}`,
       );
     }
     try {
@@ -384,9 +400,52 @@ export function createXiaomiAdapter(
     } catch {
       throw new ProviderAdapterError(
         'upstream_changed',
-        'balance response was not JSON',
+        `${request.label} response was not JSON`,
       );
     }
+  }
+
+  function fetchBalance(
+    accountId: string,
+    passToken: string,
+    userId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<unknown> {
+    return callWithCookie(accountId, passToken, userId, signal, {
+      url: BALANCE_URL,
+      method: 'GET',
+      label: 'balance',
+    });
+  }
+
+  /**
+   * Pull this calendar month's per-day usage from
+   * `/api/v1/usage/detail/list`. Failures are non-fatal — the
+   * adapter logs nothing and the snapshot keeps going without a
+   * `dailyUsage` field. We deliberately fetch only the current
+   * month (`{ year, month }`) so the response stays small enough
+   * for the platform's pagination contract; the renderer then
+   * trims to the most recent ~30 days for the sparkline.
+   */
+  async function fetchDailyUsage(
+    accountId: string,
+    passToken: string,
+    userId: string,
+    nowMs: number,
+    signal: AbortSignal | undefined,
+  ): Promise<readonly { date: string; cost: string; totalTokens: number }[]> {
+    const d = new Date(nowMs);
+    const body = {
+      year: d.getUTCFullYear(),
+      month: d.getUTCMonth() + 1,
+    };
+    const response = await callWithCookie(accountId, passToken, userId, signal, {
+      url: USAGE_DETAIL_LIST_URL,
+      method: 'POST',
+      body,
+      label: 'usage/detail/list',
+    });
+    return parseDailyUsageResponse(response);
   }
 
   return {
@@ -445,9 +504,32 @@ export function createXiaomiAdapter(
       }
 
       const parsed = parseBalanceResponse(response);
+
+      // Fetch daily usage in parallel-ish: the balance call already
+      // succeeded (so the cookie is fresh), but we still treat the
+      // usage call as best-effort — failures don't downgrade the
+      // snapshot status. If the user just added the account and
+      // hasn't run any inference yet the response is empty, which
+      // is fine: `dailyUsage: []` distinguishes "no usage yet" from
+      // "this adapter doesn't expose usage" (= undefined).
+      let dailyUsage: ReadonlyArray<DailyUsagePoint> | null = null;
+      try {
+        dailyUsage = await fetchDailyUsage(
+          account.id,
+          passToken,
+          userId,
+          now,
+          signal,
+        );
+      } catch {
+        // Best-effort. The balance + currency strip continue to
+        // render; the sparkline simply does not appear.
+      }
+
       return okSnapshot(account, now, parsed.windows, {
         kind: 'credits',
         rawPlanLabel: parsed.rawPlanLabel,
+        ...(dailyUsage !== null ? { dailyUsage } : {}),
       });
     },
   };
@@ -538,3 +620,84 @@ function parseBalanceResponse(response: unknown): {
 }
 
 export const xiaomiAdapter: ProviderAdapter = createXiaomiAdapter();
+
+// ---------------------------------------------------------------------------
+// Daily usage parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate the rows returned by `/api/v1/usage/detail/list` into a
+ * date-keyed `DailyUsagePoint` array. The platform returns one row
+ * per (date, model, apiKey) tuple, so we sum across model/apiKey
+ * for each calendar day. Entries with non-numeric / missing
+ * `consumedAmount` are skipped silently — the response sometimes
+ * carries placeholder rows for plugin usage that we don't surface.
+ *
+ * Output is sorted by ascending `date` so the renderer can iterate
+ * left-to-right without re-sorting.
+ *
+ * The `code === 0` envelope check is loose because the platform
+ * sometimes wraps the array with `{ code, data: [...] }` and
+ * sometimes returns the array directly; we accept both shapes.
+ */
+function parseDailyUsageResponse(
+  response: unknown,
+): readonly DailyUsagePoint[] {
+  const rows = extractUsageRows(response);
+  if (rows === null) return [];
+
+  // date -> { costSum, totalTokenSum }
+  const byDate = new Map<string, { cost: number; totalTokens: number }>();
+
+  for (const raw of rows) {
+    const row = asRecord(raw);
+    if (row === null) continue;
+    const date = typeof row['date'] === 'string' ? row['date'].trim() : '';
+    if (date.length === 0) continue;
+
+    const cost = parseDecimal(row['consumedAmount']);
+    const totalTokens = parseInteger(row['totalToken']);
+
+    const existing = byDate.get(date) ?? { cost: 0, totalTokens: 0 };
+    if (cost !== null) existing.cost += cost;
+    if (totalTokens !== null) existing.totalTokens += totalTokens;
+    byDate.set(date, existing);
+  }
+
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, agg]) => ({
+      date,
+      cost: formatCostString(agg.cost),
+      totalTokens: agg.totalTokens,
+    }));
+}
+
+function extractUsageRows(response: unknown): readonly unknown[] | null {
+  if (Array.isArray(response)) return response;
+  const root = asRecord(response);
+  if (root === null) return null;
+  if (Array.isArray(root['data'])) return root['data'] as readonly unknown[];
+  return null;
+}
+
+function parseDecimal(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseInteger(value: unknown): number | null {
+  const numeric = parseDecimal(value);
+  if (numeric === null) return null;
+  return Math.max(0, Math.round(numeric));
+}
+
+function formatCostString(value: number): string {
+  // Two decimals for non-zero monetary values; "0" for exactly zero.
+  if (value === 0) return '0';
+  return value.toFixed(Math.abs(value) < 100 ? 4 : 2);
+}

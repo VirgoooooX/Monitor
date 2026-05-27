@@ -7,7 +7,7 @@
 .quota-strip {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   flex: 1;
   min-height: 0;
   overflow: visible;
@@ -151,13 +151,25 @@
 }
 
 /* Credits-style rows (DeepSeek balance, etc.) — no progress bar,
-   monetary amount as the primary visual instead of a percentage. */
+   monetary amount as the primary visual instead of a percentage.
+
+   Layout: three explicit grid columns with fixed widths for the
+   first two so the sparkline ALWAYS starts at the same x across
+   rows (no matter how long the amount text is):
+     [amount 76px] [sparkline 90px] [tag 1fr right-aligned]
+   The third column absorbs any leftover row width — the tag stays
+   pinned to the right edge while the bars stay nailed at x=76+gap. */
 .quota-strip__row--credits .quota-strip__row-head {
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 76px 90px 1fr;
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
 }
 
 .quota-strip__credits-amount {
-  flex: 1 1 auto;
+  /* Sized by the grid column; cell-internal `min-width: 0` lets the
+     ellipsis kick in when the amount overflows 76px. */
   min-width: 0;
   font-size: 15px;
   font-weight: 700;
@@ -170,6 +182,65 @@
   text-overflow: ellipsis;
 }
 
+/* Inline 14-day spend sparkline. The grid column is exactly 90px
+   wide so the chart starts at the same x in every credits row,
+   regardless of the amount's text width. The block aligns to the
+   row's bottom edge so the bars rest on the same baseline as the
+   amount and tag text — bars grow upward from there. */
+.quota-strip__sparkline {
+  display: inline-flex;
+  align-items: flex-end;
+  align-self: end;
+  width: 90px;
+  height: 18px;
+  /* Pull the sparkline down so its bottom edge sits on the text
+     baseline of the amount/tag (otherwise the row's center-align
+     pushes it ~3px above the visual baseline). */
+  margin-bottom: -2px;
+}
+
+.quota-strip__sparkline svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.quota-strip__sparkline-base {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1;
+}
+
+/* Sparkline bars use a dedicated accent (cool blue) so the
+   abundance of `--color-ok` greens elsewhere in the widget does
+   not visually drown the charts. The accent reads as "data" rather
+   than "status", which matches the chart's purpose. */
+.quota-strip__sparkline-bar {
+  fill: #60a5fa;
+}
+
+/* Today's bar gets a brighter shade so the eye snaps to "now"
+   instantly. */
+.quota-strip__sparkline-bar--today {
+  fill: #93c5fd;
+}
+
+/* 1px tick rendered in place of bars on zero-usage days, so the
+   sparkline preserves the day-by-day rhythm without a misleading
+   coloured bar. */
+.quota-strip__sparkline-zero {
+  fill: rgba(255, 255, 255, 0.18);
+}
+
+.quota-strip__row--credits[data-urgency='critical']
+  .quota-strip__sparkline-bar {
+  fill: var(--color-bad);
+}
+
+.quota-strip__sparkline[data-has-data='false']
+  .quota-strip__sparkline-bar {
+  display: none;
+}
+
 .quota-strip__credits-tag {
   flex: 0 0 auto;
   font-size: 9.5px;
@@ -179,6 +250,13 @@
   text-transform: uppercase;
   color: var(--color-text-muted);
   white-space: nowrap;
+}
+
+/* In the credits-row grid the meta wrapper occupies the third
+   (1fr) column — pin it to the right edge so 余额·CNY hugs the
+   row's right boundary regardless of leftover width. */
+.quota-strip__row--credits .quota-strip__meta {
+  justify-self: end;
 }
 
 .quota-strip__row--credits[data-urgency='critical'] .quota-strip__credits-amount {

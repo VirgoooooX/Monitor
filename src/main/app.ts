@@ -844,6 +844,25 @@ async function boot(): Promise<void> {
     resizeCompactWindow: (input) => applyCompactWindowSize(input),
     providerAuthService,
     quotaService,
+    // Broadcaster fans `provider-auth.updated` push events out to
+    // every live BrowserWindow (compact + expanded) after each
+    // mutation IPC succeeds. Constructed inline so it always sees
+    // the current set of windows via `BrowserWindow.getAllWindows()`
+    // (we cannot capture a snapshot of the windows because the
+    // expanded window is created lazily).
+    providerAuthBroadcaster: (() => {
+      const {
+        createProviderAuthBroadcaster,
+      } = require('./services/provider_auth.broadcast') as typeof import(
+        './services/provider_auth.broadcast'
+      );
+      const { BrowserWindow: BW } = require('electron') as typeof import(
+        'electron'
+      );
+      return createProviderAuthBroadcaster({
+        getWindows: () => BW.getAllWindows(),
+      });
+    })(),
     getDiagnostics: () => diagnosticsService.export(),
     runRefreshNow: async () => {
       // Run network / openclash / nodeScan collectors immediately,

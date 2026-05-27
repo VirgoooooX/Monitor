@@ -6,6 +6,7 @@ import type {
   QuotaKind,
   QuotaSnapshot,
   QuotaWindow,
+  DailyUsagePoint,
 } from '../../../types';
 import type { ProviderAuthRow } from '../../../store/repositories';
 
@@ -79,6 +80,12 @@ export interface OkSnapshotOptions {
   readonly kind?: QuotaKind;
   readonly rawPlanLabel?: string | null;
   readonly modelGroup?: string | null;
+  /**
+   * Optional per-day usage history. Adapters that surface daily
+   * spend (currently Xiaomi MiMo) populate this so the renderer
+   * can draw the credits-row sparkline.
+   */
+  readonly dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
 }
 
 export function okSnapshot(
@@ -87,7 +94,7 @@ export function okSnapshot(
   windows: QuotaWindow[],
   options: OkSnapshotOptions = {},
 ): QuotaSnapshot {
-  return {
+  const snapshot: QuotaSnapshot = {
     provider: account.provider,
     capturedAt,
     source: 'imported_auth',
@@ -103,6 +110,10 @@ export function okSnapshot(
     lastErrorCode: null,
     lastErrorMessage: null,
   };
+  if (options.dailyUsage !== undefined) {
+    snapshot.dailyUsage = options.dailyUsage;
+  }
+  return snapshot;
 }
 
 export function expiresAtHasPassed(

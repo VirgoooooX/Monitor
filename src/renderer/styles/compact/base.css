@@ -677,6 +677,16 @@
   color: var(--compact-muted);
 }
 
+/* Xiaomi MiMo glyph is a black-and-white mono mark; the muted token
+   makes it nearly invisible on dark themes. Pin it to the bright
+   text token (and ensure full opacity) so it stays readable while
+   still following the theme palette. */
+.compact-frame .quota-strip__provider:has(.provider-icon[data-provider^='xiaomi']),
+.compact-mini-rail__icon .provider-icon[data-provider^='xiaomi'] {
+  color: var(--compact-text);
+  opacity: 1;
+}
+
 .compact-frame .quota-strip__windows {
   gap: 8px;
 }

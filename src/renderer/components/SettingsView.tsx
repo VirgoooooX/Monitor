@@ -527,16 +527,44 @@ export function SettingsView(): JSX.Element {
   useEffect(() => {
     const desktop = window.desktop;
     if (!desktop) return;
+    let cancelled = false;
     desktop
       .listProviderAuths()
       .then((rows) => {
-        setProviderAuthRows(rows);
+        if (!cancelled) setProviderAuthRows(rows);
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
         console.error('[SettingsView] listProviderAuths failed:', err);
-        setProviderAuthError(extractIpcError(err));
+        if (!cancelled) setProviderAuthError(extractIpcError(err));
       });
+
+    // Subscribe to provider-auth push events. Mutations from this
+    // window already optimistic-update `providerAuthRows`, but the
+    // push carries the canonical post-mutation row list (with
+    // `lastQuotaAt` / `lastErrorCode` populated by the background
+    // quota refresh that main schedules) so we replace state with
+    // the embedded `rows` whenever a refresh-induced update
+    // arrives. The `desktop.on` API is absent in browser preview;
+    // guard accordingly.
+    let unsubscribe: (() => void) | undefined;
+    if ('on' in desktop && typeof desktop.on === 'function') {
+      try {
+        unsubscribe = desktop.on('provider-auth.updated', (payload) => {
+          if (cancelled) return;
+          if (payload?.rows !== undefined) {
+            setProviderAuthRows([...payload.rows]);
+          }
+        });
+      } catch {
+        // Ignore — fall back to optimistic local updates.
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   // Detect dirty state cheaply via JSON comparison; the settings tree

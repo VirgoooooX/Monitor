@@ -55,6 +55,7 @@ export type {
   // Quota
   QuotaWindow,
   QuotaSnapshot,
+  DailyUsagePoint,
   QuotaStatus,
   QuotaSource,
   QuotaKind,
