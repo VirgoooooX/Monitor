@@ -78,6 +78,13 @@ export const EXPANDED_DEFAULT_SIZE = { width: 760, height: 560 } as const;
 /** Sentinel origin used to represent the renderer's own `file://` URL in production. */
 export const FILE_SELF_ORIGIN = 'file://';
 
+function resolveWindowIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.ico');
+  }
+  return path.join(__dirname, '..', '..', 'build', 'icon.ico');
+}
+
 /**
  * Dependencies threaded into the window factories. The `session`
  * override is intended for tests that want to assert against a custom
@@ -599,6 +606,7 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     show: false,
+    icon: resolveWindowIconPath(),
     webPreferences: { ...SECURE_WEB_PREFERENCES, session: targetSession },
   };
 
@@ -656,6 +664,7 @@ export function createExpandedWindow(deps: CreateWindowDeps): BrowserWindow {
     frame: true,
     resizable: true,
     show: false,
+    icon: resolveWindowIconPath(),
     webPreferences: { ...SECURE_WEB_PREFERENCES, session: targetSession },
   };
 
