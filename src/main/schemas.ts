@@ -300,6 +300,7 @@ export const providerIdSchema = z.enum([
   'gemini-api',
   'deepseek',
   'xiaomi',
+  'opencode',
   'openai-compatible',
 ]);
 
@@ -1134,6 +1135,7 @@ export const manualApiKeyProviderSchema = z.enum([
   'gemini-api',
   'deepseek',
   'xiaomi',
+  'opencode',
   'openai-compatible',
 ]);
 
@@ -1153,13 +1155,16 @@ export const createProviderAuthApiKeyInputSchema = z
     provider: manualApiKeyProviderSchema,
     label: z.string().trim().min(1).max(120).optional(),
     // `apiKey` is required for every manual-API-key provider EXCEPT
-    // `xiaomi`, which authenticates via `xiaomiPassToken` +
-    // `xiaomiUserId` cookies instead. The cross-field check below
-    // enforces the per-provider rules in one place.
+    // `xiaomi` and `opencode`, which authenticate via cookies. The
+    // cross-field check below enforces the per-provider rules in
+    // one place.
     apiKey: z.string().trim().min(1).optional(),
     baseUrl: optionalBaseUrlSchema,
     xiaomiPassToken: z.string().trim().min(1).optional(),
     xiaomiUserId: z.string().trim().min(1).optional(),
+    deepseekUserToken: z.string().trim().min(1).optional(),
+    opencodeAuthCookie: z.string().trim().min(1).optional(),
+    opencodeWorkspaceUrl: z.string().trim().min(1).optional(),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -1177,6 +1182,23 @@ export const createProviderAuthApiKeyInputSchema = z
           code: z.ZodIssueCode.custom,
           path: ['xiaomiUserId'],
           message: 'xiaomiUserId is required for xiaomi accounts',
+        });
+      }
+    } else if (input.provider === 'opencode') {
+      // OpenCode Go uses an opaque Iron-encrypted `auth` cookie
+      // value plus a workspace dashboard URL.
+      if (!input.opencodeAuthCookie) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['opencodeAuthCookie'],
+          message: 'opencodeAuthCookie is required for opencode accounts',
+        });
+      }
+      if (!input.opencodeWorkspaceUrl) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['opencodeWorkspaceUrl'],
+          message: 'opencodeWorkspaceUrl is required for opencode accounts',
         });
       }
     } else {

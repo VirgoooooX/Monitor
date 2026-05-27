@@ -508,8 +508,8 @@
 }
 
 .compact-mini-rail__network {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   box-sizing: border-box;
   transition: all 0.25s ease;
@@ -519,22 +519,22 @@
 .compact-mini-rail__network[data-tone='ok'] {
   background: #22c55e;
   box-shadow:
-    0 0 0 2px rgba(34, 197, 94, 0.25),
-    0 0 10px rgba(34, 197, 94, 0.8);
+    0 0 0 3px rgba(34, 197, 94, 0.25),
+    0 0 14px rgba(34, 197, 94, 0.8);
 }
 
 .compact-mini-rail__network[data-tone='warn'] {
   background: #f5b400;
   box-shadow:
-    0 0 0 2px rgba(245, 180, 0, 0.25),
-    0 0 8px rgba(245, 180, 0, 0.6);
+    0 0 0 3px rgba(245, 180, 0, 0.25),
+    0 0 12px rgba(245, 180, 0, 0.6);
 }
 
 .compact-mini-rail__network[data-tone='bad'] {
   background: var(--color-bad, #ef4444);
   box-shadow:
-    0 0 0 2px rgba(239, 68, 68, 0.25),
-    0 0 8px rgba(239, 68, 68, 0.6);
+    0 0 0 3px rgba(239, 68, 68, 0.25),
+    0 0 12px rgba(239, 68, 68, 0.6);
 }
 
 .compact-mini-rail__divider {

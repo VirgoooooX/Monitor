@@ -363,6 +363,7 @@ const FILE_IMPORT_PICKER_ORDER: readonly ProviderId[] = [
   'gemini-api',
   'deepseek',
   'xiaomi',
+  'opencode',
   'openai-compatible',
 ];
 
@@ -376,6 +377,7 @@ const MANUAL_API_KEY_PICKER_ORDER: readonly ManualApiKeyProvider[] = [
   'gemini-api',
   'deepseek',
   'xiaomi',
+  'opencode',
   'openai-compatible',
 ];
 
@@ -497,6 +499,18 @@ export function SettingsView(): JSX.Element {
   const [xiaomiPassToken, setXiaomiPassToken] = useState('');
   const [xiaomiUserId, setXiaomiUserId] = useState('');
   const [xiaomiPassTokenShow, setXiaomiPassTokenShow] = useState(false);
+  // DeepSeek only — optional console `userToken` (from
+  // `localStorage.userToken` on platform.deepseek.com). When
+  // present the adapter unlocks multi-wallet detail and the
+  // daily-usage sparkline; absent, only the public balance shows.
+  const [deepseekUserToken, setDeepseekUserToken] = useState('');
+  const [deepseekUserTokenShow, setDeepseekUserTokenShow] = useState(false);
+  // OpenCode Go only — opaque Iron-encrypted `auth` cookie and the
+  // workspace dashboard URL. The dashboard SSR-renders usage
+  // percentages directly into the HTML; the adapter scrapes them.
+  const [opencodeAuthCookie, setOpencodeAuthCookie] = useState('');
+  const [opencodeWorkspaceUrl, setOpencodeWorkspaceUrl] = useState('');
+  const [opencodeAuthCookieShow, setOpencodeAuthCookieShow] = useState(false);
 
   // Load initial settings
   useEffect(() => {
@@ -983,6 +997,49 @@ export function SettingsView(): JSX.Element {
       return;
     }
 
+    // OpenCode Go uses an opaque `auth` cookie + workspace URL
+    // (also no API key). The cookie is Iron-encrypted on the
+    // server side; we treat it as an opaque opaque blob.
+    if (apiKeyProvider === 'opencode') {
+      const trimmedAuth = opencodeAuthCookie.trim();
+      const trimmedUrl = opencodeWorkspaceUrl.trim();
+      if (trimmedAuth.length === 0 || trimmedUrl.length === 0) {
+        setProviderAuthError({
+          code: 'validation',
+          message: 'OpenCode Go 必须填写 auth cookie 和 workspace URL',
+        });
+        return;
+      }
+      setProviderAuthBusyId('__create__');
+      setProviderAuthError(null);
+      try {
+        const input: CreateProviderAuthApiKeyInput = {
+          provider: 'opencode',
+          opencodeAuthCookie: trimmedAuth,
+          opencodeWorkspaceUrl: trimmedUrl,
+        };
+        if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
+        const row = await desktop.createProviderAuthApiKey(input);
+        setProviderAuthRows((prev) => {
+          const idx = prev.findIndex((r) => r.id === row.id);
+          if (idx === -1) return [...prev, row];
+          const next = prev.slice();
+          next[idx] = row;
+          return next;
+        });
+        setApiKeyLabel('');
+        setOpencodeAuthCookie('');
+        setOpencodeWorkspaceUrl('');
+        setOpencodeAuthCookieShow(false);
+        setApiKeyFormOpen(false);
+      } catch (err: unknown) {
+        setProviderAuthError(extractIpcError(err));
+      } finally {
+        setProviderAuthBusyId(null);
+      }
+      return;
+    }
+
     const trimmedKey = apiKeyValue.trim();
     if (trimmedKey.length === 0) {
       setProviderAuthError({
@@ -1011,6 +1068,12 @@ export function SettingsView(): JSX.Element {
       if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
       const trimmedBase = apiKeyBaseUrl.trim();
       if (trimmedBase.length > 0) input.baseUrl = trimmedBase;
+      if (apiKeyProvider === 'deepseek') {
+        const trimmedUserToken = deepseekUserToken.trim();
+        if (trimmedUserToken.length > 0) {
+          input.deepseekUserToken = trimmedUserToken;
+        }
+      }
       const row = await desktop.createProviderAuthApiKey(input);
       setProviderAuthRows((prev) => {
         const idx = prev.findIndex((r) => r.id === row.id);
@@ -1025,6 +1088,8 @@ export function SettingsView(): JSX.Element {
       setApiKeyLabel('');
       setApiKeyBaseUrl('');
       setApiKeyShow(false);
+      setDeepseekUserToken('');
+      setDeepseekUserTokenShow(false);
       setApiKeyFormOpen(false);
     } catch (err: unknown) {
       setProviderAuthError(extractIpcError(err));
@@ -1038,6 +1103,9 @@ export function SettingsView(): JSX.Element {
     apiKeyBaseUrl,
     xiaomiPassToken,
     xiaomiUserId,
+    deepseekUserToken,
+    opencodeAuthCookie,
+    opencodeWorkspaceUrl,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -1834,6 +1902,68 @@ export function SettingsView(): JSX.Element {
                         />
                       </Field>
                     </>
+                  ) : apiKeyProvider === 'opencode' ? (
+                    <>
+                      <Field
+                        label="auth Cookie"
+                        hint="从 opencode.ai 域 Cookie 复制 `auth` 的值（Fe26.2 开头）；保存后即加密落库"
+                      >
+                        <div className="settings-view__input-affix">
+                          <input
+                            className="settings-view__input"
+                            type={
+                              opencodeAuthCookieShow ? 'text' : 'password'
+                            }
+                            value={opencodeAuthCookie}
+                            onChange={(e) =>
+                              setOpencodeAuthCookie(e.target.value)
+                            }
+                            placeholder="Fe26.2**..."
+                            autoComplete="off"
+                            disabled={
+                              providerAuthBusyId === '__create__'
+                            }
+                            data-testid="provider-auth-opencode-auth-cookie"
+                          />
+                          <button
+                            type="button"
+                            className="settings-view__input-action"
+                            onClick={() =>
+                              setOpencodeAuthCookieShow((v) => !v)
+                            }
+                            aria-label={
+                              opencodeAuthCookieShow
+                                ? '隐藏 auth cookie'
+                                : '显示 auth cookie'
+                            }
+                          >
+                            {opencodeAuthCookieShow ? (
+                              <EyeOff size={14} />
+                            ) : (
+                              <Eye size={14} />
+                            )}
+                          </button>
+                        </div>
+                      </Field>
+
+                      <Field
+                        label="Workspace URL"
+                        hint="dashboard 完整 URL，例如 https://opencode.ai/workspace/wrk_xxx/go"
+                      >
+                        <input
+                          className="settings-view__input"
+                          type="url"
+                          value={opencodeWorkspaceUrl}
+                          onChange={(e) =>
+                            setOpencodeWorkspaceUrl(e.target.value)
+                          }
+                          placeholder="https://opencode.ai/workspace/.../go"
+                          autoComplete="off"
+                          disabled={providerAuthBusyId === '__create__'}
+                          data-testid="provider-auth-opencode-workspace-url"
+                        />
+                      </Field>
+                    </>
                   ) : (
                     <>
                       <Field
@@ -1881,6 +2011,50 @@ export function SettingsView(): JSX.Element {
                           />
                         </Field>
                       )}
+
+                      {apiKeyProvider === 'deepseek' && (
+                        <Field
+                          label="Console userToken"
+                          hint="可选；从 platform.deepseek.com 的 LocalStorage 复制 userToken，可解锁日用量柱状图。"
+                        >
+                          <div className="settings-view__input-affix">
+                            <input
+                              className="settings-view__input"
+                              type={
+                                deepseekUserTokenShow ? 'text' : 'password'
+                              }
+                              value={deepseekUserToken}
+                              onChange={(e) =>
+                                setDeepseekUserToken(e.target.value)
+                              }
+                              placeholder="留空则只显示余额"
+                              autoComplete="off"
+                              disabled={
+                                providerAuthBusyId === '__create__'
+                              }
+                              data-testid="provider-auth-deepseek-user-token"
+                            />
+                            <button
+                              type="button"
+                              className="settings-view__input-action"
+                              onClick={() =>
+                                setDeepseekUserTokenShow((v) => !v)
+                              }
+                              aria-label={
+                                deepseekUserTokenShow
+                                  ? '隐藏 userToken'
+                                  : '显示 userToken'
+                              }
+                            >
+                              {deepseekUserTokenShow ? (
+                                <EyeOff size={14} />
+                              ) : (
+                                <Eye size={14} />
+                              )}
+                            </button>
+                          </div>
+                        </Field>
+                      )}
                     </>
                   )}
                 </div>
@@ -1908,6 +2082,11 @@ export function SettingsView(): JSX.Element {
                       setXiaomiPassToken('');
                       setXiaomiUserId('');
                       setXiaomiPassTokenShow(false);
+                      setDeepseekUserToken('');
+                      setDeepseekUserTokenShow(false);
+                      setOpencodeAuthCookie('');
+                      setOpencodeWorkspaceUrl('');
+                      setOpencodeAuthCookieShow(false);
                       setProviderAuthError(null);
                     }}
                     disabled={providerAuthBusyId === '__create__'}

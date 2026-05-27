@@ -1863,6 +1863,15 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
         if (parsed.data.xiaomiUserId !== undefined) {
           input.xiaomiUserId = parsed.data.xiaomiUserId;
         }
+        if (parsed.data.deepseekUserToken !== undefined) {
+          input.deepseekUserToken = parsed.data.deepseekUserToken;
+        }
+        if (parsed.data.opencodeAuthCookie !== undefined) {
+          input.opencodeAuthCookie = parsed.data.opencodeAuthCookie;
+        }
+        if (parsed.data.opencodeWorkspaceUrl !== undefined) {
+          input.opencodeWorkspaceUrl = parsed.data.opencodeWorkspaceUrl;
+        }
         const value = service.createApiKey(input);
         // Push the row addition immediately so the UI flips from
         // "saving" to "imported" without polling. Then schedule a

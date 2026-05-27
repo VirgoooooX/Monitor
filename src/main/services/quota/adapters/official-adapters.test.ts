@@ -553,6 +553,128 @@ describe('official quota adapters — DeepSeek', () => {
       },
     ]);
   });
+
+  it('prefers the console path when a userToken is configured (multi-wallet + daily usage)', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      if (input.url.includes('/api/v0/users/get_user_summary')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: {
+              normal_wallets: [
+                { balance: 4.25, currency: 'CNY', token_estimation: 1000 },
+              ],
+              bonus_wallets: [
+                { balance: 1.5, currency: 'CNY', token_estimation: 500 },
+              ],
+            },
+          },
+        } as T;
+      }
+      if (input.url.includes('/api/v0/usage/cost')) {
+        return {
+          code: 0,
+          data: [
+            {
+              currency: 'CNY',
+              total: '0.85',
+              days: [
+                { day: '2026-05-25', cost: 0.42 },
+                { day: '2026-05-26', cost: 0.18 },
+                { day: '2026-05-27', cost: 0.25 },
+              ],
+            },
+          ],
+        } as T;
+      }
+      throw new Error(`unexpected url: ${input.url}`);
+    };
+    const adapter = createDeepSeekAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('deepseek'),
+      getSecret: () => ({
+        apiKey: 'sk-deepseek',
+        deepseekUserToken: 'eyJhbGc-fake-token',
+      }),
+      now: NOW,
+    });
+
+    // The public balance endpoint MUST NOT be called when the
+    // console path succeeds.
+    expect(calls.some((c) => c.url.includes('api.deepseek.com'))).toBe(false);
+
+    // The console path uses Bearer userToken, not the API key.
+    expect(calls[0]!.headers?.Authorization).toBe('Bearer eyJhbGc-fake-token');
+    expect(calls[0]!.url).toBe(
+      'https://platform.deepseek.com/api/v0/users/get_user_summary',
+    );
+    expect(calls[1]!.url).toContain(
+      'https://platform.deepseek.com/api/v0/usage/cost?year=',
+    );
+
+    expect(snapshot.status).toBe('ok');
+    expect(snapshot.windows[0]!.name).toBe(
+      'credits:CNY 总额 5.75 / 现金 4.25 / 赠金 1.50',
+    );
+    expect(snapshot.dailyUsage).toEqual([
+      { date: '2026-05-25', cost: '0.42', totalTokens: 0 },
+      { date: '2026-05-26', cost: '0.18', totalTokens: 0 },
+      { date: '2026-05-27', cost: '0.25', totalTokens: 0 },
+    ]);
+  });
+
+  it('falls back to the public balance path when the console call fails', async () => {
+    const calls: RequestJsonInput[] = [];
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      calls.push(input);
+      if (input.url.includes('/api/v0/users/get_user_summary')) {
+        // Simulate a stale userToken — console rejects, public
+        // balance still works via the API key.
+        throw new Error('upstream returned HTTP 401');
+      }
+      if (input.url.includes('api.deepseek.com')) {
+        return {
+          is_available: true,
+          balance_infos: [
+            {
+              currency: 'CNY',
+              total_balance: '4.25',
+              granted_balance: '0.00',
+              topped_up_balance: '4.25',
+            },
+          ],
+        } as T;
+      }
+      throw new Error(`unexpected url: ${input.url}`);
+    };
+    const adapter = createDeepSeekAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('deepseek'),
+      getSecret: () => ({
+        apiKey: 'sk-deepseek',
+        deepseekUserToken: 'stale-token',
+      }),
+      now: NOW,
+    });
+
+    // Console path attempted, then fell back to public balance.
+    expect(calls[0]!.url).toContain(
+      '/api/v0/users/get_user_summary',
+    );
+    expect(calls[calls.length - 1]!.url).toBe(
+      'https://api.deepseek.com/user/balance',
+    );
+    expect(snapshot.status).toBe('ok');
+    expect(snapshot.windows[0]!.name).toBe(
+      'credits:CNY 总额 4.25 / 赠金 0.00 / 充值 4.25',
+    );
+    // Daily usage is absent on the fallback path.
+    expect(snapshot.dailyUsage).toBeUndefined();
+  });
 });
 describe('official quota adapters — Xiaomi MiMo', () => {
   // Helper: build a fake RequestRaw that returns scripted responses
@@ -976,5 +1098,224 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       .digest('base64');
     const expectedQuery = `clientSign=${encodeURIComponent(expectedSign)}`;
     expect(observedStsUrl).toContain(expectedQuery);
+  });
+});
+
+describe('official quota adapters — OpenCode Go', () => {
+  // Helpers reused below — declared inline so the diff against the
+  // Xiaomi block above is obvious and we don't fight scoping.
+  type RawResponse = {
+    status: number;
+    headers?: Readonly<Record<string, readonly string[]>>;
+    body: string;
+  };
+
+  function makeRequestRaw(
+    script: ReadonlyArray<{ urlContains: string; respond: () => RawResponse }>,
+  ): {
+    requestRaw: (input: RequestJsonInput) => Promise<{
+      status: number;
+      headers: Readonly<Record<string, readonly string[]>>;
+      body: string;
+    }>;
+    calls: RequestJsonInput[];
+  } {
+    const calls: RequestJsonInput[] = [];
+    const remaining = script.map((entry) => ({ ...entry, used: false }));
+    return {
+      calls,
+      requestRaw: async (input) => {
+        calls.push(input);
+        const idx = remaining.findIndex(
+          (entry) => !entry.used && input.url.includes(entry.urlContains),
+        );
+        if (idx === -1) {
+          throw new Error(`unexpected request: ${input.url}`);
+        }
+        remaining[idx]!.used = true;
+        const r = remaining[idx]!.respond();
+        return {
+          status: r.status,
+          headers: r.headers ?? {},
+          body: r.body,
+        };
+      },
+    };
+  }
+
+  // Synthetic credentials — never touch real account values.
+  const FAKE_AUTH_COOKIE = 'Fe26.2**fake-iron-cookie-blob';
+  const FAKE_WORKSPACE_URL =
+    'https://opencode.ai/workspace/wrk_FAKEFAKEFAKEFAKEFAKEFAKE/go';
+
+  // Snippet of real Solid-rendered HTML pulled from the Go dashboard
+  // (real values redacted to a stable mock so tests do not drift
+  // when the user's actual account data changes).
+  const SUCCESS_HTML = `
+<!DOCTYPE html>
+<html><body>
+<div data-slot="usage">
+  <div data-slot="usage-item">
+    <span data-slot="usage-label">滚动用量</span>
+    <span data-slot="usage-value"><!--$-->0<!--/-->%</span>
+    <div data-slot="progress"><div data-slot="progress-bar" style="width:0%"></div></div>
+    <span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->5 小时 0 分钟<!--/--></span>
+  </div><!--/-->
+  <div data-slot="usage-item">
+    <span data-slot="usage-label">每周用量</span>
+    <span data-slot="usage-value"><!--$-->6<!--/-->%</span>
+    <div data-slot="progress"><div data-slot="progress-bar" style="width:6%"></div></div>
+    <span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->4 天 18 小时<!--/--></span>
+  </div><!--/-->
+  <div data-slot="usage-item">
+    <span data-slot="usage-label">每月用量</span>
+    <span data-slot="usage-value"><!--$-->62<!--/-->%</span>
+    <div data-slot="progress"><div data-slot="progress-bar" style="width:62%"></div></div>
+    <span data-slot="reset-time"><!--$-->重置于<!--/--> <!--$-->11 天 21 小时<!--/--></span>
+  </div><!--/-->
+</div>
+</body></html>
+`;
+
+  it('parses SSR-rendered usage rows into three QuotaWindows', async () => {
+    const { requestRaw, calls } = makeRequestRaw([
+      {
+        urlContains: '/workspace/',
+        respond: () => ({ status: 200, body: SUCCESS_HTML }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+
+    const snapshot = await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({
+        opencodeAuthCookie: FAKE_AUTH_COOKIE,
+        opencodeWorkspaceUrl: FAKE_WORKSPACE_URL,
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.status).toBe('ok');
+    expect(snapshot.kind).toBe('quota');
+    expect(snapshot.windows).toHaveLength(3);
+    // Three rows: 5h, 7d, 30d. percentLeft is `100 - usage%`.
+    expect(snapshot.windows[0]).toMatchObject({
+      name: 'opencode-5h',
+      percentLeft: 100,
+      windowSeconds: 5 * 60 * 60,
+    });
+    expect(snapshot.windows[1]).toMatchObject({
+      name: 'opencode-7d',
+      percentLeft: 94,
+      windowSeconds: 7 * 24 * 60 * 60,
+    });
+    expect(snapshot.windows[2]).toMatchObject({
+      name: 'opencode-30d',
+      percentLeft: 38,
+      windowSeconds: 30 * 24 * 60 * 60,
+    });
+    // resetAt is `now + duration`. The 30d row says "11 天 21 小时".
+    const expected30d =
+      NOW + 11 * 86_400_000 + 21 * 3_600_000;
+    expect(snapshot.windows[2]!.resetAt).toBe(expected30d);
+
+    // Cookie is forwarded verbatim.
+    expect(calls[0]!.headers?.Cookie).toBe(`auth=${FAKE_AUTH_COOKIE}`);
+    expect(calls[0]!.url).toBe(FAKE_WORKSPACE_URL);
+  });
+
+  it('reports auth_expired on a 3xx redirect (login page)', async () => {
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/workspace/',
+        respond: () => ({
+          status: 302,
+          headers: { location: ['/auth/login'] },
+          body: '',
+        }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({
+        opencodeAuthCookie: FAKE_AUTH_COOKIE,
+        opencodeWorkspaceUrl: FAKE_WORKSPACE_URL,
+      }),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('auth_expired');
+  });
+
+  it('returns auth_missing when secret payload lacks both fields', async () => {
+    const { requestRaw } = makeRequestRaw([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({}),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('auth_missing');
+  });
+
+  it('reports upstream_changed when the data-slot block is missing', async () => {
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/workspace/',
+        respond: () => ({
+          status: 200,
+          body: '<html><body><div>nothing here</div></body></html>',
+        }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({
+        opencodeAuthCookie: FAKE_AUTH_COOKIE,
+        opencodeWorkspaceUrl: FAKE_WORKSPACE_URL,
+      }),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('upstream_changed');
+  });
+
+  it('accepts a path-only workspace URL and prepends the canonical host', async () => {
+    const { requestRaw, calls } = makeRequestRaw([
+      {
+        urlContains: '/workspace/',
+        respond: () => ({ status: 200, body: SUCCESS_HTML }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+    await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({
+        opencodeAuthCookie: FAKE_AUTH_COOKIE,
+        opencodeWorkspaceUrl: '/workspace/wrk_FAKE/go',
+      }),
+      now: NOW,
+    });
+    expect(calls[0]!.url).toBe(
+      'https://opencode.ai/workspace/wrk_FAKE/go',
+    );
   });
 });

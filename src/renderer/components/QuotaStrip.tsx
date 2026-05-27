@@ -1,7 +1,13 @@
 // QuotaStrip — compact quota progress bars for the widget shell.
 //
 // Groups windows by provider, provider name shown once as a header.
-// Within each provider, sorted by window duration (5h before weekly).
+// Order is intentionally fixed (no auto-sort by urgency):
+//   - Groups: codex → claude-code → gemini-cli → antigravity →
+//             deepseek → xiaomi → gemini-api → openai-compatible.
+//   - Within a group: 5h → 日 → 周 → 月 (Codex/Claude/Anthropic),
+//                     Claude → Gemini (Antigravity),
+//                     Gemini Pro → Gemini Flash (Gemini CLI).
+// See `quotaWindowPriority` in lib/quota-display.ts for the per-window order.
 
 import { useEffect, useState } from 'react';
 import type {
@@ -34,14 +40,6 @@ export interface ProviderGroup {
    * adapter exposes it (currently only Xiaomi MiMo). Forwarded
    * verbatim to the credits-row sparkline.
    */
-  dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
-}
-
-interface CompactQuotaEntry {
-  key: string;
-  provider: string;
-  accountLabel: string | null;
-  window: QuotaWindow;
   dailyUsage?: ReadonlyArray<DailyUsagePoint> | null;
 }
 
@@ -226,13 +224,23 @@ function isLocalBrowserPreview(): boolean {
   );
 }
 
+// Fixed display order for the quota strip. Lower number = higher up.
+// Order is intentionally hard-coded — the strip does not auto-sort by
+// urgency. Codex sits at the top so the 5h / weekly windows stay in
+// the user's primary line of sight; cost-style adapters (DeepSeek,
+// Xiaomi MiMo) sit at the bottom; health-only adapters last.
 function providerPriority(provider: string): number {
   switch (provider) {
     case 'codex': return 0;
     case 'claude-code': return 1;
     case 'gemini-cli': return 2;
     case 'antigravity': return 3;
-    default: return 10;
+    case 'opencode': return 4;
+    case 'deepseek': return 5;
+    case 'xiaomi': return 6;
+    case 'gemini-api': return 7;
+    case 'openai-compatible': return 8;
+    default: return 100;
   }
 }
 
@@ -245,74 +253,72 @@ function snapshotKey(snapshot: QuotaSnapshot, index: number): string {
   );
 }
 
-function entryPriority(entry: CompactQuotaEntry): number {
-  if (entry.window.percentLeft === null) return 101;
-  return entry.window.percentLeft;
-}
-
 export function buildCompactGroups(snapshots: QuotaSnapshot[]): ProviderGroup[] {
-  const entries = snapshots.flatMap((snapshot, snapshotIndex): CompactQuotaEntry[] => {
-    const key = snapshotKey(snapshot, snapshotIndex);
-    // Pre-merge raw windows that share the same display label (e.g. Opus
-    // + Sonnet → "Claude 4.6"). Without this the strip would render two
-    // identical "Claude 4.6" rows when the cached snapshot still holds
-    // multiple raw model buckets.
-    const grouped = groupQuotaWindowsByDisplay(snapshot.windows, snapshot.provider);
-    return grouped.map(({ window }): CompactQuotaEntry => ({
-      key,
-      provider: snapshot.provider,
-      accountLabel: snapshot.accountLabel,
-      window,
-      ...(snapshot.dailyUsage !== undefined && snapshot.dailyUsage !== null
-        ? { dailyUsage: snapshot.dailyUsage }
-        : {}),
-    }));
-  });
-
-  const orderedEntries = [...entries].sort((a, b) => {
-    const urgency = entryPriority(a) - entryPriority(b);
-    if (urgency !== 0) return urgency;
-
-    const providerOrder = providerPriority(a.provider) - providerPriority(b.provider);
-    if (providerOrder !== 0) return providerOrder;
-
-    const windowOrder =
-      quotaWindowPriority(a.window.name, a.provider) -
-      quotaWindowPriority(b.window.name, b.provider);
-    if (windowOrder !== 0) return windowOrder;
-
-    return a.window.name.localeCompare(b.window.name, 'zh-CN');
-  });
-
   const grouped = new Map<string, ProviderGroup>();
+  const insertionIndex = new Map<string, number>();
 
-  for (const entry of orderedEntries) {
-    const existing = grouped.get(entry.key);
+  snapshots.forEach((snapshot, snapshotIndex) => {
+    // Pre-merge raw windows that share the same display label (e.g.
+    // Opus + Sonnet → "Claude"). Without this the strip would render
+    // two identical "Claude" rows when the cached snapshot still
+    // holds multiple raw model buckets.
+    const groupedWindows = groupQuotaWindowsByDisplay(
+      snapshot.windows,
+      snapshot.provider,
+    );
+    if (groupedWindows.length === 0) return;
+
+    const key = snapshotKey(snapshot, snapshotIndex);
+    const newWindows = groupedWindows.map((g) => g.window);
+
+    const existing = grouped.get(key);
     if (existing) {
-      existing.windows.push(entry.window);
+      existing.windows.push(...newWindows);
       // Keep the first non-null dailyUsage we see — every entry from
       // the same snapshot carries the same array reference, so the
       // assignment is idempotent in practice.
       if (
         existing.dailyUsage === undefined &&
-        entry.dailyUsage !== undefined
+        snapshot.dailyUsage !== undefined &&
+        snapshot.dailyUsage !== null
       ) {
-        existing.dailyUsage = entry.dailyUsage;
+        existing.dailyUsage = snapshot.dailyUsage;
       }
     } else {
-      grouped.set(entry.key, {
-        key: entry.key,
-        provider: entry.provider,
-        accountLabel: entry.accountLabel,
-        windows: [entry.window],
-        ...(entry.dailyUsage !== undefined
-          ? { dailyUsage: entry.dailyUsage }
+      insertionIndex.set(key, snapshotIndex);
+      grouped.set(key, {
+        key,
+        provider: snapshot.provider,
+        accountLabel: snapshot.accountLabel,
+        windows: newWindows,
+        ...(snapshot.dailyUsage !== undefined && snapshot.dailyUsage !== null
+          ? { dailyUsage: snapshot.dailyUsage }
           : {}),
       });
     }
+  });
+
+  // Sort each group's windows by the fixed per-provider window priority.
+  // Tie-breaker is the raw name so the order is deterministic across
+  // re-renders even when two windows share a display label after grouping.
+  for (const group of grouped.values()) {
+    group.windows.sort((a, b) => {
+      const wp =
+        quotaWindowPriority(a.name, group.provider) -
+        quotaWindowPriority(b.name, group.provider);
+      if (wp !== 0) return wp;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
   }
 
-  return [...grouped.values()];
+  // Sort groups by the fixed provider priority. Within the same
+  // provider class (e.g. two `openai-compatible` accounts) fall back
+  // to the original snapshot order so the strip stays stable.
+  return [...grouped.values()].sort((a, b) => {
+    const pp = providerPriority(a.provider) - providerPriority(b.provider);
+    if (pp !== 0) return pp;
+    return (insertionIndex.get(a.key) ?? 0) - (insertionIndex.get(b.key) ?? 0);
+  });
 }
 
 export function useQuotaStatus(): QuotaStatus | null {

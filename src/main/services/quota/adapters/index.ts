@@ -18,6 +18,7 @@ import { antigravityAdapter } from './antigravity.adapter';
 import { geminiApiAdapter } from './gemini-api.adapter';
 import { deepseekAdapter } from './deepseek.adapter';
 import { xiaomiAdapter } from './xiaomi.adapter';
+import { opencodeAdapter } from './opencode.adapter';
 import { openaiCompatibleAdapter } from './openai-compatible.adapter';
 
 export type { ProviderAdapter, ProviderAdapterRefreshInput } from './types';
@@ -30,5 +31,6 @@ export const adapterRegistry: Record<ProviderId, ProviderAdapter> = {
   'gemini-api': geminiApiAdapter,
   deepseek: deepseekAdapter,
   xiaomi: xiaomiAdapter,
+  opencode: opencodeAdapter,
   'openai-compatible': openaiCompatibleAdapter,
 };

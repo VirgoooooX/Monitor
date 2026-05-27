@@ -297,6 +297,11 @@ const MAX_FILE_SIZE_BYTES = 1024 * 1024;
  *                                non-empty (the cookie pair feeds
  *                                the on-demand serviceToken refresh
  *                                in `xiaomi.adapter.ts`).
+ *   - `opencode`               : `opencodeAuthCookie` AND
+ *                                `opencodeWorkspaceUrl` non-empty
+ *                                (the cookie + URL feed the
+ *                                SSR-HTML scraper in
+ *                                `opencode.adapter.ts`).
  */
 function validateLightweight(
   provider: ProviderId,
@@ -350,6 +355,30 @@ function validateLightweight(
         };
       }
       return { ok: true, code: 'ok', message: '' };
+
+    case 'opencode': {
+      const hasAuth =
+        typeof payload.opencodeAuthCookie === 'string' &&
+        payload.opencodeAuthCookie.length > 0;
+      const hasWorkspace =
+        typeof payload.opencodeWorkspaceUrl === 'string' &&
+        payload.opencodeWorkspaceUrl.length > 0;
+      if (!hasAuth && !hasWorkspace && !hasApiKey) {
+        return {
+          ok: false,
+          code: 'auth_missing',
+          message: bound('opencode credentials missing from imported payload'),
+        };
+      }
+      if ((hasAuth && !hasWorkspace) || (!hasAuth && hasWorkspace)) {
+        return {
+          ok: false,
+          code: 'auth_missing',
+          message: bound('opencode auth cookie and workspace url must both be present'),
+        };
+      }
+      return { ok: true, code: 'ok', message: '' };
+    }
 
     case 'xiaomi': {
       const hasPassToken =
@@ -599,11 +628,15 @@ export function createProviderAuthService(
   // service is robust on its own (the schema is the first line of
   // defence; the duplication keeps unit tests honest):
   //
-  //   - Non-Xiaomi providers : `apiKey` non-empty after `trim()`.
+  //   - Non-Xiaomi/Opencode providers : `apiKey` non-empty after `trim()`.
   //   - `provider === 'openai-compatible'` requires `baseUrl`.
   //   - `provider === 'xiaomi'` requires `xiaomiPassToken` AND
   //     `xiaomiUserId` (cookie-pair); `apiKey` is rejected because
   //     the platform balance API does not honour it.
+  //   - `provider === 'opencode'` requires `opencodeAuthCookie` AND
+  //     `opencodeWorkspaceUrl` (Iron-encrypted session cookie +
+  //     workspace dashboard URL); `apiKey` is rejected because
+  //     OpenCode Go has no public REST surface for usage.
   //   - For any provider, `baseUrl` (when present) is forwarded
   //     verbatim — additional URL parsing is the schema's job.
   //
@@ -638,6 +671,25 @@ export function createProviderAuthService(
         xiaomiPassToken: passToken,
         xiaomiUserId,
       };
+    } else if (input.provider === 'opencode') {
+      const authCookie =
+        typeof input.opencodeAuthCookie === 'string'
+          ? input.opencodeAuthCookie.trim()
+          : '';
+      const workspaceUrl =
+        typeof input.opencodeWorkspaceUrl === 'string'
+          ? input.opencodeWorkspaceUrl.trim()
+          : '';
+      if (authCookie.length === 0 || workspaceUrl.length === 0) {
+        throw new ProviderAuthError(
+          'validation',
+          bound('opencode requires both auth cookie and workspace url'),
+        );
+      }
+      payload = {
+        opencodeAuthCookie: authCookie,
+        opencodeWorkspaceUrl: workspaceUrl,
+      };
     } else {
       const apiKey =
         typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
@@ -653,7 +705,21 @@ export function createProviderAuthService(
           bound('base url is required for openai-compatible'),
         );
       }
-      payload = baseUrl !== undefined ? { apiKey, baseUrl } : { apiKey };
+      // DeepSeek may carry an optional `userToken` from the console
+      // localStorage. When present the adapter unlocks multi-wallet
+      // detail and the daily-usage sparkline; when absent the
+      // adapter falls back to the public `/user/balance` endpoint.
+      const deepseekUserToken =
+        input.provider === 'deepseek' &&
+        typeof input.deepseekUserToken === 'string' &&
+        input.deepseekUserToken.trim().length > 0
+          ? input.deepseekUserToken.trim()
+          : undefined;
+      payload = {
+        apiKey,
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
+        ...(deepseekUserToken !== undefined ? { deepseekUserToken } : {}),
+      };
     }
 
     const id = uuid();
@@ -775,6 +841,8 @@ export function createProviderAuthService(
         return 'DeepSeek API key';
       case 'xiaomi':
         return '小米 Mimo';
+      case 'opencode':
+        return 'OpenCode Go';
       case 'openai-compatible':
         return 'OpenAI 兼容 API key';
     }

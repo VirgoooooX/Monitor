@@ -394,6 +394,7 @@ export type ProviderId =
   | 'gemini-api'
   | 'deepseek'
   | 'xiaomi'
+  | 'opencode'
   | 'openai-compatible';
 
 /**
@@ -428,6 +429,11 @@ export type QuotaCapability =
  * `/api/v1/balance` returning recharge credits in CNY/USD; the
  * adapter trades the long-lived `passToken` for a short-lived
  * `serviceToken` on demand.
+ *
+ * OpenCode Go resolves to `official` because the platform's Go
+ * dashboard SSR-renders rolling/weekly/monthly usage percentages
+ * directly into the HTML; the adapter scrapes those values via
+ * the user-supplied `auth` cookie.
  */
 export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = {
   'claude-code': 'official',
@@ -437,6 +443,7 @@ export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = 
   'gemini-api': 'health_only',
   deepseek: 'official',
   xiaomi: 'official',
+  opencode: 'official',
   'openai-compatible': 'health_only',
 };
 
@@ -557,6 +564,7 @@ export type ManualApiKeyProvider =
   | 'gemini-api'
   | 'deepseek'
   | 'xiaomi'
+  | 'opencode'
   | 'openai-compatible';
 
 /**
@@ -594,6 +602,25 @@ export interface CreateProviderAuthApiKeyInput {
    * `account.xiaomi.com`. Required when `provider === 'xiaomi'`.
    */
   xiaomiUserId?: string;
+  /**
+   * DeepSeek only — `userToken` value from
+   * `platform.deepseek.com` localStorage. Optional even for
+   * DeepSeek (the API key alone covers the basic balance read);
+   * when present the adapter unlocks multi-wallet detail and the
+   * daily-usage sparkline.
+   */
+  deepseekUserToken?: string;
+  /**
+   * OpenCode Go only — opaque `auth` cookie value from
+   * `https://opencode.ai`. Required when `provider === 'opencode'`.
+   */
+  opencodeAuthCookie?: string;
+  /**
+   * OpenCode Go only — workspace dashboard URL or path
+   * (`https://opencode.ai/workspace/wrk_.../go` or just
+   * `/workspace/wrk_.../go`). Required when `provider === 'opencode'`.
+   */
+  opencodeWorkspaceUrl?: string;
 }
 
 /**
@@ -641,6 +668,31 @@ export interface ProviderAuthSecretPayload {
    * `account.xiaomi.com`. Stored alongside `xiaomiPassToken`.
    */
   xiaomiUserId?: string;
+  /**
+   * DeepSeek only — long-lived `userToken` lifted from the console's
+   * `localStorage`. When present, the adapter prefers the console
+   * endpoints (`/api/v0/users/get_user_summary`,
+   * `/api/v0/usage/cost`) over `api.deepseek.com/user/balance`,
+   * which gives us multi-wallet balance breakdown and per-day
+   * usage history. Falls back to `apiKey` when absent. NEVER logged.
+   */
+  deepseekUserToken?: string;
+  /**
+   * OpenCode Go (anomaly.co) only — opaque `auth` cookie value
+   * (Iron-format session, prefix `Fe26.2`) lifted from
+   * `https://opencode.ai`. The adapter cannot decrypt it; it
+   * forwards verbatim as `Cookie: auth=<...>` to the workspace
+   * dashboard URL and parses the SSR-rendered HTML for usage
+   * percentages. NEVER logged.
+   */
+  opencodeAuthCookie?: string;
+  /**
+   * OpenCode Go only — workspace dashboard path (e.g.
+   * `/workspace/wrk_01KR2KPDGZ7HTGZCPQQWC82MS4/go`). Required
+   * because each user has a workspace-specific URL; we accept
+   * either the full HTTPS URL or just the path and normalise.
+   */
+  opencodeWorkspaceUrl?: string;
   /** Verbatim `metadata.*` block from the CPA file (minus secret keys). */
   rawMetadata?: Record<string, unknown>;
   /** Verbatim `attributes.*` block from the CPA file (minus secret keys). */

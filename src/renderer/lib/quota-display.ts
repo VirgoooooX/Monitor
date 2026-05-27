@@ -79,6 +79,10 @@ export function quotaWindowPriority(name: string, provider = ''): number {
     case '日限额': return 1;
     case '周限额': return 2;
     case '月限额': return 3;
+    // OpenCode Go: 滚动 → 每周 → 每月 (top to bottom).
+    case '滚动用量': return 0;
+    case '每周用量': return 2;
+    case '每月用量': return 3;
   }
 
   const order = provider === 'antigravity' ? ANTIGRAVITY_ORDER : GEMINI_CLI_ORDER;
@@ -92,6 +96,17 @@ function normaliseProviderWindowName(name: string, provider: string): string | n
   const base = trimmed.split(':')[0]?.trim() ?? trimmed;
   const upper = base.toUpperCase();
   const lower = base.toLowerCase();
+
+  // OpenCode Go produces fixed window names so the display labels
+  // match the platform dashboard's vocabulary verbatim.
+  if (provider === 'opencode') {
+    switch (trimmed) {
+      case 'opencode-5h': return '滚动用量';
+      case 'opencode-7d': return '每周用量';
+      case 'opencode-30d': return '每月用量';
+      case 'opencode-unknown': return null;
+    }
+  }
 
   if (/^MODEL_PLACEHOLDER_M\d+$/.test(upper)) return null;
   if (/^MODEL_CHAT_\d+$/.test(upper)) return normaliseKnownChatModel(upper, provider);

@@ -68,6 +68,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   'gemini-api': 'Gemini API',
   deepseek: 'DeepSeek',
   xiaomi: '小米 Mimo',
+  opencode: 'OpenCode Go',
   'openai-compatible': 'OpenAI 兼容',
 };
 
@@ -203,6 +204,8 @@ function providerIconKey(provider: ProviderId): string {
       // registry returns null and `ProviderIcon` paints the generic
       // fallback dot. Kept lowercase for consistency.
       return 'xiaomi';
+    case 'opencode':
+      return 'opencode';
     case 'openai-compatible':
       return 'openai';
   }
