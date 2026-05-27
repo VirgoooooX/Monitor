@@ -114,7 +114,7 @@ function installDesktopBridge(
     verifiedAt: Date.now(),
   });
 
-  const switchNode = vi.fn<[SwitchNodeInput], Promise<SwitchNodeResult>>(
+  const switchNode = vi.fn<(input: SwitchNodeInput) => Promise<SwitchNodeResult>>(
     switchNodeImpl ?? defaultImpl,
   );
 
@@ -318,7 +318,7 @@ describe('QuickNodeCard — Property 3 (UI half): sibling disablement during in-
 
     // Resolve the pending IPC so the test does not leak a hanging
     // promise into vitest's exit handlers.
-    resolveSwitch?.({
+    (resolveSwitch as any)?.({
       ok: true,
       newCurrent: 'NodeA',
       verifiedAt: Date.now(),

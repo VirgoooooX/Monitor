@@ -15,6 +15,7 @@ import { claudeCodeAdapter } from './claude-code.adapter';
 import { codexAdapter } from './codex.adapter';
 import { geminiCliAdapter } from './gemini-cli.adapter';
 import { antigravityAdapter } from './antigravity.adapter';
+import { kiroIdeAdapter } from './kiro-ide.adapter';
 import { geminiApiAdapter } from './gemini-api.adapter';
 import { deepseekAdapter } from './deepseek.adapter';
 import { xiaomiAdapter } from './xiaomi.adapter';
@@ -28,6 +29,7 @@ export const adapterRegistry: Record<ProviderId, ProviderAdapter> = {
   codex: codexAdapter,
   'gemini-cli': geminiCliAdapter,
   antigravity: antigravityAdapter,
+  'kiro-ide': kiroIdeAdapter,
   'gemini-api': geminiApiAdapter,
   deepseek: deepseekAdapter,
   xiaomi: xiaomiAdapter,

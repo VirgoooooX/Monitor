@@ -804,6 +804,8 @@ export function aggregateToProviderSummary(
     cacheTokens: aggregate.cacheTokens,
     costUsd: aggregate.costUsd,
     eventCount: aggregate.eventCount,
+    source: 'events',
+    hasTokenBreakdown: (aggregate.inputTokens + aggregate.outputTokens + aggregate.cacheTokens) > 0,
   };
   if (reason !== undefined) {
     summary.reason = reason;

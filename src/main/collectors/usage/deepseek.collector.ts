@@ -16,13 +16,13 @@
 // Requires: `deepseek_api_key` in secrets store.
 
 import type { CapabilityResult } from '../../types';
-import type { UsageCollector, UsageCollectorContext } from './types';
+import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-export const DEEPSEEK_COLLECTOR_ID = 'deepseek';
+export const DEEPSEEK_COLLECTOR_ID = 'usage.deepseek';
 const PROVIDER = 'deepseek';
 const SOURCE = 'deepseek.api';
 const BALANCE_URL = 'https://api.deepseek.com/user/balance';
@@ -127,6 +127,7 @@ export function createDeepSeekCollector(deps: DeepSeekCollectorDeps): UsageColle
 
   return {
     id: DEEPSEEK_COLLECTOR_ID,
+    provider: PROVIDER,
 
     async capabilityCheck(): Promise<CapabilityResult> {
       const apiKey = getSecret('deepseek_api_key');

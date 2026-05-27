@@ -45,6 +45,7 @@ const ALLOWED_PAYLOAD_KEYS: ReadonlySet<keyof ProviderAuthSecretPayload> =
     'baseUrl',
     'rawMetadata',
     'rawAttributes',
+    'kiroProfileArn',
   ]);
 
 /**
@@ -494,5 +495,37 @@ describe('parseAuthFile — Claude Code native format (~/.claude/.credentials.js
     expect(result.payload.expiresAt).toBe(1_900_000_000_000);
     expect(result.payload.apiKey).toBeUndefined();
     assertPayloadShape(result.payload);
+  });
+});
+
+describe('parseAuthFile — Kiro IDE native format (~/.aws/sso/cache/kiro-auth-token.json)', () => {
+  it('extracts access + refresh tokens, ISO expiry, and the profile ARN', () => {
+    const fixture = {
+      accessToken: 'aoaAAAAAGoXAmopkIEPKNfYa4arW8fRkuFpX2tyYCYwqmGlbd0VtB82KAKwrpOxr',
+      refreshToken: 'aorAAAAAGqNm1o1-HaFtvrPwGCGdt6PC6gBA1hZWGZdUqjfd2GbfNKEAE0QhZ',
+      profileArn: 'arn:aws:codewhisperer:us-east-1:123456789012:profile/EHGA3GRVQMUK',
+      expiresAt: '2026-05-27T14:40:43.287Z',
+      authMethod: 'social',
+      provider: 'Google',
+    };
+    const result = parse('kiro-ide', fixture);
+
+    expect(result.payload.accessToken).toBe(fixture.accessToken);
+    expect(result.payload.refreshToken).toBe(fixture.refreshToken);
+    expect(result.payload.kiroProfileArn).toBe(fixture.profileArn);
+    expect(result.payload.expiresAt).toBe(Date.parse(fixture.expiresAt));
+    expect(result.payload.apiKey).toBeUndefined();
+    assertPayloadShape(result.payload);
+  });
+
+  it('only writes kiroProfileArn for the kiro-ide provider', () => {
+    // `profileArn` should NOT bleed into a Codex import even if the
+    // user accidentally points the picker at the Kiro auth file.
+    const fixture = {
+      accessToken: 'aoaXXX',
+      profileArn: 'arn:aws:codewhisperer:us-east-1:123456789012:profile/EHGA3GRVQMUK',
+    };
+    const result = parse('codex', fixture);
+    expect(result.payload.kiroProfileArn).toBeUndefined();
   });
 });

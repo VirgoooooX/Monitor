@@ -25,6 +25,7 @@ import type {
   UsageRange,
   UsageSummary,
   UsageSummaryInput,
+  QuotaSnapshot,
 } from '../types';
 import type {
   ProviderAuthRepository,
@@ -119,8 +120,16 @@ export interface UsageServiceDeps {
    * always provides the live repository.
    */
   providerAuth?: ProviderAuthRepository;
+  /** Getter for current quota snapshots (latest known). */
+  quotaSnapshots?: () => QuotaSnapshot[];
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
   now?: () => number;
+}
+
+function parseLocalYMD(ymd: string): number {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (y === undefined || m === undefined || d === undefined) return 0;
+  return new Date(y, m - 1, d).getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -150,16 +159,12 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
       const providerAuthRows = deps.providerAuth?.list() ?? [];
       const knownProviders = deriveKnownProviders(providerAuthRows);
 
+      // Get quota snapshots
+      const snapshots = deps.quotaSnapshots?.() ?? [];
+
       // 4. Build per-provider summaries for all known providers.
       const perProvider: UsageProviderSummary[] = knownProviders.map((provider) => {
-        const aggregate = aggregateMap.get(provider) ?? {
-          provider,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheTokens: 0,
-          costUsd: null,
-          eventCount: 0,
-        };
+        const aggregate = aggregateMap.get(provider);
 
         const capResult: CapabilityResult | undefined = capabilityMap[provider];
         const status: CollectorStatus = capResult?.status ?? 'unavailable';
@@ -168,7 +173,77 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
             ? capResult.reason
             : undefined;
 
-        return aggregateToProviderSummary(aggregate, status, reason);
+        if (aggregate && aggregate.eventCount > 0) {
+          const hasTokens = (aggregate.inputTokens + aggregate.outputTokens + aggregate.cacheTokens) > 0;
+          const summary: UsageProviderSummary = {
+            provider,
+            status,
+            inputTokens: aggregate.inputTokens,
+            outputTokens: aggregate.outputTokens,
+            cacheTokens: aggregate.cacheTokens,
+            costUsd: aggregate.costUsd,
+            eventCount: aggregate.eventCount,
+            source: 'events',
+            hasTokenBreakdown: hasTokens,
+          };
+          if (reason !== undefined) {
+            summary.reason = reason;
+          }
+          return summary;
+        }
+
+        // Try falling back to quotaSnapshots' dailyUsage
+        const providerSnapshots = snapshots.filter((s) => s.provider === provider);
+        let totalTokens = 0;
+        let totalCost = 0;
+        let hasDailyUsage = false;
+
+        for (const snap of providerSnapshots) {
+          if (snap.dailyUsage && Array.isArray(snap.dailyUsage)) {
+            for (const point of snap.dailyUsage) {
+              const ptTs = parseLocalYMD(point.date);
+              if (ptTs >= bounds.fromTs && ptTs <= bounds.toTs) {
+                hasDailyUsage = true;
+                totalTokens += point.totalTokens ?? 0;
+                totalCost += point.cost ? parseFloat(point.cost) : 0;
+              }
+            }
+          }
+        }
+
+        if (hasDailyUsage) {
+          const summary: UsageProviderSummary = {
+            provider,
+            status,
+            inputTokens: totalTokens,
+            outputTokens: 0,
+            cacheTokens: 0,
+            costUsd: totalCost > 0 ? totalCost : null,
+            eventCount: 0,
+            source: 'quotaDailyUsage',
+            hasTokenBreakdown: false,
+          };
+          if (reason !== undefined) {
+            summary.reason = reason;
+          }
+          return summary;
+        }
+
+        const summary: UsageProviderSummary = {
+          provider,
+          status,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheTokens: 0,
+          costUsd: null,
+          eventCount: 0,
+          source: 'none',
+          hasTokenBreakdown: false,
+        };
+        if (reason !== undefined) {
+          summary.reason = reason;
+        }
+        return summary;
       });
 
       return {

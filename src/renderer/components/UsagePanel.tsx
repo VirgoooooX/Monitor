@@ -17,7 +17,12 @@ import {
   groupQuotaWindowsByDisplay,
   quotaWindowDisplayName,
   quotaWindowPriority,
+  parseCreditsWindow,
+  currencySymbol,
 } from '../lib/quota-display';
+import { UsageSparkline } from './QuotaStrip';
+import { ProviderIcon } from './ProviderIcon';
+import { PROVIDER_LABELS, providerIconKey, maskedEmailLabel } from './ProviderAuthList';
 import type {
   CollectorStatus,
   QuotaSnapshot,
@@ -26,6 +31,8 @@ import type {
   UsageProviderSummary,
   UsageRange,
   UsageSummary,
+  ProviderId,
+  ProviderAuthMetadata,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -87,10 +94,11 @@ function providerDisplayName(provider: string): string {
     case 'claude-code': return 'Claude Code';
     case 'gemini-cli': return 'Gemini CLI';
     case 'antigravity': return 'Antigravity';
+    case 'kiro-ide': return 'Kiro IDE';
     case 'gemini-api': return 'Gemini API';
-    case 'deepseek-api': return 'DeepSeek';
+    case 'deepseek': return 'DeepSeek';
     case 'openai-compatible': return 'OpenAI Compat';
-    case 'xiaomi-cloud': return 'Xiaomi';
+    case 'xiaomi': return 'Xiaomi';
     default: return provider.charAt(0).toUpperCase() + provider.slice(1);
   }
 }
@@ -108,13 +116,51 @@ function sourceDisplayName(source: QuotaSnapshot['source']): string {
   }
 }
 
+function cleanAccountLabel(label: string, provider: string): string {
+  let cleaned = label.trim();
+
+  // 1. Strip common suffixes first (like .json)
+  if (cleaned.endsWith('.json')) {
+    cleaned = cleaned.slice(0, -5);
+  }
+
+  // 2. Strip common prefixes based on provider
+  if (provider === 'gemini-cli') {
+    cleaned = cleaned.replace(/^Gemini CLI\s*\(([^)]+)\)$/i, '$1');
+  } else if (provider === 'antigravity') {
+    cleaned = cleaned.replace(/^Antigravity\s*\(([^)]+)\)$/i, '$1');
+  }
+
+  // Generic prefix strip
+  cleaned = cleaned.replace(/^(codex_oauth_|claude_code_oauth_|gemini_cli_|antigravity_|deepseek_)/, '');
+
+  // 3. Try to extract email from the remaining part
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+  const match = emailRegex.exec(cleaned);
+  if (match) {
+    return match[0];
+  }
+
+  // 4. If it is a UUID (like 37957071-dbb0-48c4-a120-2f50829dc2c9)
+  const uuidRegex = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+  const uuidMatch = uuidRegex.exec(cleaned);
+  if (uuidMatch) {
+    const uuid = uuidMatch[0];
+    const shortened = `${uuid.slice(0, 8)}...${uuid.slice(-5)}`;
+    return cleaned.replace(uuid, shortened);
+  }
+
+  return cleaned;
+}
+
 function snapshotTitle(snapshot: QuotaSnapshot): string {
-  return (
+  const rawTitle = (
     snapshot.accountLabel?.trim() ||
     snapshot.projectId?.trim() ||
     snapshot.accountId?.trim() ||
     providerDisplayName(snapshot.provider)
   );
+  return cleanAccountLabel(rawTitle, snapshot.provider);
 }
 
 function compactIdentifier(value: string | null): string | null {
@@ -140,10 +186,10 @@ function snapshotStatusLabel(snapshot: QuotaSnapshot): string {
   if (snapshot.lastErrorCode === 'auth_expired') return '凭据过期';
   if (snapshot.lastErrorCode === 'upstream_unauthorized') return '上游拒绝';
   if (snapshot.lastErrorCode === 'rate_limited') return '请求过快';
-  if (snapshot.status === 'stale') return '上次结果';
+  if (snapshot.status === 'stale') return '使用上次结果';
   if (snapshot.status === 'unavailable') return '不可用';
-  if (snapshot.status === 'unsupported') return '暂未实现';
-  return '官方额度';
+  if (snapshot.status === 'unsupported') return '暂不支持';
+  return '正常';
 }
 
 function snapshotStatusTone(snapshot: QuotaSnapshot): 'ok' | 'warn' | 'bad' | 'neutral' {
@@ -163,6 +209,10 @@ function providerPriority(provider: string): number {
     case 'claude-code': return 1;
     case 'gemini-cli': return 2;
     case 'antigravity': return 3;
+    case 'kiro-ide': return 4;
+    case 'opencode': return 5;
+    case 'deepseek': return 6;
+    case 'xiaomi': return 7;
     default: return 10;
   }
 }
@@ -175,6 +225,7 @@ export function UsagePanel(): JSX.Element {
   const [range, setRange] = useState<UsageRange>('today');
   const [usageData, setUsageData] = useState<UsageSummary | null>(null);
   const [quotaData, setQuotaData] = useState<QuotaStatus | null>(null);
+  const [providerAuths, setProviderAuths] = useState<ProviderAuthMetadata[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -209,30 +260,41 @@ export function UsagePanel(): JSX.Element {
     return () => { cancelled = true; };
   }, [range]);
 
-  // Fetch quota data
+  // Fetch quota data & provider auths
   useEffect(() => {
     const desktop = window.desktop;
-    if (!desktop || !('getQuotaStatus' in desktop)) return;
+    if (!desktop) return;
 
     let cancelled = false;
 
-    desktop
-      .getQuotaStatus()
-      .then((status) => {
-        if (!cancelled) setQuotaData(status);
-      })
-      .catch(() => {
-        // Non-fatal — quota display is optional
-      });
-
-    // Refresh quota every 60s
-    const interval = setInterval(() => {
+    if ('getQuotaStatus' in desktop) {
       desktop
         .getQuotaStatus()
         .then((status) => {
           if (!cancelled) setQuotaData(status);
         })
         .catch(() => {});
+    }
+
+    if ('listProviderAuths' in desktop) {
+      desktop
+        .listProviderAuths()
+        .then((rows) => {
+          if (!cancelled) setProviderAuths(rows);
+        })
+        .catch(() => {});
+    }
+
+    // Refresh quota every 60s
+    const interval = setInterval(() => {
+      if ('getQuotaStatus' in desktop) {
+        desktop
+          .getQuotaStatus()
+          .then((status) => {
+            if (!cancelled) setQuotaData(status);
+          })
+          .catch(() => {});
+      }
     }, 60_000);
 
     // Subscribe to provider-auth push events so add/delete/refresh
@@ -241,8 +303,13 @@ export function UsagePanel(): JSX.Element {
     if ('on' in desktop && typeof desktop.on === 'function') {
       try {
         unsubscribe = desktop.on('provider-auth.updated', (payload) => {
-          if (!cancelled && payload?.quotaStatus !== undefined) {
-            setQuotaData(payload.quotaStatus);
+          if (!cancelled) {
+            if (payload?.quotaStatus !== undefined) {
+              setQuotaData(payload.quotaStatus);
+            }
+            if (payload?.rows !== undefined) {
+              setProviderAuths([...payload.rows]);
+            }
           }
         });
       } catch {
@@ -265,7 +332,7 @@ export function UsagePanel(): JSX.Element {
 
       {/* Quota Overview Section */}
       {quotaData && quotaData.snapshots.length > 0 && (
-        <QuotaOverview snapshots={quotaData.snapshots} />
+        <QuotaOverview snapshots={quotaData.snapshots} providerAuths={providerAuths} />
       )}
 
       {/* Range tabs + summary */}
@@ -296,13 +363,31 @@ export function UsagePanel(): JSX.Element {
       )}
 
       {/* Provider detail cards */}
-      {usageData && (
-        <div className="usage-panel-v2__grid">
-          {usageData.perProvider.map((provider) => (
-            <ProviderCard key={provider.provider} provider={provider} />
-          ))}
-        </div>
-      )}
+      {usageData && (() => {
+        const visibleProviders = usageData.perProvider.filter(
+          (p) =>
+            p.inputTokens + p.outputTokens + p.cacheTokens > 0 ||
+            p.eventCount > 0 ||
+            p.source === 'quotaDailyUsage'
+        );
+
+        if (visibleProviders.length === 0) {
+          return (
+            <div className="usage-panel-v2__empty-state">
+              <h3 className="usage-panel-v2__empty-title">暂无 Token 记录</h3>
+              <p className="usage-panel-v2__empty-desc">已开始采集，下一次刷新后会显示本地日志或官方日用量。</p>
+            </div>
+          );
+        }
+
+        return (
+          <div className="usage-panel-v2__grid">
+            {visibleProviders.map((provider) => (
+              <ProviderCard key={provider.provider} provider={provider} />
+            ))}
+          </div>
+        );
+      })()}
     </section>
   );
 }
@@ -311,10 +396,28 @@ export function UsagePanel(): JSX.Element {
 // Quota Overview
 // ---------------------------------------------------------------------------
 
-function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Element {
+function QuotaOverview({
+  snapshots,
+  providerAuths,
+}: {
+  snapshots: QuotaSnapshot[];
+  providerAuths: ProviderAuthMetadata[];
+}): JSX.Element {
   const orderedSnapshots = [...snapshots].sort((a, b) => {
+    const toneA = snapshotStatusTone(a);
+    const toneB = snapshotStatusTone(b);
+    const score = (t: string) => {
+      if (t === 'ok') return 0;
+      if (t === 'warn') return 1;
+      if (t === 'neutral') return 2;
+      return 3;
+    };
+    const toneDiff = score(toneA) - score(toneB);
+    if (toneDiff !== 0) return toneDiff;
+
     const providerOrder = providerPriority(a.provider) - providerPriority(b.provider);
     if (providerOrder !== 0) return providerOrder;
+
     return snapshotTitle(a).localeCompare(snapshotTitle(b), 'zh-CN');
   });
 
@@ -325,13 +428,14 @@ function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Eleme
           配额状态
           <span className="quota-overview__count">{snapshots.length}</span>
         </h2>
-        <span className="quota-overview__mode">按账号显示</span>
+        <span className="quota-overview__mode">{snapshots.length} 个账号</span>
       </div>
       <div className="quota-overview__grid">
         {orderedSnapshots.map((snapshot, i) => (
           <QuotaAccountCard
             key={snapshot.providerAuthId ?? `${snapshot.provider}-${snapshot.accountId ?? snapshot.projectId ?? i}`}
             snapshot={snapshot}
+            providerAuths={providerAuths}
           />
         ))}
       </div>
@@ -343,30 +447,106 @@ function QuotaOverview({ snapshots }: { snapshots: QuotaSnapshot[] }): JSX.Eleme
 // Quota account card
 // ---------------------------------------------------------------------------
 
-function QuotaAccountCard({ snapshot }: { snapshot: QuotaSnapshot }): JSX.Element {
-  // Group raw windows by display label so callers see at most one row
-  // per group (e.g. Claude 4.6 = Opus + Sonnet averaged). Sorted by
-  // `quotaWindowPriority` inside the helper.
+function QuotaAccountCard({
+  snapshot,
+  providerAuths,
+}: {
+  snapshot: QuotaSnapshot;
+  providerAuths: ProviderAuthMetadata[];
+}): JSX.Element {
   const windows = groupQuotaWindowsByDisplay(snapshot.windows, snapshot.provider);
-  const title = snapshotTitle(snapshot);
   const tone = snapshotStatusTone(snapshot);
+  const providerLabel = PROVIDER_LABELS[snapshot.provider as ProviderId] ?? providerDisplayName(snapshot.provider);
+
+  // Find credential type
+  let typeLabel = '';
+  if (snapshot.providerAuthId) {
+    const matched = providerAuths.find((p) => p.id === snapshot.providerAuthId);
+    if (matched) {
+      typeLabel = matched.source === 'cpa-auth-file' ? 'CPA 文件' : '手动 API Key';
+    }
+  }
+  const typeText = typeLabel || sourceDisplayName(snapshot.source);
+
+  // Determine unique identifier to display in the second line.
+  //
+  // Pipeline:
+  //   1. `cleanAccountLabel` strips known prefixes (`codex_oauth_`,
+  //      `claude_code_oauth_`, `gemini_cli_`, …), `.json` suffix,
+  //      and any `<provider> (...)` wrapper, then either extracts
+  //      an embedded email or shortens UUIDs.
+  //   2. If the cleaned value is itself email-shaped (which is the
+  //      common case after step 1), mask the local part for display.
+  //   3. Reject generic placeholder labels ("API Key", "imported",
+  //      bare provider name) so we don't render redundant chips.
+  //   4. Fall through to `projectId` / `accountId` only as a last
+  //      resort. For Gemini Code Assist for individuals (which is
+  //      what the CPA `gemini-cli` / `antigravity` flow imports)
+  //      quotas are metered per account, not per project, so a
+  //      surfaced project_id signals that the email enrichment
+  //      hasn't reached this row yet (network failure, or a row
+  //      imported before enrichment landed and not yet re-scanned).
+  let uniqueId = '';
+  if (snapshot.accountLabel) {
+    const cleaned = cleanAccountLabel(snapshot.accountLabel, snapshot.provider);
+    const lowerCleaned = cleaned.toLowerCase();
+    const lowerProvider = providerLabel.toLowerCase();
+    const isGenericKey =
+      lowerCleaned === `${lowerProvider} api key` ||
+      lowerCleaned === 'api key' ||
+      lowerCleaned === 'apikey' ||
+      lowerCleaned === 'imported' ||
+      lowerCleaned === `${snapshot.provider.toLowerCase()} api key`;
+    const isExactProvider =
+      lowerCleaned === lowerProvider ||
+      lowerCleaned === snapshot.provider.toLowerCase();
+    if (!isGenericKey && !isExactProvider) {
+      const masked = maskedEmailLabel(cleaned);
+      uniqueId = masked ?? cleaned;
+    }
+  }
+
+  if (!uniqueId) {
+    if (snapshot.projectId) {
+      uniqueId = snapshot.projectId;
+    } else if (snapshot.accountId) {
+      uniqueId = cleanAccountLabel(snapshot.accountId, snapshot.provider);
+    }
+  }
 
   return (
     <article
       className="quota-account-card"
       data-provider={providerTone(snapshot.provider)}
       data-status={tone}
-      aria-label={`${providerDisplayName(snapshot.provider)} ${title} 配额`}
+      aria-label={`${providerLabel} ${uniqueId} 配额`}
     >
+      {/* 1. 顶部身份区 */}
       <header className="quota-account-card__header">
         <div className="quota-account-card__identity">
-          <span className="quota-account-card__chip">
-            {providerDisplayName(snapshot.provider)}
-          </span>
-          <div className="quota-account-card__copy">
-            <h3 className="quota-account-card__name" title={title}>{title}</h3>
-            <span className="quota-account-card__meta" title={`刷新 ${formatClock(snapshot.capturedAt)}`}>
-              {snapshotMeta(snapshot)}
+          <div className="quota-account-card__icon-wrap">
+            <ProviderIcon provider={providerIconKey(snapshot.provider as ProviderId)} size={28} />
+          </div>
+          <div className="quota-account-card__title-group">
+            <h3 className="quota-account-card__name" title={providerLabel}>{providerLabel}</h3>
+            <span className="quota-account-card__provider-label" data-provider={providerTone(snapshot.provider)}>
+              {typeText}
+              {snapshot.kind !== 'credits' && snapshot.rawPlanLabel && (
+                <>
+                  {' · '}
+                  <span className="quota-account-card__plan">
+                    {snapshot.rawPlanLabel}
+                  </span>
+                </>
+              )}
+              {uniqueId && (
+                <>
+                  {' · '}
+                  <span className="quota-account-card__unique-id">
+                    {uniqueId}
+                  </span>
+                </>
+              )}
             </span>
           </div>
         </div>
@@ -375,29 +555,62 @@ function QuotaAccountCard({ snapshot }: { snapshot: QuotaSnapshot }): JSX.Elemen
         </span>
       </header>
 
-      {snapshot.rawPlanLabel && (
-        <div className="quota-account-card__plan">
-          <span>{planLabelPrefix(snapshot.provider)}</span>
-          <strong>{snapshot.rawPlanLabel}</strong>
-        </div>
-      )}
-
-      <div className="quota-account-card__windows">
-        {windows.length > 0 ? (
-          windows.map(({ window, displayName }, i) => (
-            <QuotaWindowRow
-              key={`${window.name}-${i}`}
-              window={window}
-              displayName={displayName}
-            />
-          ))
+      {/* 3. 主内容区 */}
+      <div className="quota-account-card__content">
+        {snapshot.kind === 'quota' && windows.length > 0 ? (
+          <div className="quota-account-card__windows">
+            {windows.map(({ window, displayName }, i) => (
+              <QuotaWindowRow
+                key={`${window.name}-${i}`}
+                window={window}
+                displayName={displayName}
+              />
+            ))}
+          </div>
+        ) : snapshot.kind === 'credits' ? (
+          <div className="quota-account-card__credits">
+            {windows.map(({ window }, i) => {
+              const credits = parseCreditsWindow(window.name);
+              if (credits === null) return null;
+              const symbol = currencySymbol(credits.currency);
+              const amount = credits.total ?? credits.toppedUp ?? credits.granted ?? '—';
+              const displayAmount = symbol === '' ? `${amount} ${credits.currency}` : `${symbol}${amount}`;
+              const fullName = `${credits.currency} ${[
+                credits.total === null ? null : `总额 ${credits.total}`,
+                credits.granted === null ? null : `赠金 ${credits.granted}`,
+                credits.toppedUp === null ? null : `充值 ${credits.toppedUp}`,
+              ].filter(Boolean).join(' / ')}`;
+              return (
+                <div key={i} className="quota-account-card__credits-row" title={fullName}>
+                  <div className="quota-account-card__credits-main">
+                    <span className="quota-account-card__credits-value">{displayAmount}</span>
+                    <span className="quota-account-card__credits-label">余额</span>
+                  </div>
+                  {/* Always render the sparkline slot — the component
+                      itself draws a placeholder baseline when no
+                      daily-usage data is available, keeping the
+                      card layout (左边金额 / 右边柱状图) consistent
+                      across providers and across "first-import vs.
+                      after-data-arrives" states. */}
+                  <UsageSparkline
+                    dailyUsage={snapshot.dailyUsage ?? null}
+                    currencySymbol={symbol}
+                    currencyCode={credits.currency}
+                  />
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          <p className="quota-account-card__empty">暂无可显示额度</p>
+          <div className="quota-account-card__health-only">
+            <span className="quota-account-card__health-text">暂无额度数据</span>
+          </div>
         )}
       </div>
 
+      {/* 4. 底部提示区 */}
       {snapshot.lastErrorMessage && (
-        <p className="quota-account-card__notice" data-tone={tone}>
+        <p className="quota-account-card__notice" data-tone={tone} title={snapshot.lastErrorMessage}>
           {snapshot.lastErrorMessage}
         </p>
       )}
@@ -417,11 +630,15 @@ function QuotaWindowRow({
 
   return (
     <div className={`quota-window-row ${rowClass}`} aria-label={`${displayName} 剩余 ${formatPercent(remaining)}`}>
-      <span className="quota-window-row__label" title={displayName}>{displayName}</span>
-      <span className="quota-window-row__numbers">
-        <strong className="quota-window-row__percent">{formatPercent(remaining)}</strong>
-        <span className="quota-window-row__reset">{formatClock(w.resetAt)}</span>
-      </span>
+      <div className="quota-window-row__header-line">
+        <span className="quota-window-row__label" title={displayName}>{displayName}</span>
+        <span className="quota-window-row__meta">
+          <strong className="quota-window-row__percent">{formatPercent(remaining)}</strong>
+          {w.resetAt !== null && (
+            <span className="quota-window-row__reset"> · {formatClock(w.resetAt)} 重置</span>
+          )}
+        </span>
+      </div>
       <div className="quota-window-row__track">
         <div
           className="quota-window-row__fill"
@@ -440,13 +657,18 @@ function QuotaWindowRow({
 // Totals summary
 // ---------------------------------------------------------------------------
 
-function TotalsSummary({ providers }: { providers: UsageProviderSummary[] }): JSX.Element {
-  const totalInput = providers.reduce((s, p) => s + p.inputTokens, 0);
-  const totalOutput = providers.reduce((s, p) => s + p.outputTokens, 0);
-  const totalCache = providers.reduce((s, p) => s + p.cacheTokens, 0);
+function TotalsSummary({ providers }: { providers: UsageProviderSummary[] }): JSX.Element | null {
+  const activeProviders = providers.filter((p) => p.source !== 'none');
+  if (activeProviders.length === 0) return null;
+
+  const totalInput = activeProviders.reduce((s, p) => s + p.inputTokens, 0);
+  const totalOutput = activeProviders.reduce((s, p) => s + p.outputTokens, 0);
+  const totalCache = activeProviders.reduce((s, p) => s + p.cacheTokens, 0);
   const totalTokens = totalInput + totalOutput + totalCache;
-  const totalCost = providers.reduce((s, p) => s + (p.costUsd ?? 0), 0);
-  const totalEvents = providers.reduce((s, p) => s + p.eventCount, 0);
+  const totalCost = activeProviders.reduce((s, p) => s + (p.costUsd ?? 0), 0);
+  const totalEvents = activeProviders.reduce((s, p) => s + p.eventCount, 0);
+
+  if (totalTokens === 0) return null;
 
   return (
     <div className="usage-totals">
@@ -477,7 +699,6 @@ function TotalsSummary({ providers }: { providers: UsageProviderSummary[] }): JS
 
 function ProviderCard({ provider }: { provider: UsageProviderSummary }): JSX.Element {
   const totalTokens = provider.inputTokens + provider.outputTokens + provider.cacheTokens;
-  const isActive = provider.status === 'ok' || provider.status === 'degraded';
 
   return (
     <div
@@ -487,50 +708,90 @@ function ProviderCard({ provider }: { provider: UsageProviderSummary }): JSX.Ele
       {/* Header */}
       <div className="provider-card__header">
         <span className="provider-card__name">
-          {provider.provider.charAt(0).toUpperCase() + provider.provider.slice(1)}
+          {providerDisplayName(provider.provider)}
         </span>
         <span className={`provider-card__badge provider-card__badge--${provider.status}`}>
           {statusLabel(provider.status)}
         </span>
       </div>
 
-      {isActive ? (
-        <>
-          {/* Token breakdown */}
-          <div className="provider-card__breakdown">
-            <TokenRow label="Input" value={provider.inputTokens} total={totalTokens} color="var(--color-input)" />
-            <TokenRow label="Output" value={provider.outputTokens} total={totalTokens} color="var(--color-output)" />
-            <TokenRow label="Cache" value={provider.cacheTokens} total={totalTokens} color="var(--color-cache)" />
-          </div>
+      <div className="provider-card__content">
+        {provider.source === 'events' && provider.hasTokenBreakdown ? (
+          <>
+            {/* Token breakdown */}
+            <div className="provider-card__breakdown">
+              <TokenRow label="Input" value={provider.inputTokens} total={totalTokens} color="var(--color-input)" />
+              <TokenRow label="Output" value={provider.outputTokens} total={totalTokens} color="var(--color-output)" />
+              <TokenRow label="Cache" value={provider.cacheTokens} total={totalTokens} color="var(--color-cache)" />
+            </div>
 
-          {/* Totals */}
-          <div className="provider-card__footer">
-            <div className="provider-card__stat">
-              <span className="provider-card__stat-value">{formatTokens(totalTokens)}</span>
-              <span className="provider-card__stat-label">合计</span>
-            </div>
-            {provider.costUsd !== null && (
+            {/* Totals */}
+            <div className="provider-card__footer">
               <div className="provider-card__stat">
-                <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
-                <span className="provider-card__stat-label">费用</span>
+                <span className="provider-card__stat-value">{formatTokens(totalTokens)}</span>
+                <span className="provider-card__stat-label">合计</span>
               </div>
-            )}
-            <div className="provider-card__stat">
-              <span className="provider-card__stat-value">{provider.eventCount}</span>
-              <span className="provider-card__stat-label">请求</span>
+              {provider.costUsd !== null && (
+                <div className="provider-card__stat">
+                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
+                  <span className="provider-card__stat-label">费用</span>
+                </div>
+              )}
+              <div className="provider-card__stat">
+                <span className="provider-card__stat-value">{provider.eventCount}</span>
+                <span className="provider-card__stat-label">请求</span>
+              </div>
             </div>
+          </>
+        ) : provider.source === 'events' && !provider.hasTokenBreakdown ? (
+          <>
+            <div className="provider-card__no-breakdown">
+              <p className="provider-card__no-breakdown-text">已记录请求，暂无 token 字段</p>
+            </div>
+
+            <div className="provider-card__footer">
+              <div className="provider-card__stat">
+                <span className="provider-card__stat-value">{provider.eventCount}</span>
+                <span className="provider-card__stat-label">请求</span>
+              </div>
+              {provider.costUsd !== null && (
+                <div className="provider-card__stat">
+                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
+                  <span className="provider-card__stat-label">费用</span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : provider.source === 'quotaDailyUsage' ? (
+          <>
+            <div className="provider-card__daily-usage-main">
+              <div className="provider-card__daily-usage-value-group">
+                <span className="provider-card__daily-usage-value">{formatTokens(provider.inputTokens)}</span>
+                <span className="provider-card__daily-usage-label">总 Tokens</span>
+              </div>
+              <span className="provider-card__source-tag">来自官方日用量</span>
+            </div>
+
+            <div className="provider-card__footer">
+              {provider.costUsd !== null && (
+                <div className="provider-card__stat">
+                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
+                  <span className="provider-card__stat-label">官方费用</span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="provider-card__inactive">
+            {provider.reason && (
+              <p className="provider-card__reason">{provider.reason}</p>
+            )}
+            {provider.status === 'disabled' && (
+              <p className="provider-card__hint">在设置中启用后可显示用量数据</p>
+            )}
           </div>
-        </>
-      ) : (
-        <div className="provider-card__inactive">
-          {provider.reason && (
-            <p className="provider-card__reason">{provider.reason}</p>
-          )}
-          {provider.status === 'disabled' && (
-            <p className="provider-card__hint">在设置中启用后可显示用量数据</p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

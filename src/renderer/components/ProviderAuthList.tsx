@@ -65,6 +65,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   codex: 'Codex (ChatGPT)',
   'gemini-cli': 'Gemini CLI',
   antigravity: 'Antigravity',
+  'kiro-ide': 'Kiro IDE',
   'gemini-api': 'Gemini API',
   deepseek: 'DeepSeek',
   xiaomi: '小米 Mimo',
@@ -177,6 +178,75 @@ function formatIdentifier(
   return parts.length === 0 ? null : parts.join(' · ');
 }
 
+// ---------------------------------------------------------------------------
+// Email-shaped label helpers
+// ---------------------------------------------------------------------------
+
+const EMAIL_LABEL_RE = /^([^\s@]+)@([^\s@]+\.[^\s@]+)$/;
+const AUTO_DISCOVERED_SUFFIX = ' (自动发现)';
+
+/**
+ * Decompose a row's `label` into an email + an optional trailing
+ * suffix (today only `' (自动发现)'`). Returns `null` when the label
+ * is not email-shaped, in which case the renderer falls back to the
+ * verbatim label string.
+ *
+ * Exported for reuse by sibling renderer surfaces (notably
+ * `UsagePanel` / `QuotaAccountCard`) so the same email-recognition
+ * rule applies everywhere a Provider_Auth label is rendered.
+ *
+ * The split lets the renderer mask the email half independently from
+ * the suffix so a `alice@gmail.com (自动发现)` label still reads as
+ * `a***e@gmail.com (自动发现)` with the suffix intact.
+ */
+export function splitEmailLabel(
+  label: string,
+): { email: string; suffix: string } | null {
+  const trimmed = label.trim();
+  let suffix = '';
+  let core = trimmed;
+  if (core.endsWith(AUTO_DISCOVERED_SUFFIX)) {
+    core = core.slice(0, -AUTO_DISCOVERED_SUFFIX.length).trim();
+    suffix = AUTO_DISCOVERED_SUFFIX;
+  }
+  return EMAIL_LABEL_RE.test(core) ? { email: core, suffix } : null;
+}
+
+/**
+ * Partially mask an email's local part for display. We keep the
+ * first and last characters (when the local part has ≥3 chars) and
+ * replace the middle with three asterisks; shorter local parts get
+ * a single first-char + 3 asterisks. The domain is left untouched
+ * so users can still tell which Google / Anthropic tenant the
+ * account belongs to.
+ *
+ *   alice@example.com  → a***e@example.com
+ *   ab@example.com     → a***@example.com
+ *   a@example.com      → a***@example.com
+ */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  if (local.length >= 3) {
+    return `${local[0]}***${local[local.length - 1]}${domain}`;
+  }
+  return `${local[0]}***${domain}`;
+}
+
+/**
+ * Convenience wrapper: detect an email-shaped label, mask it, and
+ * preserve any trailing ` (自动发现)` suffix. Returns `null` when
+ * the input is not email-shaped, signalling the caller to fall
+ * back to its provider-specific cleanup path.
+ */
+export function maskedEmailLabel(label: string): string | null {
+  const parts = splitEmailLabel(label);
+  if (parts === null) return null;
+  return `${maskEmail(parts.email)}${parts.suffix}`;
+}
+
 /**
  * The lowercase provider key the `ProviderIcon` registry expects.
  *
@@ -186,17 +256,23 @@ function formatIdentifier(
  * `'claude-code'` → `'claude'` so the user sees the Anthropic mark on
  * a Claude Code row.
  */
-function providerIconKey(provider: ProviderId): string {
+export function providerIconKey(provider: ProviderId): string {
   switch (provider) {
     case 'claude-code':
       return 'claude';
     case 'codex':
       return 'codex';
     case 'gemini-cli':
+      return 'gemini-cli';
     case 'gemini-api':
       return 'gemini';
     case 'antigravity':
       return 'antigravity';
+    case 'kiro-ide':
+      // No brand SVG ships in `@lobehub/icons-static-svg`; the
+      // registry returns null and `ProviderIcon` paints the AWS
+      // mark via the alias below.
+      return 'kiro';
     case 'deepseek':
       return 'deepseek';
     case 'xiaomi':
@@ -314,7 +390,28 @@ function ProviderAuthRow({
   onDelete,
   onToggleEnabled,
 }: ProviderAuthRowProps): JSX.Element {
-  const identifier = formatIdentifier(row.accountId, row.projectId);
+  // Email-shaped labels get a partial mask in the rendered text so
+  // the user can recognise the account without exposing the full
+  // address; the unmasked form is preserved in `title` for hover.
+  // When the label is email-shaped we also suppress the
+  // `accountId / projectId` subtitle: the email already identifies
+  // the account, and the underlying ids (Codex `auth0|...`, GCP
+  // `vivid-course-453615-u9`, etc.) carry no extra signal a user
+  // can act on. For Gemini Code Assist for individuals — which is
+  // what the CPA `gemini-cli` / `antigravity` flow imports — quotas
+  // are metered per account ("1000 requests / user / day"), not per
+  // project, so the project_id is purely incidental and hiding it
+  // is safe (verified against
+  // https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html).
+  const emailParts = splitEmailLabel(row.label);
+  const labelDisplay =
+    emailParts !== null
+      ? `${maskEmail(emailParts.email)}${emailParts.suffix}`
+      : row.label;
+  const identifier =
+    emailParts !== null
+      ? null
+      : formatIdentifier(row.accountId, row.projectId);
   const isExpired = row.lastErrorCode === 'auth_expired';
   // Gemini CLI / Antigravity / Xiaomi rows allow one retry on
   // `auth_expired`:
@@ -371,7 +468,7 @@ function ProviderAuthRow({
         </span>
 
         <span className="provider-auth-list__label" title={row.label}>
-          {row.label}
+          {labelDisplay}
         </span>
 
         {identifier !== null && (

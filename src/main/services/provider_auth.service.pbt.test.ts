@@ -228,6 +228,11 @@ describe('provider_auth.service — Property 2 (cpa-quota-import)', () => {
               return `00000000-0000-4000-8000-${suffix}`;
             },
             now: () => 1_700_000_000_000,
+            // Disable the live Google userinfo lookup — the
+            // property-based generator produces fake tokens, and a
+            // real HTTP call would fail (often slowly, exceeding
+            // the test timeout) for every shrunken case.
+            fetchEmailForAccessToken: null,
           });
 
           const metadata = await service.importFromFile({ provider });

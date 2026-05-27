@@ -360,6 +360,7 @@ const FILE_IMPORT_PICKER_ORDER: readonly ProviderId[] = [
   'codex',
   'gemini-cli',
   'antigravity',
+  'kiro-ide',
   'gemini-api',
   'deepseek',
   'xiaomi',

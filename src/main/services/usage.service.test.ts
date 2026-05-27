@@ -259,4 +259,108 @@ describe('usage service provider list', () => {
 
     expect(providers).not.toContain('deepseek');
   });
+
+  it('supplements usage from dailyUsage when no events exist', () => {
+    const importedAt = new Date('2026-05-20T10:00:00+08:00').getTime();
+    const deepseekRow: ProviderAuthRow = {
+      id: '00000000-0000-4000-8000-000000000002',
+      provider: 'deepseek',
+      label: 'deepseek:active',
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: 'health_only',
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: true,
+      secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000002',
+    };
+
+    const mockSnapshots = [
+      {
+        provider: 'deepseek',
+        capturedAt: importedAt,
+        source: 'imported_auth' as const,
+        windows: [],
+        providerAuthId: '00000000-0000-4000-8000-000000000002',
+        accountLabel: 'deepseek:active',
+        accountId: null,
+        projectId: null,
+        kind: 'health' as const,
+        status: 'ok' as const,
+        rawPlanLabel: null,
+        modelGroup: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+        dailyUsage: [
+          { date: '2026-05-26', cost: '0.0125', totalTokens: 1000 },
+          { date: '2026-05-25', cost: '0.005', totalTokens: 500 },
+        ],
+      },
+    ];
+
+    const service = createUsageService({
+      settings: createSettingsRepo(baseSettings()),
+      usageEvents: createUsageEventsRepoStub([]), // No events
+      providerAuth: createProviderAuthRepoStub([deepseekRow]),
+      quotaSnapshots: () => mockSnapshots,
+      now: () => new Date('2026-05-26T08:00:00+08:00').getTime(), // This is today, bounds for today starts at 2026-05-26 00:00
+    });
+
+    const summary = service.getUsageSummary({ range: 'today' });
+    const dsSummary = summary.perProvider.find((p) => p.provider === 'deepseek');
+    expect(dsSummary).toBeDefined();
+    expect(dsSummary!.source).toBe('quotaDailyUsage');
+    expect(dsSummary!.inputTokens).toBe(1000); // Only 2026-05-26 falls in today's bounds
+    expect(dsSummary!.hasTokenBreakdown).toBe(false);
+    expect(dsSummary!.costUsd).toBeCloseTo(0.0125);
+  });
+
+  it('sets source=events and computes hasTokenBreakdown correctly', () => {
+    const importedAt = new Date('2026-05-20T10:00:00+08:00').getTime();
+    const deepseekRow: ProviderAuthRow = {
+      id: '00000000-0000-4000-8000-000000000002',
+      provider: 'deepseek',
+      label: 'deepseek:active',
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: 'health_only',
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: true,
+      secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000002',
+    };
+
+    const service = createUsageService({
+      settings: createSettingsRepo(baseSettings()),
+      usageEvents: createUsageEventsRepoStub([
+        {
+          provider: 'deepseek',
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheTokens: 0,
+          costUsd: null,
+          eventCount: 1,
+        },
+      ]),
+      providerAuth: createProviderAuthRepoStub([deepseekRow]),
+      now: () => new Date('2026-05-26T08:00:00+08:00').getTime(),
+    });
+
+    const summary = service.getUsageSummary({ range: 'today' });
+    const dsSummary = summary.perProvider.find((p) => p.provider === 'deepseek');
+    expect(dsSummary).toBeDefined();
+    expect(dsSummary!.source).toBe('events');
+    expect(dsSummary!.hasTokenBreakdown).toBe(true);
+    expect(dsSummary!.inputTokens).toBe(10);
+  });
 });

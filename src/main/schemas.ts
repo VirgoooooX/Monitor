@@ -297,6 +297,7 @@ export const providerIdSchema = z.enum([
   'codex',
   'gemini-cli',
   'antigravity',
+  'kiro-ide',
   'gemini-api',
   'deepseek',
   'xiaomi',

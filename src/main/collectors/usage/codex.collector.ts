@@ -30,7 +30,7 @@ import * as path from 'node:path';
 
 import type { CapabilityResult } from '../../types';
 import { openExternalReadonly, ExternalDatabaseUnavailableError } from '../../store/db';
-import type { UsageCollector, UsageCollectorContext } from './types';
+import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -253,6 +253,7 @@ export function createCodexCollector(deps?: CodexCollectorDeps): UsageCollector 
 
   return {
     id: CODEX_COLLECTOR_ID,
+    provider: PROVIDER,
 
     async capabilityCheck(): Promise<CapabilityResult> {
       // Check if sessions directory exists

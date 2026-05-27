@@ -19,13 +19,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { CapabilityResult } from '../../types';
-import type { UsageCollector, UsageCollectorContext } from './types';
+import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-export const ANTIGRAVITY_COLLECTOR_ID = 'antigravity';
+export const ANTIGRAVITY_COLLECTOR_ID = 'usage.antigravity';
 const PROVIDER = 'antigravity';
 const SOURCE = 'antigravity.logs';
 
@@ -177,6 +177,7 @@ export function createAntigravityCollector(deps?: AntigravityCollectorDeps): Usa
 
   return {
     id: ANTIGRAVITY_COLLECTOR_ID,
+    provider: PROVIDER,
 
     async capabilityCheck(): Promise<CapabilityResult> {
       const geminiExists = await directoryExists(geminiPath);

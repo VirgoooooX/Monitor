@@ -31,6 +31,12 @@ import cursorMono from '@lobehub/icons-static-svg/icons/cursor.svg?raw';
 import groqMono from '@lobehub/icons-static-svg/icons/groq.svg?raw';
 import openrouterMono from '@lobehub/icons-static-svg/icons/openrouter.svg?raw';
 
+// Kiro IDE has no entry in `@lobehub/icons-static-svg` yet, so we
+// ship the official brand mark (gradient blue→purple "K") locally.
+// The asset is the same SVG the Kiro desktop app uses for its
+// sign-in screen, vendored verbatim under `src/renderer/assets/`.
+import kiroColor from '../assets/kiro-color.svg?raw';
+
 // ---------------------------------------------------------------------------
 // SVG transforms
 // ---------------------------------------------------------------------------
@@ -94,6 +100,11 @@ export const PROVIDER_ICON_SVG: Record<string, string> = {
   cursor: cursorMono,
   groq: groqMono,
   openrouter: openrouterMono,
+
+  // Kiro IDE — official brand mark vendored under `src/renderer/assets/`
+  // because `@lobehub/icons-static-svg` does not ship a Kiro asset yet.
+  kiro: kiroColor,
+  'kiro-ide': kiroColor,
 };
 
 /**

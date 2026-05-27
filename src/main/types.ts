@@ -210,6 +210,10 @@ export interface UsageProviderSummary {
   eventCount: number;
   /** Present iff `status !== 'ok'`. */
   reason?: string;
+  /** Data source identifier */
+  source: 'events' | 'quotaDailyUsage' | 'none';
+  /** Whether the provider has detailed token breakdown */
+  hasTokenBreakdown: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +395,7 @@ export type ProviderId =
   | 'codex'
   | 'gemini-cli'
   | 'antigravity'
+  | 'kiro-ide'
   | 'gemini-api'
   | 'deepseek'
   | 'xiaomi'
@@ -440,6 +445,7 @@ export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = 
   codex: 'official',
   'gemini-cli': 'official',
   antigravity: 'official',
+  'kiro-ide': 'official',
   'gemini-api': 'health_only',
   deepseek: 'official',
   xiaomi: 'official',
@@ -693,6 +699,16 @@ export interface ProviderAuthSecretPayload {
    * either the full HTTPS URL or just the path and normalise.
    */
   opencodeWorkspaceUrl?: string;
+  /**
+   * Kiro IDE only — AWS CodeWhisperer profile ARN
+   * (`arn:aws:codewhisperer:<region>:<account>:profile/<id>`)
+   * that the IDE drops into `~/.aws/sso/cache/kiro-auth-token.json`
+   * on every login. The fourth ARN segment encodes the Q Developer
+   * region the adapter must hit (`https://q.<region>.amazonaws.com/getUsageLimits`),
+   * so we surface it as a first-class secret-payload field instead
+   * of stashing it in `accountId`. NEVER logged.
+   */
+  kiroProfileArn?: string;
   /** Verbatim `metadata.*` block from the CPA file (minus secret keys). */
   rawMetadata?: Record<string, unknown>;
   /** Verbatim `attributes.*` block from the CPA file (minus secret keys). */

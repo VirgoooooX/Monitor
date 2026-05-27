@@ -23,6 +23,7 @@ const PROVIDER_ORDER = [
   'gemini-cli',
   'gemini-api',
   'antigravity',
+  'kiro-ide',
   'deepseek',
   'xiaomi',
   'opencode',
@@ -78,6 +79,7 @@ function providerDisplayName(provider: string, snapshots: QuotaSnapshot[]): stri
     case 'gemini-cli': return 'Gemini';
     case 'gemini-api': return 'Gemini API';
     case 'antigravity': return 'Antigravity';
+    case 'kiro-ide': return 'Kiro';
     case 'opencode': return 'OpenCode';
     case 'deepseek': return 'DeepSeek';
     case 'xiaomi':

@@ -24,19 +24,19 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { CapabilityResult } from '../../types';
-import type { UsageCollector, UsageCollectorContext } from './types';
+import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-export const GEMINI_COLLECTOR_ID = 'usage.gemini';
-const PROVIDER = 'gemini';
+export const GEMINI_COLLECTOR_ID = 'usage.gemini-cli';
+const PROVIDER = 'gemini-cli';
 const SOURCE = 'gemini.history';
 
 /** Reason surfaced when history files lack token usage fields. */
 const DEGRADED_REASON =
-  'Gemini CLI 历史文件不包含 token 用量字段, 仅记录会话数和最后活动时间';
+  'Gemini CLI 历史文件不包含 token 用量字段, 仅记录会话数和最后 activity 时间';
 
 /**
  * Fields we look for in each record to extract token counts.
@@ -218,6 +218,7 @@ export function createGeminiCollector(deps?: GeminiCollectorDeps): UsageCollecto
 
   return {
     id: GEMINI_COLLECTOR_ID,
+    provider: PROVIDER,
 
     async capabilityCheck(): Promise<CapabilityResult> {
       // Check if history directory exists and is readable

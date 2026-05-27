@@ -116,7 +116,7 @@ describe('applyEmptyWindowGuard', () => {
     const degraded: CapabilityResult = { status: 'degraded', reason: 'partial' };
     const result = applyEmptyWindowGuard(
       degraded,
-      'gemini',
+      'gemini-cli',
       { settings, usageEvents, collectorHealth, now: Date.now() },
     );
 

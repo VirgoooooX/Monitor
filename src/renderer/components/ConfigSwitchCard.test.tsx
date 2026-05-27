@@ -112,17 +112,16 @@ function buildQuickActions(
  * call counts and arguments.
  */
 function installDesktopBridge(quickActions: NetworkQuickActions) {
-  const switchOpenClashConfig = vi.fn<
-    [{ targetPath: string }],
-    Promise<ConfigSwitchResult>
-  >(async ({ targetPath }) => ({
-    ok: true,
-    startPath: quickActions.configFiles.activePath,
-    targetPath,
-    finalPath: targetPath,
-  }));
+  const switchOpenClashConfig = vi.fn<(input: { targetPath: string }) => Promise<ConfigSwitchResult>>(
+    async ({ targetPath }) => ({
+      ok: true,
+      startPath: quickActions.configFiles.activePath,
+      targetPath,
+      finalPath: targetPath,
+    })
+  );
 
-  const getNetworkQuickActions = vi.fn<[], Promise<NetworkQuickActions>>(
+  const getNetworkQuickActions = vi.fn<() => Promise<NetworkQuickActions>>(
     async () => quickActions,
   );
 

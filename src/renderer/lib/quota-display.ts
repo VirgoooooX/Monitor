@@ -108,6 +108,13 @@ function normaliseProviderWindowName(name: string, provider: string): string | n
     }
   }
 
+  // Kiro IDE: a single monthly credit pool, renamed to read like the
+  // IDE's own usage popup ("Estimated Usage" → here we use 月度额度
+  // since the strip only has room for a short label).
+  if (provider === 'kiro-ide' && trimmed === 'kiro-credits') {
+    return '月度额度';
+  }
+
   if (/^MODEL_PLACEHOLDER_M\d+$/.test(upper)) return null;
   if (/^MODEL_CHAT_\d+$/.test(upper)) return normaliseKnownChatModel(upper, provider);
   if (/^MODEL_[A-Z0-9_]+$/.test(upper)) return normaliseEnumModel(upper, provider);

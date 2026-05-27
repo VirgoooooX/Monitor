@@ -113,6 +113,9 @@ const ACCESS_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
   // would fail to parse them without these extra paths.
   ['tokens', 'access_token'],
   ['claudeAiOauth', 'accessToken'],
+  // Kiro IDE (`~/.aws/sso/cache/kiro-auth-token.json`) writes
+  // top-level camelCase keys.
+  ['accessToken'],
 ];
 
 const API_KEY_PATHS: ReadonlyArray<readonly string[]> = [
@@ -147,6 +150,10 @@ const EXPIRY_PATHS: ReadonlyArray<readonly string[]> = [
   // Gemini CLI / Antigravity use `expiry_date` (epoch ms).
   ['claudeAiOauth', 'expiresAt'],
   ['expiry_date'],
+  // Kiro IDE — top-level ISO-8601 string ("2026-05-27T14:40:43.287Z");
+  // `parseExpiryEpochMs` falls through to `Date.parse` for textual
+  // values.
+  ['expiresAt'],
 ];
 
 // Auxiliary path lists. The service layer / lightweight validate path
@@ -161,6 +168,8 @@ const REFRESH_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
   ['tokens', 'refresh_token'],
   // Claude Code native.
   ['claudeAiOauth', 'refreshToken'],
+  // Kiro IDE — top-level camelCase.
+  ['refreshToken'],
 ];
 
 const BASE_URL_PATHS: ReadonlyArray<readonly string[]> = [
@@ -179,6 +188,29 @@ const EMAIL_PATHS: ReadonlyArray<readonly string[]> = [
   ['attributes', 'email'],
   ['email'],
   ['account', 'email'],
+];
+
+/**
+ * Paths where OIDC `id_token` JWTs may live. Codex (`tokens.id_token`)
+ * and Gemini CLI / Antigravity (`metadata.id_token`) both ship a
+ * standards-compliant OIDC id_token whose payload carries an `email`
+ * claim. We fall back to decoding that JWT when none of the
+ * `EMAIL_PATHS` resolve.
+ *
+ * The decode is unauthenticated — we never verify the signature.
+ * That's fine because:
+ *   1. The file is on the user's local disk; we treat it as trusted
+ *      input the same way we treat the access_token / refresh_token
+ *      it ships next to.
+ *   2. We only consume the `email` claim for display purposes, never
+ *      for authorization decisions.
+ *   3. Avoiding signature verification keeps us off the JOSE / JWKS
+ *      dependency surface entirely.
+ */
+const ID_TOKEN_PATHS: ReadonlyArray<readonly string[]> = [
+  ['tokens', 'id_token'],
+  ['metadata', 'id_token'],
+  ['id_token'],
 ];
 
 /**
@@ -303,6 +335,67 @@ function deepStrip(value: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// JWT helpers — UNAUTHENTICATED `id_token` decode for the email claim
+// ---------------------------------------------------------------------------
+//
+// OIDC id_tokens (Google for Gemini CLI / Antigravity, OpenAI for
+// Codex) carry an `email` claim in the JWT payload. We base64url-
+// decode the middle segment to pull it out without verifying the
+// signature; see `ID_TOKEN_PATHS` for the threat-model rationale.
+//
+// The helper is defensive: any malformed JWT returns `null`. We never
+// throw — a bad id_token must not break the import for an otherwise
+// valid auth file.
+
+function base64urlDecodeToString(input: string): string | null {
+  if (input.length === 0) return null;
+  // Convert base64url → base64 + restore padding.
+  let b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4;
+  if (pad === 2) b64 += '==';
+  else if (pad === 3) b64 += '=';
+  else if (pad !== 0) return null;
+  try {
+    // Buffer is always available in the main process (Node).
+    return Buffer.from(b64, 'base64').toString('utf-8');
+  } catch {
+    return null;
+  }
+}
+
+function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  const decoded = base64urlDecodeToString(parts[1]!);
+  if (decoded === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(decoded);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pull a usable `email` out of any JWT found at one of `ID_TOKEN_PATHS`.
+ * Returns `null` when no path resolves, the JWT is malformed, or the
+ * payload's `email` claim is missing / non-string / empty after trim.
+ */
+function findEmailFromIdTokens(root: unknown): string | null {
+  for (const path of ID_TOKEN_PATHS) {
+    const value = getByPath(root, path);
+    if (typeof value !== 'string' || value.trim().length === 0) continue;
+    const claims = decodeJwtPayload(value.trim());
+    if (claims === null) continue;
+    const email = claims['email'];
+    if (typeof email === 'string' && email.trim().length > 0) {
+      return email.trim();
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -358,15 +451,32 @@ export function parseAuthFile(provider: ProviderId, raw: string): ParseResult {
   if (rawMetadata !== undefined) payload.rawMetadata = rawMetadata;
   if (rawAttributes !== undefined) payload.rawAttributes = rawAttributes;
 
-  // Label derivation: metadata.label → attributes.label → account_id
-  // → email → '<provider>:imported'. The last fallback is intentionally
-  // non-unique; the service layer enriches it with a UUID suffix.
+  // Kiro IDE specific: lift the AWS CodeWhisperer profile ARN onto
+  // its own field so the adapter can derive the regional API host
+  // (`q.<region>.amazonaws.com`) without re-parsing `rawMetadata`.
+  // The field name is `profileArn` in `~/.aws/sso/cache/kiro-auth-token.json`.
+  if (provider === 'kiro-ide') {
+    const profileArn = findFirstString(parsed, [['profileArn']]);
+    if (profileArn !== null) payload.kiroProfileArn = profileArn;
+  }
+
+  // Label derivation: metadata.label → attributes.label → email →
+  // accountId → '<provider>:imported'. Email beats accountId so the
+  // UI shows e.g. `alice@example.com` instead of an opaque
+  // `auth0|abc123` (Codex) or a Google `numericId` (Gemini /
+  // Antigravity). The last fallback is intentionally non-unique;
+  // the service layer enriches it with a UUID suffix.
   const explicitLabel = findFirstString(parsed, LABEL_PATHS);
-  const email = findFirstString(parsed, EMAIL_PATHS);
+  // Email resolution: explicit `email` field first (handles CPA
+  // exports that surface it under metadata / attributes), then the
+  // OIDC `id_token` JWT (handles Codex `tokens.id_token` and
+  // Gemini / Antigravity `metadata.id_token` / `id_token`).
+  const email =
+    findFirstString(parsed, EMAIL_PATHS) ?? findEmailFromIdTokens(parsed);
   const label =
     explicitLabel ??
-    accountId ??
     email ??
+    accountId ??
     `${provider}:imported`;
 
   return {

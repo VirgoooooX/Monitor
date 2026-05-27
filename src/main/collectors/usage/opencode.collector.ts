@@ -18,13 +18,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { CapabilityResult } from '../../types';
-import type { UsageCollector, UsageCollectorContext } from './types';
+import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-export const OPENCODE_COLLECTOR_ID = 'opencode';
+export const OPENCODE_COLLECTOR_ID = 'usage.opencode';
 const PROVIDER = 'opencode';
 const SOURCE = 'opencode.logs';
 
@@ -186,6 +186,7 @@ export function createOpenCodeCollector(deps?: OpenCodeCollectorDeps): UsageColl
 
   return {
     id: OPENCODE_COLLECTOR_ID,
+    provider: PROVIDER,
 
     async capabilityCheck(): Promise<CapabilityResult> {
       const exists = await directoryExists(opencodePath);

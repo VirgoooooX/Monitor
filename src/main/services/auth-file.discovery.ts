@@ -46,6 +46,10 @@ import {
   ProviderAuthError,
   type ParseResult,
 } from './auth-file.parser';
+import {
+  enrichParseResultWithEmail,
+  type FetchEmailForAccessToken,
+} from './auth-file.email-enrichment';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -81,6 +85,16 @@ export interface AuthFileDiscoveryDeps {
   fileExists?: (p: string) => Promise<boolean>;
   uuid?: () => string;
   now?: () => number;
+  /**
+   * Optional override for the Google userinfo lookup used to
+   * recover an email from `gemini-cli` / `antigravity` access
+   * tokens that ship without an `id_token`. Defaults to the live
+   * implementation; tests inject a stub.
+   *
+   * Setting this to `null` disables the lookup entirely (useful in
+   * environments where outbound HTTP must not happen).
+   */
+  fetchEmailForAccessToken?: FetchEmailForAccessToken | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +130,16 @@ export function defaultDiscoveryProbes(): DiscoveryProbe[] {
     {
       provider: 'antigravity',
       filePath: path.join(home, '.gemini', 'antigravity', 'oauth_creds.json'),
+    },
+    // Kiro IDE (AWS) — the desktop app stores its OAuth bundle here
+    // regardless of platform. Schema:
+    //   { accessToken, refreshToken, profileArn, expiresAt,
+    //     authMethod, provider }
+    // The profile ARN encodes the Q Developer region we need to
+    // call `getUsageLimits` against.
+    {
+      provider: 'kiro-ide',
+      filePath: path.join(home, '.aws', 'sso', 'cache', 'kiro-auth-token.json'),
     },
   ];
 }
@@ -299,6 +323,17 @@ export async function runDiscovery(
       }
       try {
         const parsed = parseAuthFile(probe.provider, raw);
+        // Best-effort enrichment for Google OAuth files that ship
+        // without an `id_token` and without an inline `email`.
+        // Failure is silent — the import still succeeds with the
+        // parser-derived label.
+        if (deps.fetchEmailForAccessToken !== null) {
+          await enrichParseResultWithEmail(
+            probe.provider,
+            parsed,
+            deps.fetchEmailForAccessToken,
+          );
+        }
         return { kind: 'parsed', provider: probe.provider, parsed };
       } catch {
         return { kind: 'failed' };
@@ -433,10 +468,20 @@ function refreshExistingDiscoveredAccount(
 
   const nextAccountId = row.accountId ?? parsed.accountId;
   const nextProjectId = row.projectId ?? parsed.projectId;
+  // Label upgrade: legacy rows imported before the parser learned
+  // to decode `id_token` JWTs surfaced an `accountId`-shaped or
+  // `<provider>:imported (自动发现)`-shaped label. When a fresh scan
+  // can now derive an email for the same account, swap the row's
+  // label to that email so the UI stops showing opaque numeric ids.
+  // We never overwrite a label the user (or a future explicit
+  // `metadata.label`) chose deliberately — only the auto-derived
+  // shapes below are considered upgradeable.
+  const nextLabel = chooseRefreshLabel(row.label, parsed, row.provider);
   const shouldPatch =
     secretChanged ||
     nextAccountId !== row.accountId ||
     nextProjectId !== row.projectId ||
+    nextLabel !== row.label ||
     row.lastErrorCode !== null ||
     row.lastErrorMessage !== null;
 
@@ -446,6 +491,7 @@ function refreshExistingDiscoveredAccount(
     const patch: ProviderAuthUpdatePatch = {
       accountId: nextAccountId,
       projectId: nextProjectId,
+      label: nextLabel,
       updatedAt: timestamp,
       lastValidatedAt: timestamp,
       lastErrorCode: null,
@@ -459,4 +505,44 @@ function refreshExistingDiscoveredAccount(
   }
 
   return { row: nextRow, payloadJson };
+}
+
+/**
+ * Decide whether a previously-discovered row's label should be
+ * upgraded to the email derived from a fresh scan. Returns the new
+ * label when an upgrade is warranted, or the original label otherwise.
+ *
+ * Upgrade triggers (any of):
+ *   - The current label is exactly the row's `accountId` (or
+ *     `accountId (自动发现)`) — i.e. an opaque numeric / auth0 id.
+ *   - The current label starts with `<provider>:imported` —
+ *     the parser's last-resort fallback.
+ *   - The current label is the row's `projectId` (Google Cloud
+ *     project ids like `vivid-course-453615-u9` aren't useful
+ *     account labels for humans).
+ *
+ * In every other case we keep the existing label so a user-set or
+ * CPA-`metadata.label` value never gets clobbered.
+ */
+function chooseRefreshLabel(
+  currentLabel: string,
+  parsed: ParseResult,
+  provider: ProviderId,
+): string {
+  if (parsed.email === null || parsed.email.trim().length === 0) {
+    return currentLabel;
+  }
+  const trimmed = currentLabel.trim();
+  const stripSuffix = (s: string): string =>
+    s.endsWith(' (自动发现)') ? s.slice(0, -' (自动发现)'.length).trim() : s;
+  const core = stripSuffix(trimmed);
+  const looksLikeAccountId =
+    parsed.accountId !== null && core === parsed.accountId;
+  const looksLikeProjectId =
+    parsed.projectId !== null && core === parsed.projectId;
+  const looksLikeFallback = core.startsWith(`${provider}:imported`);
+  if (!looksLikeAccountId && !looksLikeProjectId && !looksLikeFallback) {
+    return currentLabel;
+  }
+  return `${parsed.email} (自动发现)`;
 }

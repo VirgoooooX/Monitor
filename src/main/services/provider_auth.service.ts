@@ -60,6 +60,10 @@ import {
   type ParseResult,
   type parseAuthFile as parseAuthFileFn,
 } from './auth-file.parser';
+import {
+  enrichParseResultWithEmail,
+  type FetchEmailForAccessToken,
+} from './auth-file.email-enrichment';
 
 // Re-export `ProviderAuthError` so callers (the IPC mapper, tests)
 // can `import { ProviderAuthError } from '../services/provider_auth.service'`
@@ -161,6 +165,14 @@ export interface ProviderAuthServiceDeps {
   now: () => number;
   /** Optional SQLite transaction wrapper. See note above. */
   transaction?: <T>(fn: () => T) => T;
+  /**
+   * Optional override for the Google userinfo lookup that recovers
+   * an email from `gemini-cli` / `antigravity` access tokens which
+   * ship without an `id_token`. Defaults to the live HTTPS
+   * implementation; tests inject a stub. Pass `null` to disable
+   * outbound HTTP entirely.
+   */
+  fetchEmailForAccessToken?: FetchEmailForAccessToken | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +329,7 @@ function validateLightweight(
   switch (provider) {
     case 'claude-code':
     case 'codex':
+    case 'kiro-ide':
       if (!hasAccessToken) {
         return {
           ok: false,
@@ -514,6 +527,19 @@ export function createProviderAuthService(
     //    `ProviderAuthError('parse_error', ...)` on any structural
     //    failure with a sanitised message; we let it propagate.
     const parsed: ParseResult = parse(provider, raw);
+
+    // 5b. Best-effort email enrichment for Google OAuth files that
+    //     ship without an `id_token`. Mirrors the auto-discovery
+    //     pipeline so a user-picked file ends up with the same
+    //     human-readable label as one we discover from the well-
+    //     known path. Network failure is silent.
+    if (deps.fetchEmailForAccessToken !== null) {
+      await enrichParseResultWithEmail(
+        provider,
+        parsed,
+        deps.fetchEmailForAccessToken ?? undefined,
+      );
+    }
 
     // 6. Build the row and the secret key. UUID is supplied by the
     //    deps so tests can inject a deterministic generator; in

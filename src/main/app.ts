@@ -560,6 +560,7 @@ async function boot(): Promise<void> {
     usageEvents: repositories.usageEvents,
     settings: repositories.settings,
     providerAuth: repositories.providerAuth,
+    quotaSnapshots: () => repositories.settings.get<any[]>('quota.snapshots') ?? [],
   });
 
   // Quota service (cpa-quota-import task 6.2). The aggregator now
@@ -865,15 +866,14 @@ async function boot(): Promise<void> {
     })(),
     getDiagnostics: () => diagnosticsService.export(),
     runRefreshNow: async () => {
-      // Run network / openclash / nodeScan collectors immediately,
+      // Run network / openclash / nodeScan / usage collectors immediately,
       // and trigger a quota refresh against every enabled
-      // provider_auth row. The legacy per-provider usage collector
-      // tick is no longer registered (the AI Accounts unification
-      // moved that responsibility to `quotaService`).
+      // provider_auth row.
       await Promise.allSettled([
         scheduler.runNow('network'),
         scheduler.runNow('openclash'),
         scheduler.runNow('nodeScan'),
+        scheduler.runNow('usage'),
         quotaService.refresh(),
       ]);
     },
@@ -881,21 +881,31 @@ async function boot(): Promise<void> {
   });
 
   // 10. Usage collector scheduler (LEGACY collectors path).
-  //
-  //     The hardcoded `codex / gemini / antigravity / opencode /
-  //     deepseek` scheduler that read `currentSettings.collectors[id]`
-  //     was removed when the AI Accounts settings panel replaced the
-  //     per-provider collector toggles with per-account
-  //     `provider_auth.enabled` switches. Quota / availability
-  //     refresh is now driven entirely by `quotaService.refresh()`
-  //     against the enabled `provider_auth` rows; local-log AI
-  //     usage collectors are intentionally not registered in this
-  //     iteration (the local logs continue to be parsed by the
-  //     fallback path inside `quotaService` for Codex).
-  //
-  //     `settings.collectors` remains in the persisted settings
-  //     blob for forward-compat with older databases, but no
-  //     scheduler tick reads it.
+  const { createUsageCollectorTask } = require('./collectors/usage/usage.task') as typeof import('./collectors/usage/usage.task');
+  const { createCodexCollector } = require('./collectors/usage/codex.collector') as typeof import('./collectors/usage/codex.collector');
+  const { createGeminiCollector } = require('./collectors/usage/gemini.collector') as typeof import('./collectors/usage/gemini.collector');
+  const { createAntigravityCollector } = require('./collectors/usage/antigravity.collector') as typeof import('./collectors/usage/antigravity.collector');
+  const { createOpenCodeCollector } = require('./collectors/usage/opencode.collector') as typeof import('./collectors/usage/opencode.collector');
+
+  scheduler.register(
+    createUsageCollectorTask({
+      collectors: [
+        createCodexCollector(),
+        createGeminiCollector(),
+        createAntigravityCollector(),
+        createOpenCodeCollector(),
+      ],
+      repositories: {
+        usageEvents: repositories.usageEvents,
+        settings: repositories.settings,
+        collectorHealth: repositories.collectorHealth,
+      },
+      getIntervalMs: () => (_settings ?? settings).refreshIntervals.usageMs,
+      onAfterTick: () => {
+        dashboardService.broadcastDashboard();
+      },
+    })
+  );
 
   // 11. System tray. Holds the app lifecycle on Windows/Linux.
   _tray = createTray({

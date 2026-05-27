@@ -235,11 +235,12 @@ function providerPriority(provider: string): number {
     case 'claude-code': return 1;
     case 'gemini-cli': return 2;
     case 'antigravity': return 3;
-    case 'opencode': return 4;
-    case 'deepseek': return 5;
-    case 'xiaomi': return 6;
-    case 'gemini-api': return 7;
-    case 'openai-compatible': return 8;
+    case 'kiro-ide': return 4;
+    case 'opencode': return 5;
+    case 'deepseek': return 6;
+    case 'xiaomi': return 7;
+    case 'gemini-api': return 8;
+    case 'openai-compatible': return 9;
     default: return 100;
   }
 }
@@ -438,10 +439,15 @@ function QuotaRowItem({
     return <CreditsRowItem credits={credits} dailyUsage={dailyUsage} />;
   }
 
-  const remaining = w.percentLeft ?? 100;
+  // Treat unknown quota (`percentLeft === null`) as 0 — both the text,
+  // the bar fill, and the urgency tone. The previous fallback of 100
+  // painted a full green bar next to a `?`, which read visually as
+  // "quota still full" and was misleading. Showing 0% as critical
+  // (red) keeps the tone consistent with a real 1% reading.
+  const remaining = w.percentLeft ?? 0;
   const fillPercent = Math.max(0, Math.min(remaining, 100));
-  const isWarn = w.percentLeft !== null && w.percentLeft < 50;
-  const isCritical = w.percentLeft !== null && w.percentLeft < 20;
+  const isWarn = remaining < 50;
+  const isCritical = remaining < 20;
   const label = quotaWindowDisplayName(w.name, provider) ?? w.name;
 
   let barColorClass = 'quota-strip__fill--ok';
@@ -459,7 +465,7 @@ function QuotaRowItem({
         <span className="quota-strip__window-label" title={w.name}>{label}</span>
         <span className="quota-strip__meta">
           <span className="quota-strip__percent">
-            {w.percentLeft !== null ? `${Math.round(w.percentLeft)}%` : '?'}
+            {`${Math.round(w.percentLeft ?? 0)}%`}
           </span>
           {resetText !== '' && (
             <span className="quota-strip__reset">{resetText}</span>
@@ -547,7 +553,7 @@ function CreditsRowItem({
 //   - The last bar (today, or the latest known day) is rendered at
 //     a slightly brighter shade so the "current" position is easy
 //     to find.
-function UsageSparkline({
+export function UsageSparkline({
   dailyUsage,
   currencySymbol: symbol,
   currencyCode,

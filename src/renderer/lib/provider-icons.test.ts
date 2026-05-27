@@ -47,4 +47,22 @@ describe('provider-icons mapping', () => {
     expect(getProviderIconSvg('')).toBeNull();
     expect(getProviderIconSvg('   ')).toBeNull();
   });
+
+  it('returns the same Kiro brand mark for both `kiro` and `kiro-ide` keys', () => {
+    const kiroSvg = getProviderIconSvg('kiro');
+    const kiroIdeSvg = getProviderIconSvg('kiro-ide');
+
+    expect(kiroSvg).not.toBeNull();
+    expect(kiroSvg).toContain('<svg');
+    // Sanity-check the vendored asset by looking for the rounded
+    // purple square that frames the ghost mark — `#9046FF` is
+    // Kiro's brand purple. Picking the colour value (not the
+    // mask / path geometry) keeps the assertion tolerant to
+    // minor SVG cleanup without going so loose it tolerates a
+    // different glyph entirely.
+    expect(kiroSvg).toContain('<rect');
+    expect(kiroSvg!.toLowerCase()).toContain('#9046ff');
+
+    expect(kiroIdeSvg).toBe(kiroSvg);
+  });
 });

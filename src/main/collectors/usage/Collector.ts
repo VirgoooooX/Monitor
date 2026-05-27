@@ -29,7 +29,7 @@ export interface UsageCollectorContext {
   /** Repository for reading/writing settings (e.g. watermarks). */
   settings: SettingsRepository;
   /** Current timestamp (Unix ms). Injectable for deterministic tests. */
-  now: number;
+  now: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,9 @@ export interface UsageCollectorContext {
 export interface UsageCollector {
   /** Stable identifier, e.g. 'codex', 'gemini', 'antigravity', 'opencode', 'deepseek'. */
   readonly id: string;
+
+  /** Stable identifier for the AI provider, matching provider_auth.provider e.g. 'codex', 'gemini-cli'. */
+  readonly provider: string;
 
   /**
    * Synchronous or async capability check. Determines whether the
@@ -113,7 +116,7 @@ const DIAGNOSTICS_LAST_CAPABILITY_KEY = 'diagnostics.lastCapability';
  */
 export function applyEmptyWindowGuard(
   capResult: CapabilityResult,
-  collectorId: string,
+  provider: string,
   opts: RunUsageCollectorOptions,
 ): CapabilityResult {
   if (capResult.status !== 'ok') {
@@ -125,7 +128,7 @@ export function applyEmptyWindowGuard(
   const fromTs = now - windowMs;
 
   // Check if any events were emitted for this provider within the window.
-  const aggregate = opts.usageEvents.aggregateForProvider(collectorId, {
+  const aggregate = opts.usageEvents.aggregateForProvider(provider, {
     fromTs,
     toTs: now,
   });
@@ -223,7 +226,7 @@ export async function runUsageCollector(
   const ctx: UsageCollectorContext = {
     usageEvents: opts.usageEvents,
     settings: opts.settings,
-    now,
+    now: () => now,
   };
 
   try {
@@ -236,7 +239,7 @@ export async function runUsageCollector(
   }
 
   // Apply the "ok with all zeros" guard.
-  const finalResult = applyEmptyWindowGuard(capResult, collector.id, opts);
+  const finalResult = applyEmptyWindowGuard(capResult, collector.provider, opts);
 
   // Persist and record success.
   persistCapabilityResult(opts.settings, collector.id, finalResult);

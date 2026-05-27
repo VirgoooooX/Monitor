@@ -55,6 +55,7 @@ interface HarnessOverrides {
   repo?: Partial<ProviderAuthRepository>;
   uuid?: ProviderAuthServiceDeps['uuid'];
   now?: ProviderAuthServiceDeps['now'];
+  fetchEmailForAccessToken?: ProviderAuthServiceDeps['fetchEmailForAccessToken'];
 }
 
 interface Harness {
@@ -158,6 +159,13 @@ function makeHarness(overrides: HarnessOverrides = {}): Harness {
     parse: overrides.parse ?? vi.fn().mockReturnValue(defaultParseResult()),
     uuid: overrides.uuid ?? vi.fn().mockReturnValue(FIXED_UUID),
     now: overrides.now ?? vi.fn().mockReturnValue(FIXED_NOW),
+    // Disable the live Google userinfo lookup in tests — set to
+    // `null` so `importFromFile` skips the enrichment branch
+    // entirely. Tests that want to exercise enrichment can opt in
+    // by passing a stubbed `fetchEmailForAccessToken` in
+    // overrides.
+    fetchEmailForAccessToken:
+      overrides.fetchEmailForAccessToken ?? null,
   };
 
   const service = createProviderAuthService(deps);
