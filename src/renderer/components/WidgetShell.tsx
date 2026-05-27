@@ -101,63 +101,22 @@ export function WidgetShell({
     'data-display-mode': displayMode,
   };
 
-  if (isMini) {
-    return (
-      <div
-        className="compact-frame compact-frame--mini"
-        data-testid="widget-shell"
-        role="button"
-        tabIndex={0}
-        onClick={handleClick}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleClick();
-          }
-        }}
-        {...dataProps}
-      >
-        <div className="compact-frame__backdrop" aria-hidden="true" />
-        <div className="compact-frame__ornaments" aria-hidden="true" />
-        <CompactMiniRail state={state} />
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="compact-frame"
-      data-testid="widget-shell"
-      role="button"
-      tabIndex={0}
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      {...dataProps}
-    >
-      {/* Theme decoration layers. Both are aria-hidden +
-          pointer-events: none (in CSS) so they never intercept
-          clicks targeting the shell or any interior element. */}
-      <div className="compact-frame__backdrop" aria-hidden="true" />
-      <div className="compact-frame__ornaments" aria-hidden="true" />
-
-      {/* Mini mode toggle button on top right */}
-      <button
-        type="button"
-        className="compact-mini-toggle-btn"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDisplayModeChange?.('mini');
-        }}
-        title="切换到极简模式"
-        aria-label="切换到极简模式"
-      >
-        <ArrowUpRight size={14} />
-      </button>
+  const renderExpandedContent = (showMiniToggle: boolean): JSX.Element => (
+    <>
+      {showMiniToggle && (
+        <button
+          type="button"
+          className="compact-mini-toggle-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDisplayModeChange?.('mini');
+          }}
+          title="切换到极简模式"
+          aria-label="切换到极简模式"
+        >
+          <ArrowUpRight size={14} />
+        </button>
+      )}
 
       <div className="compact-frame__content">
         {/* ── Network slot: status + node copy on the left, sparkline
@@ -201,6 +160,53 @@ export function WidgetShell({
           </div>
         </section>
       </div>
+    </>
+  );
+
+  if (isMini) {
+    return (
+      <div
+        className="compact-frame compact-frame--mini"
+        data-testid="widget-shell"
+        role="button"
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleClick();
+          }
+        }}
+        {...dataProps}
+      >
+        <div className="compact-frame__backdrop" aria-hidden="true" />
+        <div className="compact-frame__ornaments" aria-hidden="true" />
+        <CompactMiniRail state={state} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="compact-frame"
+      data-testid="widget-shell"
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
+      {...dataProps}
+    >
+      {/* Theme decoration layers. Both are aria-hidden +
+          pointer-events: none (in CSS) so they never intercept
+          clicks targeting the shell or any interior element. */}
+      <div className="compact-frame__backdrop" aria-hidden="true" />
+      <div className="compact-frame__ornaments" aria-hidden="true" />
+      {renderExpandedContent(true)}
     </div>
   );
 }

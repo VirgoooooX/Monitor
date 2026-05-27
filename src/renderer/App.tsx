@@ -108,6 +108,38 @@ const MODE_THRESHOLD = (COMPACT_WIDTH + EXPANDED_WIDTH) / 2;
 type WindowMode = 'compact' | 'expanded';
 type CompactDisplayMode = 'expanded' | 'mini';
 
+interface CompactWindowSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+const COMPACT_MINI_WIDTH = 56;
+
+function compactModeTargetSize(mode: CompactDisplayMode): CompactWindowSize | null {
+  if (mode === 'mini') {
+    const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
+    if (!miniRail) {
+      return null;
+    }
+    return {
+      width: COMPACT_MINI_WIDTH,
+      height: Math.ceil(miniRail.scrollHeight + 8),
+    };
+  }
+
+  const expandedContent =
+    document.querySelector<HTMLElement>('.compact-frame__content');
+  if (!expandedContent) {
+    return null;
+  }
+  return {
+    width: COMPACT_WIDTH,
+    // Expanded content scrollHeight includes inner padding. Add the
+    // 6 px frame margin on each side.
+    height: Math.ceil(expandedContent.scrollHeight + 12),
+  };
+}
+
 function detectWindowMode(): WindowMode {
   if (typeof window === 'undefined') {
     return 'compact';
@@ -289,33 +321,32 @@ function CompactRoot({
   const displayModeRef = useRef<CompactDisplayMode>(displayMode);
   displayModeRef.current = displayMode;
 
-  const requestCompactWindowSize = useCallback((
-    mode: CompactDisplayMode,
-    measuredHeight: number,
-  ): void => {
+  const requestCompactWindowSize = useCallback((size: CompactWindowSize): void => {
     const desktop = window.desktop;
     const isPreview = isLocalBrowserPreview();
 
-    let width = 360;
-    const height = measuredHeight;
-
-    if (mode === 'mini') {
-      width = 56;
-    }
-
     if (isPreview) {
       const root = document.getElementById('root');
-      document.body.style.width = `${width}px`;
-      document.body.style.height = `${height}px`;
+      document.body.style.width = `${size.width}px`;
+      document.body.style.height = `${size.height}px`;
       if (root) {
-        root.style.width = `${width}px`;
-        root.style.height = `${height}px`;
+        root.style.width = `${size.width}px`;
+        root.style.height = `${size.height}px`;
       }
     }
 
     if (desktop && 'resizeCompactWindow' in desktop) {
-      desktop.resizeCompactWindow({ width, height }).catch(() => {});
+      desktop.resizeCompactWindow(size).catch(() => {});
     }
+  }, []);
+
+  const handleDisplayModeChange = useCallback((nextMode: CompactDisplayMode): void => {
+    const currentMode = displayModeRef.current;
+    if (nextMode === currentMode) {
+      return;
+    }
+
+    setDisplayMode(nextMode);
   }, []);
 
   useEffect(() => {
@@ -325,35 +356,20 @@ function CompactRoot({
     const measure = (): void => {
       raf = 0;
       const currentMode = displayModeRef.current;
-      let width: number;
-      let height: number;
-
-      if (currentMode === 'mini') {
-        const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
-        if (!miniRail) {
-          return;
-        }
-        width = 56;
-        const measuredHeight = miniRail.scrollHeight;
-        height = Math.ceil(measuredHeight + 8);
-      } else {
-        const frame = document.querySelector<HTMLElement>('[data-testid="widget-shell"]');
-        if (!frame) {
-          return;
-        }
-        width = 360;
-        // frame.scrollHeight already includes content + inner padding.
-        // Add 12 for the 6 px frame margin on each side.
-        const measuredHeight = frame.scrollHeight;
-        height = Math.ceil(measuredHeight + 12);
-      }
-
-      if (lastSize?.width === width && lastSize.height === height) {
+      const measuredSize = compactModeTargetSize(currentMode);
+      if (!measuredSize) {
         return;
       }
-      lastSize = { width, height };
 
-      requestCompactWindowSize(currentMode, height);
+      if (
+        lastSize?.width === measuredSize.width &&
+        lastSize.height === measuredSize.height
+      ) {
+        return;
+      }
+      lastSize = measuredSize;
+
+      requestCompactWindowSize(measuredSize);
     };
 
     const schedule = (): void => {
@@ -438,7 +454,7 @@ function CompactRoot({
       state={state}
       appearance={appearance}
       displayMode={displayMode}
-      onDisplayModeChange={setDisplayMode}
+      onDisplayModeChange={handleDisplayModeChange}
     />
   );
 }
