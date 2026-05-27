@@ -396,6 +396,11 @@ export type QuotaCapability =
  *
  * DeepSeek resolves to `official` because the first-party
  * `/user/balance` endpoint returns account credits.
+ *
+ * Xiaomi resolves to `official` because the platform exposes
+ * `/api/v1/balance` returning recharge credits in CNY/USD; the
+ * adapter trades the long-lived `passToken` for a short-lived
+ * `serviceToken` on demand.
  */
 export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = {
   'claude-code': 'official',
@@ -404,7 +409,7 @@ export const PROVIDER_DEFAULT_CAPABILITY: Record<ProviderId, QuotaCapability> = 
   antigravity: 'official',
   'gemini-api': 'health_only',
   deepseek: 'official',
-  xiaomi: 'health_only',
+  xiaomi: 'official',
   'openai-compatible': 'health_only',
 };
 
@@ -544,10 +549,24 @@ export interface CreateProviderAuthApiKeyInput {
   provider: ManualApiKeyProvider;
   /** Optional user-readable label. The service generates a sensible default when blank. */
   label?: string;
-  /** Required, non-empty. Encrypted at rest under `cpaAuth.providerAuth.<id>`. */
-  apiKey: string;
+  /**
+   * Required for every provider EXCEPT `xiaomi`. Encrypted at rest
+   * under `cpaAuth.providerAuth.<id>`. Xiaomi accounts use
+   * `xiaomiPassToken` + `xiaomiUserId` instead.
+   */
+  apiKey?: string;
   /** Required for `'openai-compatible'`; optional otherwise. */
   baseUrl?: string;
+  /**
+   * Xiaomi MiMo only — `passToken` cookie copied from
+   * `account.xiaomi.com`. Required when `provider === 'xiaomi'`.
+   */
+  xiaomiPassToken?: string;
+  /**
+   * Xiaomi MiMo only — `userId` cookie copied from
+   * `account.xiaomi.com`. Required when `provider === 'xiaomi'`.
+   */
+  xiaomiUserId?: string;
 }
 
 /**
@@ -584,6 +603,17 @@ export interface ProviderAuthSecretPayload {
   /** Epoch ms; absent for plain API-key payloads. */
   expiresAt?: number;
   baseUrl?: string;
+  /**
+   * Xiaomi MiMo only — long-lived `passToken` cookie copied from
+   * `account.xiaomi.com`. Combined with `xiaomiUserId` to derive
+   * the short-lived `serviceToken` on demand. NEVER logged.
+   */
+  xiaomiPassToken?: string;
+  /**
+   * Xiaomi MiMo only — numeric `userId` cookie from
+   * `account.xiaomi.com`. Stored alongside `xiaomiPassToken`.
+   */
+  xiaomiUserId?: string;
   /** Verbatim `metadata.*` block from the CPA file (minus secret keys). */
   rawMetadata?: Record<string, unknown>;
   /** Verbatim `attributes.*` block from the CPA file (minus secret keys). */

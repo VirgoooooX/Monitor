@@ -554,3 +554,368 @@ describe('official quota adapters — DeepSeek', () => {
     ]);
   });
 });
+describe('official quota adapters — Xiaomi MiMo', () => {
+  // Helper: build a fake RequestRaw that returns scripted responses
+  // keyed by URL substring. Each script entry consumes itself; passing
+  // the same URL twice returns the next scripted response.
+  type RawResponse = {
+    status: number;
+    headers?: Readonly<Record<string, readonly string[]>>;
+    body: string;
+  };
+
+  function makeRequestRaw(
+    script: ReadonlyArray<{ urlContains: string; respond: () => RawResponse }>,
+  ): {
+    requestRaw: (input: RequestJsonInput) => Promise<{
+      status: number;
+      headers: Readonly<Record<string, readonly string[]>>;
+      body: string;
+    }>;
+    calls: RequestJsonInput[];
+  } {
+    const calls: RequestJsonInput[] = [];
+    const remaining = script.map((entry) => ({ ...entry, used: false }));
+    return {
+      calls,
+      requestRaw: async (input) => {
+        calls.push(input);
+        const idx = remaining.findIndex(
+          (entry) => !entry.used && input.url.includes(entry.urlContains),
+        );
+        if (idx === -1) {
+          throw new Error(`unexpected request: ${input.url}`);
+        }
+        remaining[idx]!.used = true;
+        const r = remaining[idx]!.respond();
+        return {
+          status: r.status,
+          headers: r.headers ?? {},
+          body: r.body,
+        };
+      },
+    };
+  }
+
+  // Fully synthetic credentials — never touch real account values.
+  const FAKE_PASS_TOKEN = 'V1:fake-pass-token';
+  const FAKE_USER_ID = '00000';
+  const FAKE_NONCE = 'fake-nonce';
+  const FAKE_SSECURITY = 'fake-ssecurity';
+  const FAKE_LOCATION =
+    'https://platform.xiaomimimo.com/sts?d=fake&nonce=' + FAKE_NONCE;
+  const FAKE_SERVICE_TOKEN = 'fake-service-token';
+
+  const SUCCESS_BALANCE_BODY = JSON.stringify({
+    code: 0,
+    message: '',
+    data: {
+      balance: '24.63',
+      cashBalance: '24.63',
+      giftBalance: '0.00',
+      frozenBalance: '0.00',
+      currency: 'CNY',
+      overdraftLimit: '0.00',
+      remainingOverdraftLimit: '0.00',
+    },
+  });
+
+  const SERVICE_LOGIN_BODY = '&&&START&&&' + JSON.stringify({
+    code: 0,
+    nonce: FAKE_NONCE,
+    ssecurity: FAKE_SSECURITY,
+    location: FAKE_LOCATION,
+  });
+
+  it('exchanges passToken for serviceToken and parses balance response', async () => {
+    const { requestRaw, calls } = makeRequestRaw([
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({ status: 200, body: SERVICE_LOGIN_BODY }),
+      },
+      {
+        urlContains: 'platform.xiaomimimo.com/sts',
+        respond: () => ({
+          status: 200,
+          headers: {
+            'set-cookie': [
+              `api-platform_serviceToken="${FAKE_SERVICE_TOKEN}"; Path=/`,
+              'userId=12345',
+            ],
+          },
+          body: '',
+        }),
+      },
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+    ]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: requestRaw as any,
+    });
+
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.status).toBe('ok');
+    expect(snapshot.kind).toBe('credits');
+    expect(snapshot.windows).toHaveLength(1);
+    expect(snapshot.windows[0]!.name).toBe(
+      'credits:CNY 总额 24.63 / 现金 24.63 / 赠金 0.00',
+    );
+    expect(snapshot.windows[0]!.percentLeft).toBeNull();
+
+    // Verify the request order and the cookie headers.
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.url).toContain('sid=api-platform');
+    expect(calls[0]!.headers?.Cookie).toBe(
+      `passToken=${FAKE_PASS_TOKEN}; userId=${FAKE_USER_ID}`,
+    );
+    expect(calls[1]!.url).toContain('clientSign=');
+    expect(calls[2]!.url).toBe(
+      'https://platform.xiaomimimo.com/api/v1/balance',
+    );
+    expect(calls[2]!.headers?.Cookie).toBe(
+      `api-platform_serviceToken=${FAKE_SERVICE_TOKEN}; userId=${FAKE_USER_ID}`,
+    );
+  });
+
+  it('returns auth_missing when the passToken cookie is absent', async () => {
+    const { requestRaw } = makeRequestRaw([]);
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      // Simulate a legacy row that was imported as an API key only.
+      getSecret: () => ({ apiKey: 'sk-legacy' }),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('auth_missing');
+  });
+
+  it('reuses the cached serviceToken on subsequent refreshes', async () => {
+    const cache = new Map<string, string>();
+    const { requestRaw, calls } = makeRequestRaw([
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({ status: 200, body: SERVICE_LOGIN_BODY }),
+      },
+      {
+        urlContains: 'platform.xiaomimimo.com/sts',
+        respond: () => ({
+          status: 200,
+          headers: {
+            'set-cookie': [
+              `api-platform_serviceToken="${FAKE_SERVICE_TOKEN}"; Path=/`,
+            ],
+          },
+          body: '',
+        }),
+      },
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: requestRaw as any,
+      serviceTokenCache: cache,
+    });
+
+    const account = row('xiaomi');
+    await adapter.refresh({
+      account,
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+    await adapter.refresh({
+      account,
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW + 1000,
+    });
+
+    // Three calls for the first refresh + one for the second (cached).
+    expect(calls).toHaveLength(4);
+    expect(calls[3]!.url).toBe(
+      'https://platform.xiaomimimo.com/api/v1/balance',
+    );
+    expect(cache.get(account.id)).toBe(FAKE_SERVICE_TOKEN);
+  });
+
+  it('refreshes the serviceToken when the cached one is rejected', async () => {
+    const cache = new Map<string, string>();
+    cache.set('xiaomi-id', 'stale-token');
+    const { requestRaw, calls } = makeRequestRaw([
+      // First /balance with stale token -> 401
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 401, body: '' }),
+      },
+      // Re-exchange
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({ status: 200, body: SERVICE_LOGIN_BODY }),
+      },
+      {
+        urlContains: 'platform.xiaomimimo.com/sts',
+        respond: () => ({
+          status: 200,
+          headers: {
+            'set-cookie': [
+              `api-platform_serviceToken="${FAKE_SERVICE_TOKEN}"; Path=/`,
+            ],
+          },
+          body: '',
+        }),
+      },
+      // Retry /balance with fresh token
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: requestRaw as any,
+      serviceTokenCache: cache,
+    });
+
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.status).toBe('ok');
+    expect(calls).toHaveLength(4);
+    expect(cache.get('xiaomi-id')).toBe(FAKE_SERVICE_TOKEN);
+  });
+
+  it('reports auth_expired when the passToken itself is invalid', async () => {
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({
+          status: 200,
+          // Server returns a 200 with no `location` field — this is
+          // how Xiaomi signals an expired passToken.
+          body: '&&&START&&&' + JSON.stringify({ code: 70016 }),
+        }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('auth_expired');
+  });
+
+  it('preserves a 19-digit nonce verbatim across JSON parse (BigInt safety)', async () => {
+    // Real Xiaomi nonces are 19-digit JSON numbers that overflow
+    // Number.MAX_SAFE_INTEGER; precision must be preserved or the
+    // SHA1 clientSign fails to match. This test pins that the
+    // adapter extracts the digit string from the raw body rather
+    // than re-stringifying the parsed double.
+    const BIG_NONCE = '5964210357239677123';
+    const SERVICE_LOGIN_BODY_BIG_NONCE =
+      '&&&START&&&{"code":0,"nonce":' + BIG_NONCE +
+      ',"ssecurity":"' + FAKE_SSECURITY +
+      '","location":"' + FAKE_LOCATION + '"}';
+
+    let observedStsUrl = '';
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({ status: 200, body: SERVICE_LOGIN_BODY_BIG_NONCE }),
+      },
+      {
+        urlContains: 'platform.xiaomimimo.com/sts',
+        respond: () => ({
+          status: 200,
+          headers: {
+            'set-cookie': [
+              `api-platform_serviceToken="${FAKE_SERVICE_TOKEN}"; Path=/`,
+            ],
+          },
+          body: '',
+        }),
+      },
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+    ]);
+
+    // Wrap requestRaw to capture the sts URL we end up issuing.
+    const wrappedRaw = async (input: RequestJsonInput): Promise<{
+      status: number;
+      headers: Readonly<Record<string, readonly string[]>>;
+      body: string;
+    }> => {
+      if (input.url.includes('platform.xiaomimimo.com/sts')) {
+        observedStsUrl = input.url;
+      }
+      return requestRaw(input);
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: wrappedRaw as any,
+    });
+
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.status).toBe('ok');
+
+    // Compute the expected clientSign from the verbatim 19-digit nonce.
+    const crypto = await import('node:crypto');
+    const expectedSign = crypto
+      .createHash('sha1')
+      .update(`nonce=${BIG_NONCE}&${FAKE_SSECURITY}`, 'utf-8')
+      .digest('base64');
+    const expectedQuery = `clientSign=${encodeURIComponent(expectedSign)}`;
+    expect(observedStsUrl).toContain(expectedQuery);
+  });
+});

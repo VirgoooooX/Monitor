@@ -146,6 +146,27 @@ export interface RequestJsonInput {
 
 export type RequestJson = <T>(input: RequestJsonInput) => Promise<T>;
 
+/**
+ * Lower-level transport for adapters that need to inspect HTTP
+ * status codes, response bodies that aren't JSON, or `Set-Cookie`
+ * headers. Unlike {@link requestJson}, this helper:
+ *
+ *   - never throws on non-2xx responses (returns the status verbatim)
+ *   - does not follow redirects
+ *   - returns the raw body as a UTF-8 string
+ *   - exposes the response headers map (lower-cased keys)
+ *
+ * Body size is still capped at {@link MAX_RESPONSE_BYTES} to bound
+ * memory; oversized responses reject with `upstream_changed`.
+ */
+export interface RawHttpResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, readonly string[]>>;
+  readonly body: string;
+}
+
+export type RequestRaw = (input: RequestJsonInput) => Promise<RawHttpResponse>;
+
 export const requestJson: RequestJson = async <T>(
   input: RequestJsonInput,
 ): Promise<T> => {
@@ -261,6 +282,111 @@ export const requestJson: RequestJson = async <T>(
       abort();
       return;
     }
+    input.signal?.addEventListener('abort', abort, { once: true });
+
+    if (bodyText !== undefined) req.write(bodyText);
+    req.end();
+  });
+};
+
+/**
+ * Implementation of {@link RequestRaw}. Mirrors {@link requestJson}'s
+ * abort + timeout + size-cap behaviour but never parses the body and
+ * never throws on non-2xx — returning the status / headers / body
+ * verbatim is part of the contract.
+ */
+export const requestRaw: RequestRaw = async (
+  input: RequestJsonInput,
+): Promise<RawHttpResponse> => {
+  return new Promise<RawHttpResponse>((resolve, reject) => {
+    const parsed = new URL(input.url);
+    const mod = parsed.protocol === 'https:' ? https : http;
+    const method = input.method ?? 'GET';
+    const bodyIsForm = input.body instanceof URLSearchParams;
+    const bodyText = input.body === undefined
+      ? undefined
+      : bodyIsForm
+        ? input.body.toString()
+        : JSON.stringify(input.body);
+    const headers: Record<string, string> = { ...(input.headers ?? {}) };
+    if (bodyText !== undefined) {
+      headers['Content-Type'] = headers['Content-Type'] ?? (
+        bodyIsForm ? 'application/x-www-form-urlencoded' : 'application/json'
+      );
+      headers['Content-Length'] = Buffer.byteLength(bodyText).toString();
+    }
+
+    let settled = false;
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const succeed = (value: RawHttpResponse): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    let req: http.ClientRequest;
+    const abort = (): void => {
+      req.destroy();
+      fail(new ProviderAdapterError('network_error', 'request aborted'));
+    };
+    const cleanup = (): void => {
+      input.signal?.removeEventListener('abort', abort);
+    };
+
+    req = mod.request(
+      {
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method,
+        headers,
+        timeout: input.timeoutMs ?? 15000,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_RESPONSE_BYTES) {
+            res.destroy();
+            fail(new ProviderAdapterError('upstream_changed', 'upstream response too large'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on('end', () => {
+          // Normalise headers: lowercase keys; multi-valued cookies
+          // arrive as string[] from Node, single-valued as string.
+          const out: Record<string, string[]> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (v === undefined) continue;
+            out[k.toLowerCase()] = Array.isArray(v) ? [...v] : [v];
+          }
+          succeed({
+            status,
+            headers: out,
+            body: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      },
+    );
+    req.on('error', () => {
+      fail(new ProviderAdapterError('network_error', 'network request failed'));
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      fail(new ProviderAdapterError('network_error', 'request timeout'));
+    });
+
+    if (input.signal?.aborted) { abort(); return; }
     input.signal?.addEventListener('abort', abort, { once: true });
 
     if (bodyText !== undefined) req.write(bodyText);

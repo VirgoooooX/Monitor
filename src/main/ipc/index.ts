@@ -1777,10 +1777,16 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       try {
         const input: import('../types').CreateProviderAuthApiKeyInput = {
           provider: parsed.data.provider,
-          apiKey: parsed.data.apiKey,
         };
+        if (parsed.data.apiKey !== undefined) input.apiKey = parsed.data.apiKey;
         if (parsed.data.label !== undefined) input.label = parsed.data.label;
         if (parsed.data.baseUrl !== undefined) input.baseUrl = parsed.data.baseUrl;
+        if (parsed.data.xiaomiPassToken !== undefined) {
+          input.xiaomiPassToken = parsed.data.xiaomiPassToken;
+        }
+        if (parsed.data.xiaomiUserId !== undefined) {
+          input.xiaomiUserId = parsed.data.xiaomiUserId;
+        }
         const value = service.createApiKey(input);
         return { ok: true, value };
       } catch (err) {

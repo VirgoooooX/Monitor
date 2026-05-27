@@ -313,9 +313,19 @@ function ProviderAuthRow({
 }: ProviderAuthRowProps): JSX.Element {
   const identifier = formatIdentifier(row.accountId, row.projectId);
   const isExpired = row.lastErrorCode === 'auth_expired';
+  // Gemini CLI / Antigravity / Xiaomi rows allow one retry on
+  // `auth_expired`:
+  //   - Gemini CLI / Antigravity: CPA exports carry ambiguous
+  //     timestamp fields that can be misread as token expiry, so
+  //     a retry frequently succeeds without user intervention.
+  //   - Xiaomi: the cached serviceToken can be invalidated by the
+  //     gateway before its nominal TTL; a refresh re-runs the
+  //     passToken→serviceToken exchange and recovers transparently.
   const canRetryExpired =
     isExpired &&
-    (row.provider === 'gemini-cli' || row.provider === 'antigravity');
+    (row.provider === 'gemini-cli' ||
+      row.provider === 'antigravity' ||
+      row.provider === 'xiaomi');
   const isDisabled = !row.enabled;
 
   // Refresh is blocked when:
@@ -421,7 +431,13 @@ function ProviderAuthRow({
         </p>
       )}
 
-      {/* ── Auth-expired hint: tells the user how to recover ── */}
+      {/* ── Auth-expired hint: tells the user how to recover.
+            Xiaomi accounts authenticate via a cookie pair pasted in
+            the API-key form, NOT a CPA export, so the recovery copy
+            is provider-specific. The Xiaomi branch is checked
+            BEFORE the canRetryExpired generic copy because Xiaomi
+            qualifies for retry but its recovery instructions
+            (re-paste passToken / userId) are unique. ──── */}
       {isExpired && (
         <p
           className="provider-auth-list__error-hint"
@@ -429,9 +445,17 @@ function ProviderAuthRow({
           data-testid={`provider-auth-list-row-${row.id}-expired-hint`}
         >
           <AlertCircle size={12} strokeWidth={2} aria-hidden="true" />
-          {canRetryExpired
-            ? '认证状态可能已过期，可先刷新重试；仍失败再从 CPA 重新导出 / 导入'
-            : '认证已过期，请从 CPA 重新导出 / 导入'}
+          {row.provider === 'xiaomi'
+            ? '小米 passToken 已被服务端拒绝；请从 account.xiaomi.com 重新复制 passToken 与 userId 后保存'
+            : canRetryExpired
+              ? '认证状态可能已过期，可先刷新重试；仍失败再从 CPA 重新导出 / 导入'
+              : '认证已过期，请从 CPA 重新导出 / 导入'}
+          {row.lastErrorMessage !== null && (
+            <span className="provider-auth-list__error-detail">
+              {' · '}
+              {row.lastErrorMessage}
+            </span>
+          )}
         </p>
       )}
 

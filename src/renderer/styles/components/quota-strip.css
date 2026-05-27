@@ -157,14 +157,27 @@
 }
 
 .quota-strip__credits-amount {
-  flex: 0 0 auto;
-  min-width: 32px;
-  font-size: 11.5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   color: var(--color-ok);
-  text-align: right;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quota-strip__credits-tag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 

@@ -491,6 +491,12 @@ export function SettingsView(): JSX.Element {
   const [apiKeyValue, setApiKeyValue] = useState('');
   const [apiKeyBaseUrl, setApiKeyBaseUrl] = useState('');
   const [apiKeyShow, setApiKeyShow] = useState(false);
+  // Xiaomi MiMo only — the official `/api/v1/balance` endpoint
+  // authenticates via a `passToken` + `userId` cookie pair (not an
+  // API key). The fields are hidden for every other provider.
+  const [xiaomiPassToken, setXiaomiPassToken] = useState('');
+  const [xiaomiUserId, setXiaomiUserId] = useState('');
+  const [xiaomiPassTokenShow, setXiaomiPassTokenShow] = useState(false);
 
   // Load initial settings
   useEffect(() => {
@@ -905,6 +911,50 @@ export function SettingsView(): JSX.Element {
   const handleProviderAuthCreateApiKey = useCallback(async () => {
     const desktop = window.desktop;
     if (!desktop) return;
+
+    // Xiaomi MiMo uses a cookie-pair (passToken + userId) instead of
+    // a single API key string; everyone else uses the standard
+    // `apiKey` (+ optional baseUrl for openai-compatible).
+    if (apiKeyProvider === 'xiaomi') {
+      const trimmedPassToken = xiaomiPassToken.trim();
+      const trimmedUserId = xiaomiUserId.trim();
+      if (trimmedPassToken.length === 0 || trimmedUserId.length === 0) {
+        setProviderAuthError({
+          code: 'validation',
+          message: '小米 Mimo 必须填写 passToken 和 userId',
+        });
+        return;
+      }
+      setProviderAuthBusyId('__create__');
+      setProviderAuthError(null);
+      try {
+        const input: CreateProviderAuthApiKeyInput = {
+          provider: 'xiaomi',
+          xiaomiPassToken: trimmedPassToken,
+          xiaomiUserId: trimmedUserId,
+        };
+        if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
+        const row = await desktop.createProviderAuthApiKey(input);
+        setProviderAuthRows((prev) => {
+          const idx = prev.findIndex((r) => r.id === row.id);
+          if (idx === -1) return [...prev, row];
+          const next = prev.slice();
+          next[idx] = row;
+          return next;
+        });
+        setApiKeyLabel('');
+        setXiaomiPassToken('');
+        setXiaomiUserId('');
+        setXiaomiPassTokenShow(false);
+        setApiKeyFormOpen(false);
+      } catch (err: unknown) {
+        setProviderAuthError(extractIpcError(err));
+      } finally {
+        setProviderAuthBusyId(null);
+      }
+      return;
+    }
+
     const trimmedKey = apiKeyValue.trim();
     if (trimmedKey.length === 0) {
       setProviderAuthError({
@@ -953,7 +1003,14 @@ export function SettingsView(): JSX.Element {
     } finally {
       setProviderAuthBusyId(null);
     }
-  }, [apiKeyProvider, apiKeyLabel, apiKeyValue, apiKeyBaseUrl]);
+  }, [
+    apiKeyProvider,
+    apiKeyLabel,
+    apiKeyValue,
+    apiKeyBaseUrl,
+    xiaomiPassToken,
+    xiaomiUserId,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Save / discard handlers
@@ -1692,48 +1749,111 @@ export function SettingsView(): JSX.Element {
                 </div>
 
                 <div className="settings-view__row">
-                  <Field
-                    label="API Key"
-                    hint="保存后即加密落库；保存成功不再回显"
-                  >
-                    <div className="settings-view__input-affix">
-                      <input
-                        className="settings-view__input"
-                        type={apiKeyShow ? 'text' : 'password'}
-                        value={apiKeyValue}
-                        onChange={(e) => setApiKeyValue(e.target.value)}
-                        placeholder="sk-..."
-                        autoComplete="off"
-                        disabled={providerAuthBusyId === '__create__'}
-                        data-testid="provider-auth-api-key-value"
-                      />
-                      <button
-                        type="button"
-                        className="settings-view__input-action"
-                        onClick={() => setApiKeyShow((v) => !v)}
-                        aria-label={apiKeyShow ? '隐藏 API key' : '显示 API key'}
+                  {apiKeyProvider === 'xiaomi' ? (
+                    <>
+                      <Field
+                        label="passToken"
+                        hint="从 account.xiaomi.com Cookie 复制；保存后即加密落库"
                       >
-                        {apiKeyShow ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                    </div>
-                  </Field>
+                        <div className="settings-view__input-affix">
+                          <input
+                            className="settings-view__input"
+                            type={xiaomiPassTokenShow ? 'text' : 'password'}
+                            value={xiaomiPassToken}
+                            onChange={(e) =>
+                              setXiaomiPassToken(e.target.value)
+                            }
+                            placeholder="V1:..."
+                            autoComplete="off"
+                            disabled={providerAuthBusyId === '__create__'}
+                            data-testid="provider-auth-xiaomi-pass-token"
+                          />
+                          <button
+                            type="button"
+                            className="settings-view__input-action"
+                            onClick={() =>
+                              setXiaomiPassTokenShow((v) => !v)
+                            }
+                            aria-label={
+                              xiaomiPassTokenShow
+                                ? '隐藏 passToken'
+                                : '显示 passToken'
+                            }
+                          >
+                            {xiaomiPassTokenShow ? (
+                              <EyeOff size={14} />
+                            ) : (
+                              <Eye size={14} />
+                            )}
+                          </button>
+                        </div>
+                      </Field>
 
-                  {apiKeyProvider === 'openai-compatible' && (
-                    <Field
-                      label="Base URL"
-                      hint="必填，例如 https://api.example.com/v1"
-                    >
-                      <input
-                        className="settings-view__input"
-                        type="url"
-                        value={apiKeyBaseUrl}
-                        onChange={(e) => setApiKeyBaseUrl(e.target.value)}
-                        placeholder="https://..."
-                        autoComplete="off"
-                        disabled={providerAuthBusyId === '__create__'}
-                        data-testid="provider-auth-api-key-base-url"
-                      />
-                    </Field>
+                      <Field
+                        label="userId"
+                        hint="同一域下 Cookie 中的数字账号 id"
+                      >
+                        <input
+                          className="settings-view__input"
+                          type="text"
+                          value={xiaomiUserId}
+                          onChange={(e) => setXiaomiUserId(e.target.value)}
+                          placeholder="例如 14800000"
+                          autoComplete="off"
+                          inputMode="numeric"
+                          disabled={providerAuthBusyId === '__create__'}
+                          data-testid="provider-auth-xiaomi-user-id"
+                        />
+                      </Field>
+                    </>
+                  ) : (
+                    <>
+                      <Field
+                        label="API Key"
+                        hint="保存后即加密落库；保存成功不再回显"
+                      >
+                        <div className="settings-view__input-affix">
+                          <input
+                            className="settings-view__input"
+                            type={apiKeyShow ? 'text' : 'password'}
+                            value={apiKeyValue}
+                            onChange={(e) => setApiKeyValue(e.target.value)}
+                            placeholder="sk-..."
+                            autoComplete="off"
+                            disabled={providerAuthBusyId === '__create__'}
+                            data-testid="provider-auth-api-key-value"
+                          />
+                          <button
+                            type="button"
+                            className="settings-view__input-action"
+                            onClick={() => setApiKeyShow((v) => !v)}
+                            aria-label={
+                              apiKeyShow ? '隐藏 API key' : '显示 API key'
+                            }
+                          >
+                            {apiKeyShow ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        </div>
+                      </Field>
+
+                      {apiKeyProvider === 'openai-compatible' && (
+                        <Field
+                          label="Base URL"
+                          hint="必填，例如 https://api.example.com/v1"
+                        >
+                          <input
+                            className="settings-view__input"
+                            type="url"
+                            value={apiKeyBaseUrl}
+                            onChange={(e) => setApiKeyBaseUrl(e.target.value)}
+                            placeholder="https://..."
+                            autoComplete="off"
+                            disabled={providerAuthBusyId === '__create__'}
+                            data-testid="provider-auth-api-key-base-url"
+                          />
+                        </Field>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -1757,6 +1877,9 @@ export function SettingsView(): JSX.Element {
                       setApiKeyFormOpen(false);
                       setApiKeyValue('');
                       setApiKeyShow(false);
+                      setXiaomiPassToken('');
+                      setXiaomiUserId('');
+                      setXiaomiPassTokenShow(false);
                       setProviderAuthError(null);
                     }}
                     disabled={providerAuthBusyId === '__create__'}

@@ -317,8 +317,12 @@ function QuotaRowItem({
   );
 }
 
-// Credits balances render as a single-line badge: label on the left,
-// formatted balance on the right. No progress bar, no reset time.
+// Credits balances render as a single-line badge: amount on the left
+// as the focal point (matching the visual weight of the model-name
+// label on quota rows), with a muted "余额 · CCY" tag on the right.
+// No progress bar — a perpetually-100% green bar would be visually
+// indistinguishable from "quota still full" and is misleading for a
+// monetary balance with no reset semantics.
 function CreditsRowItem({
   credits,
 }: {
@@ -342,12 +346,11 @@ function CreditsRowItem({
       title={fullName}
     >
       <div className="quota-strip__row-head">
-        <span className="quota-strip__window-label">余额</span>
+        <span className="quota-strip__credits-amount">{display}</span>
         <span className="quota-strip__meta">
-          <span className="quota-strip__credits-amount">{display}</span>
-          {symbol !== '' && credits.currency.length > 0 && (
-            <span className="quota-strip__reset">{credits.currency}</span>
-          )}
+          <span className="quota-strip__credits-tag">
+            余额{credits.currency.length > 0 ? ` · ${credits.currency}` : ''}
+          </span>
         </span>
       </div>
     </div>

@@ -1152,10 +1152,50 @@ export const createProviderAuthApiKeyInputSchema = z
   .object({
     provider: manualApiKeyProviderSchema,
     label: z.string().trim().min(1).max(120).optional(),
-    apiKey: trimmedNonEmpty,
+    // `apiKey` is required for every manual-API-key provider EXCEPT
+    // `xiaomi`, which authenticates via `xiaomiPassToken` +
+    // `xiaomiUserId` cookies instead. The cross-field check below
+    // enforces the per-provider rules in one place.
+    apiKey: z.string().trim().min(1).optional(),
     baseUrl: optionalBaseUrlSchema,
+    xiaomiPassToken: z.string().trim().min(1).optional(),
+    xiaomiUserId: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.provider === 'xiaomi') {
+      // Xiaomi requires the cookie pair, NOT an API key.
+      if (!input.xiaomiPassToken) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['xiaomiPassToken'],
+          message: 'xiaomiPassToken is required for xiaomi accounts',
+        });
+      }
+      if (!input.xiaomiUserId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['xiaomiUserId'],
+          message: 'xiaomiUserId is required for xiaomi accounts',
+        });
+      }
+    } else {
+      if (!input.apiKey) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['apiKey'],
+          message: 'apiKey is required for this provider',
+        });
+      }
+      if (input.provider === 'openai-compatible' && !input.baseUrl) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['baseUrl'],
+          message: 'baseUrl is required for openai-compatible accounts',
+        });
+      }
+    }
+  });
 
 /**
  * Input for `desktop:setProviderAuthEnabled`. Idempotent on a

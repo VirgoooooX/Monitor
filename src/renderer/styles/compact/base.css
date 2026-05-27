@@ -26,16 +26,39 @@
  * The two decoration layers carry `pointer-events: none` so they never
  * intercept the click that opens the expanded window.
  *
- * Themes overload only the visual tokens declared on
- * `.compact-frame[data-compact-theme='…']`; layout & spacing live
- * here and are not theme-specific.
+ * Theming contract
+ * ----------------
+ * Themes overload two kinds of CSS custom properties declared on
+ * `.compact-frame`:
+ *
+ *   1. Visual tokens   — colors, materials, radius, shadow, font.
+ *   2. Layout tokens   — margins, paddings, gaps. Themes that need
+ *                        their own density tweak the tokens; they do
+ *                        not write `padding`/`margin` declarations on
+ *                        slot primitives. The only exceptions are
+ *                        themes whose visual identity is "each slot
+ *                        is its own card" (material-you,
+ *                        soft-neumorph, device-oled) — those declare
+ *                        slot-level padding because the inset cards
+ *                        are part of the design.
+ *
+ * Layout token cheat-sheet:
+ *   --compact-frame-margin       outer gutter
+ *   --compact-pad-x              inner horizontal padding
+ *   --compact-pad-y-top          inner top padding
+ *   --compact-pad-y-bottom       inner bottom padding (full+expanded)
+ *   --compact-content-gap        gap between network and usage slots
+ *   --compact-network-pad-bottom space below network row
+ *   --compact-usage-pad-top      space above first quota row
+ *   --compact-usage-pad-bottom   space below last quota row
  */
 
 /* ── Frame base ─────────────────────────────────────────────────── */
 
 .compact-frame {
-  /* Default tokens — every theme block re-declares these. The defaults
-     keep the widget readable even before a theme stylesheet loads. */
+  /* Default visual tokens — every theme block re-declares these. The
+     defaults keep the widget readable even before a theme stylesheet
+     loads. */
   --compact-bg: rgba(20, 20, 22, 0.92);
   --compact-surface: rgba(255, 255, 255, 0.06);
   --compact-surface-strong: rgba(255, 255, 255, 0.10);
@@ -53,6 +76,37 @@
   --compact-shadow: 0 14px 38px rgba(0, 0, 0, 0.32);
   --compact-font: var(--ui-font-family, 'Inter', system-ui, sans-serif);
 
+  /* ── Layout tokens ────────────────────────────────────────────
+     All compact-window spacing flows from these so every theme uses
+     the same grammar. Themes that need their own density (legacy v1
+     widgets, OLED inset screen) override the tokens — never the
+     individual `padding`/`gap` declarations.
+
+       --compact-frame-margin       Outer gutter outside the frame
+                                    (so glows/borders aren't clipped).
+       --compact-pad-x              Inner horizontal padding.
+       --compact-pad-y-top          Inner top padding.
+       --compact-pad-y-bottom       Inner bottom padding (shared by
+                                    full + expanded).
+       --compact-content-gap        Gap between network and usage
+                                    slots (0 by default — divider
+                                    line provides separation).
+       --compact-network-pad-bottom Distance below status hero/node
+                                    rail / sparkline before divider.
+       --compact-usage-pad-top      Distance above first quota row.
+       --compact-usage-pad-bottom   Distance below last quota row;
+                                    chevron is invisible at rest so
+                                    we keep this tight.
+  */
+  --compact-frame-margin: 6px;
+  --compact-pad-x: 10px;
+  --compact-pad-y-top: 6px;
+  --compact-pad-y-bottom: 4px;
+  --compact-content-gap: 0px;
+  --compact-network-pad-bottom: 6px;
+  --compact-usage-pad-top: 6px;
+  --compact-usage-pad-bottom: 4px;
+
   box-sizing: border-box;
   position: relative;
   isolation: isolate;
@@ -63,14 +117,13 @@
   -webkit-app-region: no-drag;
 
   /* Outer shell margin — every theme that wants a true card look
-     leaves a 6 px gutter so its border + glow can paint without
+     leaves a small gutter so its border + glow can paint without
      being clipped by the BrowserWindow. Themes that want to fill
-     edge-to-edge override `.compact-frame { inset: 0; margin: 0 }`
-     locally. */
-  width: calc(100% - 12px);
-  height: calc(100% - 12px);
+     edge-to-edge override `--compact-frame-margin: 0`. */
+  width: calc(100% - var(--compact-frame-margin) * 2);
+  height: calc(100% - var(--compact-frame-margin) * 2);
   min-height: 0;
-  margin: 6px;
+  margin: var(--compact-frame-margin);
 
   border-radius: var(--compact-radius);
   background: transparent;
@@ -131,9 +184,12 @@
   height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: 10px 14px;
+  padding:
+    var(--compact-pad-y-top)
+    var(--compact-pad-x)
+    var(--compact-pad-y-bottom);
   box-sizing: border-box;
-  gap: 0;
+  gap: var(--compact-content-gap);
   min-height: 0;
 }
 
@@ -143,7 +199,7 @@
   display: flex;
   align-items: center;
   column-gap: 10px;
-  padding-bottom: 8px;
+  padding-bottom: var(--compact-network-pad-bottom);
   border-bottom: 1px solid var(--compact-divider);
   min-height: 0;
   flex: 0 0 auto;
@@ -233,8 +289,8 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding-top: 8px;
-  padding-bottom: 26px;
+  padding-top: var(--compact-usage-pad-top);
+  padding-bottom: var(--compact-usage-pad-bottom);
   flex: 1 1 auto;
   min-height: 0;
   -webkit-app-region: no-drag;
@@ -314,7 +370,7 @@
 
 .compact-frame[data-display-mode='expanded'] .compact-usage-slot {
   flex: 0 0 auto;
-  padding-bottom: 18px;
+  padding-bottom: var(--compact-usage-pad-bottom);
 }
 
 .compact-frame[data-display-mode='expanded'] .compact-usage-slot__scroll-wrap,
@@ -334,13 +390,22 @@
  * disappear into the chrome when nobody is interacting. Hovering the
  * widget (or focusing it via keyboard) fades them up to a quiet 50 %
  * opacity; hovering / focusing the button itself takes them to full
- * accent. They use only theme tokens (no fills, no borders) so each
- * theme's accent + muted colors automatically restyle them.
+ * accent with a soft accent-tinted pill.
  *
- * Buttons keep `pointer-events: auto` while invisible so the area is
- * still clickable; the .compact-frame :hover always fires before the
- * cursor reaches a button inside it, so users see the fade-in begin
- * the moment they enter the widget.
+ * Visual design (identical across every theme):
+ *   • Shape: 18×18 mini, 22×12 expand, both 4 px radius.
+ *   • Resting: invisible (opacity 0) — no chrome at all.
+ *   • Frame hover / focus-within: ghost glyph at ~50 % opacity using
+ *     each theme's `--compact-muted` token.
+ *   • Direct hover / focus-visible: full opacity, glyph in
+ *     `--compact-accent`, pill background derived from the same accent
+ *     via `color-mix` (14 % tint) and a 22 %-tinted hairline ring.
+ *
+ * Because the colors come from `color-mix(in srgb, currentColor …)`
+ * and `--compact-accent`, every theme inherits the same visual
+ * grammar without any theme-specific overrides — only the hue shifts
+ * (mint, OLED green, paper ink, MD3 primary, …) so the buttons feel
+ * native to each look.
  */
 .compact-mini-toggle-btn,
 .compact-expand-toggle-btn {
@@ -358,7 +423,8 @@
   transition:
     opacity 0.18s ease,
     color 0.18s ease,
-    background 0.18s ease;
+    background 0.18s ease,
+    box-shadow 0.18s ease;
   -webkit-app-region: no-drag;
 }
 
@@ -372,7 +438,7 @@
 
 .compact-expand-toggle-btn {
   left: 50%;
-  bottom: 1px;
+  bottom: 2px;
   transform: translateX(-50%);
   width: 22px;
   height: 12px;
@@ -387,14 +453,18 @@
   opacity: 0.5;
 }
 
-/* Full strength on direct interaction. */
+/* Full strength on direct interaction. The pill colour and ring are
+   derived from the theme's accent so the look is consistent (same
+   grammar) while still feeling native to each theme (same hue). */
 .compact-mini-toggle-btn:hover,
 .compact-mini-toggle-btn:focus-visible,
 .compact-expand-toggle-btn:hover,
 .compact-expand-toggle-btn:focus-visible {
   opacity: 1;
   color: var(--compact-accent);
-  background: var(--compact-surface);
+  background: color-mix(in srgb, var(--compact-accent) 14%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--compact-accent) 22%, transparent);
 }
 
 /* Calm motion: respect reduced-motion users. */
@@ -689,14 +759,27 @@
 }
 
 .compact-frame .quota-strip__credits-amount {
-  flex: 0 0 auto;
-  min-width: 32px;
-  font-size: 11.5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   color: var(--compact-accent);
-  text-align: right;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-frame .quota-strip__credits-tag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--compact-muted);
   white-space: nowrap;
 }
 
@@ -740,7 +823,7 @@
 .compact-frame[data-display-mode='full'] .compact-usage-slot {
   flex: 1 1 auto;
   min-height: 0;
-  padding-bottom: 26px;
+  padding-bottom: var(--compact-usage-pad-bottom);
 }
 
 .compact-frame[data-display-mode='full'] .compact-usage-slot__scroll-wrap {

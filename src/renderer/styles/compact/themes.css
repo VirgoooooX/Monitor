@@ -228,9 +228,14 @@
 
 /* Network slot becomes a primary container; usage slot a secondary
    container. Use a small gap instead of a divider line. */
+.compact-frame[data-compact-theme='material-you'] {
+  --compact-pad-x: 8px;
+  --compact-pad-y-top: 8px;
+  --compact-pad-y-bottom: 8px;
+  --compact-content-gap: 8px;
+}
+
 .compact-frame[data-compact-theme='material-you'] .compact-frame__content {
-  padding: 8px;
-  gap: 8px;
   grid-template-rows: 64px minmax(0, 1fr);
 }
 
@@ -363,9 +368,11 @@
   box-shadow: var(--compact-shadow);
 }
 
-.compact-frame[data-compact-theme='soft-neumorph'] .compact-frame__content {
-  padding: 12px 14px;
-  gap: 10px;
+.compact-frame[data-compact-theme='soft-neumorph'] {
+  --compact-pad-x: 14px;
+  --compact-pad-y-top: 12px;
+  --compact-pad-y-bottom: 12px;
+  --compact-content-gap: 10px;
 }
 
 /* Each slot is an inset groove. */
@@ -804,10 +811,15 @@
     inset 0 2px 0 rgba(255, 255, 255, 0.6);
 }
 
+.compact-frame[data-compact-theme='device-oled'] {
+  --compact-pad-x: 6px;
+  --compact-pad-y-top: 6px;
+  --compact-pad-y-bottom: 6px;
+  --compact-content-gap: 4px;
+}
+
 .compact-frame[data-compact-theme='device-oled'] .compact-frame__content {
   /* Inset OLED screen — dark background regardless of color mode. */
-  padding: 6px;
-  gap: 4px;
   grid-template-rows: 70px minmax(0, 1fr);
 }
 
@@ -967,6 +979,7 @@
   /* Edge-to-edge — v1 themes never had a 6 px gutter because the
      compact window is `transparent: true` and any margin shows the
      wallpaper. */
+  --compact-frame-margin: 0px;
   width: 100%;
   height: calc(100% - 8px);
   margin: 0;
@@ -976,6 +989,14 @@
   --compact-muted: rgba(245, 245, 247, 0.55);
   --compact-faint: rgba(245, 245, 247, 0.40);
   --compact-divider: rgba(255, 255, 255, 0.04);
+  /* v1 layout density. */
+  --compact-pad-x: 14px;
+  --compact-pad-y-top: 10px;
+  --compact-pad-y-bottom: 10px;
+  --compact-content-gap: 0px;
+  --compact-network-pad-bottom: 7px;
+  --compact-usage-pad-top: 8px;
+  --compact-usage-pad-bottom: 4px;
 }
 
 /* ── Original v1 layout (shared) ──
@@ -983,7 +1004,8 @@
    reproduce the exact density and structure of the original widget:
    no sparkline card, no node-rail pill, inline two-line copy, tighter
    gaps. The new compact-frame DOM is preserved; only the theme-scoped
-   layout values change. */
+   layout values change. Padding/gap come from the layout tokens
+   declared above. */
 .compact-frame[data-compact-theme='obsidian-glass'] .compact-frame__content,
 .compact-frame[data-compact-theme='aurora-ring'] .compact-frame__content,
 .compact-frame[data-compact-theme='holo-grid'] .compact-frame__content,
@@ -991,8 +1013,6 @@
 .compact-frame[data-compact-theme='signal-pulse'] .compact-frame__content {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  padding: 10px 14px;
   height: 100%;
   min-height: 0;
 }
@@ -1006,7 +1026,9 @@
   grid-template-columns: minmax(0, 1fr) 92px;
   align-items: center;
   column-gap: 10px;
-  padding: 0 0 7px 0;
+  /* padding-bottom comes from --compact-network-pad-bottom (7px). */
+  padding: 0;
+  padding-bottom: var(--compact-network-pad-bottom);
   border-bottom: 1px solid var(--compact-divider);
   min-height: 0;
 }
@@ -1116,7 +1138,8 @@
 }
 
 /* Usage slot — no card, original spacing, dashed-style top divider
-   replaced with the v1 solid hairline. */
+   replaced with the v1 solid hairline. Padding is driven by the
+   --compact-usage-pad-* tokens declared above. */
 .compact-frame[data-compact-theme='obsidian-glass'] .compact-usage-slot,
 .compact-frame[data-compact-theme='aurora-ring'] .compact-usage-slot,
 .compact-frame[data-compact-theme='holo-grid'] .compact-usage-slot,
@@ -1124,7 +1147,8 @@
 .compact-frame[data-compact-theme='signal-pulse'] .compact-usage-slot {
   background: transparent;
   border-radius: 0;
-  padding: 8px 0 0 0;
+  padding-left: 0;
+  padding-right: 0;
   gap: 6px;
   flex: 1;
   box-shadow: none;
@@ -1485,10 +1509,6 @@
 .compact-frame[data-compact-theme='signal-pulse'][data-display-mode='expanded']
   .compact-frame__content {
   height: auto;
-  /* Reserve room below the usage slot for the bottom-centre chevron
-     toggle (≈18 px tall + spacing) so it does not overlap the last
-     quota row. */
-  padding-bottom: 22px;
 }
 
 .compact-frame[data-compact-theme='obsidian-glass'][data-display-mode='expanded']
@@ -1506,66 +1526,24 @@
 
 
 /* ══════════════════════════════════════════════════════════════════
- * Theme-tuned spacing.
+ * Theme-tuned spacing (token overrides only).
  *
  * For three of the v2 themes — liquid-glass, paper-dashboard,
- * mint-monitor — the default 26 px bottom gutter (reserved so the
- * chevron toggle never overlaps the last quota row) wasted too much
- * vertical real estate. The blocks below reclaim that space; the
- * toggle buttons themselves are styled globally in `base.css` to be
- * invisible until the widget is hovered, so they no longer need a
- * dedicated gutter.
- *
- * Specificity note: each selector pairs `data-compact-theme` with
- * `data-display-mode` (or carries the same attribute count as the
- * generic full-mode rule in `base.css`) so these win against the
- * default `.compact-frame[data-display-mode='full'] .compact-usage-slot`
- * declarations without `!important`.
+ * mint-monitor — we shrink the inner padding and network divider
+ * gap by overriding the layout tokens declared on `.compact-frame`
+ * in `base.css`. No `padding`/`margin` declarations live here:
+ * everything goes through tokens so future theme tweaks have one
+ * obvious knob to turn.
  * ══════════════════════════════════════════════════════════════════ */
-
-/* ── Shared: tighter content padding + slim chevron ─────────── */
-.compact-frame[data-compact-theme='liquid-glass'] .compact-frame__content,
-.compact-frame[data-compact-theme='paper-dashboard'] .compact-frame__content,
-.compact-frame[data-compact-theme='mint-monitor'] .compact-frame__content {
-  padding: 6px 10px;
-}
-
-.compact-frame[data-compact-theme='liquid-glass'][data-display-mode='full']
-  .compact-usage-slot,
-.compact-frame[data-compact-theme='paper-dashboard'][data-display-mode='full']
-  .compact-usage-slot,
-.compact-frame[data-compact-theme='mint-monitor'][data-display-mode='full']
-  .compact-usage-slot {
-  /* Don't reserve a chevron gutter — the toggle button floats over
-     the content and clears it on its own. */
-  padding-top: 4px;
-  padding-bottom: 2px;
-}
-
-.compact-frame[data-compact-theme='liquid-glass'][data-display-mode='expanded']
-  .compact-usage-slot,
-.compact-frame[data-compact-theme='paper-dashboard'][data-display-mode='expanded']
-  .compact-usage-slot,
-.compact-frame[data-compact-theme='mint-monitor'][data-display-mode='expanded']
-  .compact-usage-slot {
-  padding-top: 4px;
-  padding-bottom: 2px;
-}
-
-.compact-frame[data-compact-theme='liquid-glass'] .compact-expand-toggle-btn,
-.compact-frame[data-compact-theme='paper-dashboard'] .compact-expand-toggle-btn,
-.compact-frame[data-compact-theme='mint-monitor'] .compact-expand-toggle-btn {
-  bottom: 1px;
-  width: 22px;
-  height: 12px;
-}
-
-/* Tighten the network slot's lower divider so it doesn't lock in
-   the legacy 8 px gap. */
-.compact-frame[data-compact-theme='liquid-glass'] .compact-network-slot,
-.compact-frame[data-compact-theme='paper-dashboard'] .compact-network-slot,
-.compact-frame[data-compact-theme='mint-monitor'] .compact-network-slot {
-  padding-bottom: 4px;
+.compact-frame[data-compact-theme='liquid-glass'],
+.compact-frame[data-compact-theme='paper-dashboard'],
+.compact-frame[data-compact-theme='mint-monitor'] {
+  --compact-pad-x: 10px;
+  --compact-pad-y-top: 6px;
+  --compact-pad-y-bottom: 4px;
+  --compact-network-pad-bottom: 4px;
+  --compact-usage-pad-top: 4px;
+  --compact-usage-pad-bottom: 2px;
 }
 
 

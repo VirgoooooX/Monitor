@@ -159,10 +159,10 @@ describe('QuotaStrip — credits rows', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('.quota-strip__row--credits')).toHaveLength(1);
     });
-    // Balance amount with currency symbol, not a percentage.
+    // Balance amount with currency symbol is the primary visual.
     expect(screen.getByText('¥4.25')).toBeTruthy();
-    expect(screen.getByText('余额')).toBeTruthy();
-    expect(screen.getByText('CNY')).toBeTruthy();
+    // Tag combines "余额" and the currency code.
+    expect(screen.getByText('余额 · CNY')).toBeTruthy();
     // Misleading "100%" / progress bar must not appear for credits rows.
     expect(screen.queryByText('100%')).toBeNull();
     expect(document.querySelector('.quota-strip__row--credits .quota-strip__track')).toBeNull();

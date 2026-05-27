@@ -292,8 +292,11 @@ const MAX_FILE_SIZE_BYTES = 1024 * 1024;
  *   - `gemini-cli` / `antigravity` : `accessToken` AND `projectId`;
  *                                missing project surfaces as
  *                                `project_missing` (Requirement 11.4).
- *   - `gemini-api` / `deepseek` /
- *     `xiaomi` / `openai-compatible`  : `apiKey` non-empty.
+ *   - `gemini-api` / `deepseek` / `openai-compatible`  : `apiKey` non-empty.
+ *   - `xiaomi`                 : `xiaomiPassToken` AND `xiaomiUserId`
+ *                                non-empty (the cookie pair feeds
+ *                                the on-demand serviceToken refresh
+ *                                in `xiaomi.adapter.ts`).
  */
 function validateLightweight(
   provider: ProviderId,
@@ -338,7 +341,6 @@ function validateLightweight(
 
     case 'gemini-api':
     case 'deepseek':
-    case 'xiaomi':
     case 'openai-compatible':
       if (!hasApiKey) {
         return {
@@ -348,6 +350,34 @@ function validateLightweight(
         };
       }
       return { ok: true, code: 'ok', message: '' };
+
+    case 'xiaomi': {
+      const hasPassToken =
+        typeof payload.xiaomiPassToken === 'string' &&
+        payload.xiaomiPassToken.length > 0;
+      const hasXiaomiUserId =
+        typeof payload.xiaomiUserId === 'string' &&
+        payload.xiaomiUserId.length > 0;
+      // Backwards compatibility: pre-cookie xiaomi rows that were
+      // imported as API keys still validate as ok at this stage so
+      // the row stays usable; the adapter surfaces the upgrade
+      // requirement via `auth_missing` on the next refresh.
+      if (!hasPassToken && !hasXiaomiUserId && !hasApiKey) {
+        return {
+          ok: false,
+          code: 'auth_missing',
+          message: bound('xiaomi credentials missing from imported payload'),
+        };
+      }
+      if ((hasPassToken && !hasXiaomiUserId) || (!hasPassToken && hasXiaomiUserId)) {
+        return {
+          ok: false,
+          code: 'auth_missing',
+          message: bound('xiaomi passToken and userId must both be present'),
+        };
+      }
+      return { ok: true, code: 'ok', message: '' };
+    }
 
     default: {
       // Exhaustiveness guard — `ProviderId` is a closed union, so the
@@ -569,8 +599,11 @@ export function createProviderAuthService(
   // service is robust on its own (the schema is the first line of
   // defence; the duplication keeps unit tests honest):
   //
-  //   - `apiKey` non-empty after `trim()`.
+  //   - Non-Xiaomi providers : `apiKey` non-empty after `trim()`.
   //   - `provider === 'openai-compatible'` requires `baseUrl`.
+  //   - `provider === 'xiaomi'` requires `xiaomiPassToken` AND
+  //     `xiaomiUserId` (cookie-pair); `apiKey` is rejected because
+  //     the platform balance API does not honour it.
   //   - For any provider, `baseUrl` (when present) is forwarded
   //     verbatim — additional URL parsing is the schema's job.
   //
@@ -579,22 +612,48 @@ export function createProviderAuthService(
   function createApiKey(
     input: CreateProviderAuthApiKeyInput,
   ): ProviderAuthMetadata {
-    const apiKey = input.apiKey.trim();
-    if (apiKey.length === 0) {
-      throw new ProviderAuthError(
-        'validation',
-        bound('api key must not be empty'),
-      );
-    }
     const baseUrl =
       typeof input.baseUrl === 'string' && input.baseUrl.trim().length > 0
         ? input.baseUrl.trim()
         : undefined;
-    if (input.provider === 'openai-compatible' && baseUrl === undefined) {
-      throw new ProviderAuthError(
-        'validation',
-        bound('base url is required for openai-compatible'),
-      );
+
+    let payload: ProviderAuthSecretPayload;
+
+    if (input.provider === 'xiaomi') {
+      const passToken =
+        typeof input.xiaomiPassToken === 'string'
+          ? input.xiaomiPassToken.trim()
+          : '';
+      const xiaomiUserId =
+        typeof input.xiaomiUserId === 'string'
+          ? input.xiaomiUserId.trim()
+          : '';
+      if (passToken.length === 0 || xiaomiUserId.length === 0) {
+        throw new ProviderAuthError(
+          'validation',
+          bound('xiaomi requires both passToken and userId'),
+        );
+      }
+      payload = {
+        xiaomiPassToken: passToken,
+        xiaomiUserId,
+      };
+    } else {
+      const apiKey =
+        typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
+      if (apiKey.length === 0) {
+        throw new ProviderAuthError(
+          'validation',
+          bound('api key must not be empty'),
+        );
+      }
+      if (input.provider === 'openai-compatible' && baseUrl === undefined) {
+        throw new ProviderAuthError(
+          'validation',
+          bound('base url is required for openai-compatible'),
+        );
+      }
+      payload = baseUrl !== undefined ? { apiKey, baseUrl } : { apiKey };
     }
 
     const id = uuid();
@@ -605,10 +664,6 @@ export function createProviderAuthService(
       typeof input.label === 'string' && input.label.trim().length > 0
         ? input.label.trim()
         : defaultLabelFor(input.provider);
-
-    const payload: ProviderAuthSecretPayload = baseUrl !== undefined
-      ? { apiKey, baseUrl }
-      : { apiKey };
 
     const row: ProviderAuthRow = {
       id,
@@ -719,7 +774,7 @@ export function createProviderAuthService(
       case 'deepseek':
         return 'DeepSeek API key';
       case 'xiaomi':
-        return '小米 Mimo API key';
+        return '小米 Mimo';
       case 'openai-compatible':
         return 'OpenAI 兼容 API key';
     }

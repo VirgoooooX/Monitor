@@ -261,7 +261,7 @@ const HAPPY_CASES: ReadonlyArray<HappyCase> = [
       projectId: null,
       payload: { apiKey: 'mimo-EEEE' },
     },
-    expectedCapability: 'health_only',
+    expectedCapability: 'official',
   },
   {
     provider: 'openai-compatible',
