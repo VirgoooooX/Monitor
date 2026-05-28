@@ -246,7 +246,13 @@ describe('QuickActionsPanel — Property 2 (banner presence/absence)', () => {
 
     const banner = await screen.findByTestId('quick-actions-panel-banner');
     expect(banner.getAttribute('data-tone')).toBe('critical');
-    expect(banner.textContent ?? '').toMatch(/路由器不可达/);
+    // The banner is now a chip — short headline visible inline,
+    // detail tucked into the `title` tooltip. Assertions follow the
+    // chip contract: visible text matches the headline; the longer
+    // explanation surfaces via the `title` attribute and aria-label
+    // for screen readers.
+    expect(banner.textContent ?? '').toMatch(/家庭离线/);
+    expect(banner.getAttribute('title') ?? '').toMatch(/路由器不可达/);
   });
 
   it.each(['node_slow', 'partial_outage', 'node_down'] as const)(
@@ -313,7 +319,12 @@ describe('QuickActionsPanel — Property 2 (banner presence/absence)', () => {
 // but the persistent-failure phrasing must not appear.
 
 describe('QuickActionsPanel — Property 14 (persistent failure threshold)', () => {
-  const PERSISTENT_TEXT = /OpenClash 管理接口持续失败/;
+  // The banner is now a chip with a short headline + a longer detail
+  // surfaced via the `title` tooltip. We match the inline headline
+  // here (the slot any user actually sees first); the full sentence
+  // is asserted on the `title` attribute below.
+  const PERSISTENT_HEADLINE = /管理接口持续失败/;
+  const PERSISTENT_DETAIL = /OpenClash 管理接口已连续失败/;
 
   it.each([0, 1, 2, 3, 4, 5, 6, 10] as const)(
     'consecutiveFailures=%i renders persistent banner iff >= 5',
@@ -339,13 +350,14 @@ describe('QuickActionsPanel — Property 14 (persistent failure threshold)', () 
       if (consecutiveFailures >= 5) {
         // Persistent banner must be present with the exact phrasing.
         expect(banner).not.toBeNull();
-        expect(banner!.textContent ?? '').toMatch(PERSISTENT_TEXT);
+        expect(banner!.textContent ?? '').toMatch(PERSISTENT_HEADLINE);
+        expect(banner!.getAttribute('title') ?? '').toMatch(PERSISTENT_DETAIL);
         expect(banner!.getAttribute('data-tone')).toBe('warn');
       } else {
         // Persistent banner must not appear; under healthy status
         // there is no other banner either, so the slot is empty.
         if (banner !== null) {
-          expect(banner.textContent ?? '').not.toMatch(PERSISTENT_TEXT);
+          expect(banner.textContent ?? '').not.toMatch(PERSISTENT_HEADLINE);
         } else {
           expect(banner).toBeNull();
         }

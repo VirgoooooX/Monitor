@@ -1,0 +1,68 @@
+/*
+ * TelemetryWave — instrument-grade waveform animation.
+ *
+ * The component itself paints `data-pulse="true"` on the root SVG
+ * whenever the user is on a non-flat dataset and the parent allows
+ * pulsing. We layer two animations on the trailing-edge group:
+ *   • the inner dot subtly breathes (opacity)
+ *   • the surrounding ring expands + fades, like sonar
+ *
+ * Both are gated on `prefers-reduced-motion: no-preference` so
+ * reduced-motion users see a static dot + ring.
+ */
+
+.telemetry-wave {
+  display: block;
+  overflow: visible;
+}
+
+.telemetry-wave__halo {
+  transform-origin: var(--tw-origin-x, 50%) var(--tw-origin-y, 50%);
+}
+
+.telemetry-wave__pulse {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.telemetry-wave__dot {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .telemetry-wave[data-pulse='true'] .telemetry-wave__dot {
+    animation: telemetry-wave-dot 1.6s ease-in-out infinite;
+  }
+
+  .telemetry-wave[data-pulse='true'] .telemetry-wave__pulse {
+    animation: telemetry-wave-ring 1.8s ease-out infinite;
+  }
+}
+
+@keyframes telemetry-wave-dot {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes telemetry-wave-ring {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.4);
+  }
+  80% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}

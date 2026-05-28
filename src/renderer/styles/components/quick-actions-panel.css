@@ -7,8 +7,8 @@
 .quick-actions-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -36,16 +36,37 @@
   color: var(--color-bad);
 }
 
-/* Banner ---------------------------------------------------------------- */
+/* Banner ----------------------------------------------------------------
+ *
+ * Renders as a single-line chip: icon + short headline. The full
+ * actionable detail is stashed on the native `title` tooltip so the
+ * banner doesn't dominate the panel even when several factors are
+ * degraded at once. The padding / radius mirror the latency &
+ * failure pills in StatusHero so the visual vocabulary stays
+ * consistent across the network surface.
+ */
 
 .quick-actions-panel__banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
   margin: 0;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
   font-size: var(--type-xs, 12px);
   font-weight: 600;
   line-height: 1.4;
   border: 1px solid transparent;
+  cursor: help;
+}
+
+.quick-actions-panel__banner-icon {
+  flex: 0 0 auto;
+}
+
+.quick-actions-panel__banner-text {
+  white-space: nowrap;
 }
 
 .quick-actions-panel__banner--critical {
@@ -309,6 +330,13 @@
 
 /* =========================================================================
  * ConfigSwitchCard — whitelist + active marker.
+ *
+ * Density-first list. Header collapses to a tight eyebrow strip
+ * (no "当前: xxx" sentence — the active state is signalled in-row via
+ * a green rail + chip). Rows are 36–40 px tall and sit shoulder-to-
+ * shoulder; the active row gets a left rail, an emerald wash, and a
+ * compact "生效" chip. Inactive rows show a confident "切换 ›" CTA on
+ * hover-tilt.
  * ========================================================================= */
 
 .config-switch-card {
@@ -320,42 +348,78 @@
   --csc-border: var(--ex-border, #e1e4e8);
   --csc-border-strong: var(--ex-border-strong, #d0d7de);
   --csc-accent: var(--ex-accent, #6366f1);
+  --csc-active-tint: rgba(34, 197, 94, 0.10);
+  --csc-active-border: rgba(34, 197, 94, 0.32);
+  --csc-active-rail: rgba(34, 197, 94, 0.85);
+  --csc-active-ink: #047857;
 
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 10px 12px 12px;
   background: var(--csc-surface);
   border: 1px solid var(--csc-border);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .config-switch-card__head {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px 12px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
+  /* Tight strip — no border, no big breathing room. */
+  padding: 0 2px;
 }
 
 .config-switch-card__eyebrow {
   font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
-  font-size: var(--type-micro, 11px);
-  font-weight: 600;
-  letter-spacing: 0.18em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--csc-text-faint);
   flex: 0 0 auto;
 }
 
+/* Hairline ate too much space — drop it and use margin-left:auto on
+   the active hint to push it to the right edge. */
+.config-switch-card__head-rule {
+  display: none;
+}
+
 .config-switch-card__active-hint {
-  flex: 1 1 auto;
+  margin-left: auto;
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-width: 0;
-  font-size: var(--type-sm, 13px);
-  color: var(--csc-text-mute);
+  font-size: var(--type-xs, 12px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Shown only as fallback for screen readers / when no row carries
+     the active state. The visible row badge is the canonical signal. */
+}
+
+.config-switch-card__active-hint-label {
+  font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--csc-text-faint);
+}
+
+.config-switch-card__active-hint-name {
+  font-size: var(--type-xs, 12px);
+  font-weight: 600;
+  color: var(--csc-text);
+  letter-spacing: 0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .config-switch-card__list {
@@ -364,76 +428,157 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .config-switch-card__row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid var(--csc-border);
   border-radius: 8px;
-  background: transparent;
+  background: var(--csc-surface-strong);
   min-width: 0;
+  transition:
+    background 160ms ease-out,
+    border-color 160ms ease-out;
+}
+
+.config-switch-card__row:not(.config-switch-card__row--active):hover {
+  border-color: var(--csc-border-strong);
 }
 
 .config-switch-card__row--active {
-  background: rgba(34, 197, 94, 0.08);
-  border-color: rgba(34, 197, 94, 0.32);
+  background:
+    linear-gradient(
+      90deg,
+      var(--csc-active-tint),
+      transparent 50%
+    ),
+    var(--csc-surface-strong);
+  border-color: var(--csc-active-border);
+  padding-left: 16px;
+}
+
+.config-switch-card__rail {
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--csc-active-rail);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
 }
 
 .config-switch-card__label {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--type-base, 14px);
-  font-weight: 500;
+  font-size: var(--type-sm, 13px);
+  font-weight: 550;
   color: var(--csc-text);
+  letter-spacing: 0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.35;
+}
+
+.config-switch-card__row--active .config-switch-card__label {
+  font-weight: 600;
 }
 
 .config-switch-card__badge {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--ex-display-font, var(--ui-font-family, sans-serif));
-  font-size: var(--type-micro, 11px);
-  font-weight: 600;
-  letter-spacing: 0.18em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  padding: 2px 8px;
+  padding: 2px 7px 2px 6px;
   border-radius: 999px;
-  background: rgba(34, 197, 94, 0.18);
-  color: #6ee7b7;
+  background: rgba(34, 197, 94, 0.16);
+  color: #047857;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  line-height: 1;
+}
+
+.config-switch-card__badge-icon {
+  flex: 0 0 auto;
+  margin-top: -1px;
 }
 
 .config-switch-card__btn {
   flex: 0 0 auto;
-  padding: 5px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px 4px 10px;
   border: 1px solid var(--csc-border-strong);
   border-radius: 6px;
-  background: transparent;
-  color: var(--csc-text-mute);
+  background: var(--csc-surface);
+  color: var(--csc-text);
   font-size: var(--type-xs, 12px);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
   white-space: nowrap;
+  line-height: 1.2;
   transition:
-    background 140ms ease-out,
-    color 140ms ease-out,
-    border-color 140ms ease-out;
+    background 160ms ease-out,
+    color 160ms ease-out,
+    border-color 160ms ease-out,
+    box-shadow 160ms ease-out;
 }
 
 .config-switch-card__btn:hover:not(:disabled) {
-  background: rgba(165, 180, 252, 0.12);
-  border-color: rgba(165, 180, 252, 0.4);
+  background: color-mix(
+    in srgb,
+    var(--csc-accent) 8%,
+    var(--csc-surface-strong)
+  );
+  border-color: color-mix(in srgb, var(--csc-accent) 38%, transparent);
   color: var(--csc-accent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--csc-accent) 16%, transparent);
+}
+
+.config-switch-card__btn:hover:not(:disabled) .config-switch-card__btn-chev {
+  transform: translateX(2px);
+}
+
+.config-switch-card__btn:focus-visible {
+  outline: 2px solid var(--csc-accent);
+  outline-offset: 2px;
 }
 
 .config-switch-card__btn:disabled {
-  opacity: 0.4;
+  opacity: 0.55;
   cursor: not-allowed;
+  border-color: var(--csc-border);
+  background: transparent;
+  color: var(--csc-text-faint);
+  box-shadow: none;
+}
+
+/* Active row hides the button entirely — the badge already says
+   "this is the active config". A second visual signal is noise. */
+.config-switch-card__btn--active {
+  display: none;
+}
+
+.config-switch-card__btn-label {
+  display: inline-block;
+}
+
+.config-switch-card__btn-chev {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  transition: transform 160ms ease-out;
 }
 
 .config-switch-card__hint {
@@ -447,12 +592,21 @@
   margin: 0;
   font-size: var(--type-sm, 13px);
   color: var(--csc-text-mute);
-  line-height: 1.55;
+  line-height: 1.5;
   letter-spacing: 0.005em;
 }
 
 .config-switch-card--empty {
-  /* Empty card has no list, just guidance. Tighten the inner gap so
-     the eyebrow sits flush with the hint paragraph. */
   gap: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .config-switch-card__btn,
+  .config-switch-card__btn-chev,
+  .config-switch-card__row {
+    transition: none;
+  }
+  .config-switch-card__btn:hover:not(:disabled) .config-switch-card__btn-chev {
+    transform: none;
+  }
 }

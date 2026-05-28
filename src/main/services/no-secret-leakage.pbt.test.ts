@@ -320,8 +320,16 @@ const secretArb: fc.Arbitrary<string> = fc
   .filter((s) => s.trim().length > 0);
 
 // ---------------------------------------------------------------------------
-// Fake fetch — programmable LuCI / ubus state machine
+// Fake fetch — programmable LuCI / OpenClash plugin state machine
 // ---------------------------------------------------------------------------
+//
+// As of the 2026-05-28 transport rewrite (see
+// `docs/postmortems/openclash-management-transport.md`) the management
+// client talks to OpenClash via the LuCI plugin's own HTTP endpoints
+// (`config_name` for reads and `switch_config` for writes) instead of
+// LuCI ubus. The fake fetch here mirrors that contract; the closed-
+// set error mapping the property cares about (`auth_error` /
+// `http_error` / `network_error` / `verify_timeout`) is unchanged.
 
 interface FakeFetchHandle {
   fetch: typeof fetch;
@@ -343,23 +351,17 @@ function buildFakeFetch(): FakeFetchHandle {
   let outcome: Step['outcome'] = 'success';
   let preWriteReadConsumed = false;
 
-  const ubusOk = (data: Record<string, unknown>): Response =>
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [0, data] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
+  const jsonOk = (data: Record<string, unknown>): Response =>
+    new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
 
-  const ubusPermissionDenied = (): Response =>
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [6, null] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
-
-  const ubusGenericError = (): Response =>
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [4, null] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
+  /** OpenClash plugin reply shape for `action_config_name`. */
+  const configNameReply = (path: string): Record<string, unknown> => ({
+    config_name: [{ name: 'target.yaml' }, { name: 'initial.yaml' }],
+    config_path: path,
+  });
 
   const fakeFetch: typeof fetch = async (request, init) => {
     const url =
@@ -373,93 +375,25 @@ function buildFakeFetch(): FakeFetchHandle {
     // ---- LuCI login endpoint --------------------------------------------
     if (path === '/cgi-bin/luci') {
       // Login always succeeds — auth_error outcomes are surfaced via
-      // the ubus 401 path so the management client's transparent re-
-      // login machinery is exercised end-to-end.
+      // the plugin endpoints' 401 path so the management client's
+      // transparent re-login machinery is exercised end-to-end.
       return new Response('', {
         status: 200,
         headers: { 'Set-Cookie': 'sysauth=token1; Path=/; HttpOnly' },
       });
     }
 
-    // ---- LuCI ubus endpoint ---------------------------------------------
-    if (
-      path === '/cgi-bin/luci/ubus/' ||
-      path === '/cgi-bin/luci/admin/ubus/'
-    ) {
-      let body: { params?: unknown[]; method?: string } = {};
-      try {
-        const raw =
-          typeof init?.body === 'string'
-            ? init.body
-            : new TextDecoder().decode(
-                (init?.body as ArrayBuffer | undefined) ?? new Uint8Array(),
-              );
-        body = JSON.parse(raw) as { params?: unknown[]; method?: string };
-      } catch {
-        return new Response('', { status: 500 });
-      }
-
-      const params = Array.isArray(body.params) ? body.params : [];
-      const ubusObject =
-        typeof params[1] === 'string' ? (params[1] as string) : null;
-      const ubusMethod =
-        typeof params[2] === 'string' ? (params[2] as string) : null;
-
+    // ---- OpenClash plugin: GET config_name -------------------------------
+    if (path === '/cgi-bin/luci/admin/services/openclash/config_name') {
       // ---- READ flow ---------------------------------------------------
       if (kind === 'read') {
-        if (ubusObject === 'uci' && ubusMethod === 'get') {
-          if (outcome === 'success') {
-            return ubusOk({ value: TARGET_PATH });
-          }
-          if (outcome === 'http_error') {
-            return new Response('', { status: 500 });
-          }
-          if (outcome === 'network_error') {
-            const cause = Object.assign(new Error('ECONNREFUSED'), {
-              name: 'Error',
-            });
-            const err = new TypeError('fetch failed');
-            Object.assign(err, { cause });
-            throw err;
-          }
-          // 'auth_error' — both the initial ubus and the retry land here.
-          return new Response('', { status: 401 });
+        if (outcome === 'success') {
+          return jsonOk(configNameReply('target.yaml'));
         }
-        return new Response('', { status: 500 });
-      }
-
-      // ---- SWITCH flow -------------------------------------------------
-      if (ubusObject === 'uci' && ubusMethod === 'get') {
-        if (!preWriteReadConsumed) {
-          // Pre-write start-path read.
-          preWriteReadConsumed = true;
-          return ubusOk({ value: START_PATH });
+        if (outcome === 'http_error') {
+          return new Response('', { status: 500 });
         }
-        // Verify-loop read.
-        if (outcome === 'ok') {
-          return ubusOk({ value: TARGET_PATH });
-        }
-        if (outcome === 'verify_timeout') {
-          return ubusOk({ value: START_PATH });
-        }
-        // Should not be reached — the write-failure branches return
-        // before any verify read is issued.
-        return ubusOk({ value: START_PATH });
-      }
-
-      // Write-transaction sub-calls: uci.set / uci.commit / file.exec.
-      const isSet = ubusObject === 'uci' && ubusMethod === 'set';
-      const isCommit = ubusObject === 'uci' && ubusMethod === 'commit';
-      const isExec = ubusObject === 'file' && ubusMethod === 'exec';
-
-      if (isSet) {
-        if (outcome === 'write_auth_error') {
-          return ubusPermissionDenied();
-        }
-        if (outcome === 'write_http_error') {
-          return ubusGenericError();
-        }
-        if (outcome === 'write_network_error') {
+        if (outcome === 'network_error') {
           const cause = Object.assign(new Error('ECONNREFUSED'), {
             name: 'Error',
           });
@@ -467,13 +401,50 @@ function buildFakeFetch(): FakeFetchHandle {
           Object.assign(err, { cause });
           throw err;
         }
-        return ubusOk({});
-      }
-      if (isCommit || isExec) {
-        return ubusOk({});
+        // 'auth_error' — both the initial call and the retry land here.
+        return new Response('', { status: 401 });
       }
 
-      return new Response('', { status: 500 });
+      // ---- SWITCH flow: pre-write start-path read ----------------------
+      if (!preWriteReadConsumed) {
+        preWriteReadConsumed = true;
+        return jsonOk(configNameReply('initial.yaml'));
+      }
+      // ---- SWITCH flow: verify-loop read -------------------------------
+      if (outcome === 'ok') {
+        return jsonOk(configNameReply('target.yaml'));
+      }
+      if (outcome === 'verify_timeout') {
+        return jsonOk(configNameReply('initial.yaml'));
+      }
+      // Should not be reached — write-failure outcomes return before
+      // any verify read is issued.
+      return jsonOk(configNameReply('initial.yaml'));
+    }
+
+    // ---- OpenClash plugin: POST switch_config ----------------------------
+    if (path === '/cgi-bin/luci/admin/services/openclash/switch_config') {
+      if (outcome === 'write_auth_error') {
+        return new Response('', { status: 401 });
+      }
+      if (outcome === 'write_http_error') {
+        return new Response('', { status: 500 });
+      }
+      if (outcome === 'write_network_error') {
+        const cause = Object.assign(new Error('ECONNREFUSED'), {
+          name: 'Error',
+        });
+        const err = new TypeError('fetch failed');
+        Object.assign(err, { cause });
+        throw err;
+      }
+      // 'ok' or 'verify_timeout' — write itself succeeds; the verify
+      // loop above decides whether the flow as a whole succeeds.
+      return jsonOk({
+        status: 'success',
+        message: 'Config file switched successfully',
+        config_file: TARGET_PATH,
+      });
     }
 
     throw new Error(`fakeFetch: unexpected URL ${url}`);

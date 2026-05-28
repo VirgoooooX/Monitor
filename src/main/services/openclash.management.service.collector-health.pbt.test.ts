@@ -45,8 +45,9 @@
 //     outcome (`success`, `http_error`, `network_error`, `auth_error`)
 //     against a programmable LuCI surface. The fake fetch is a
 //     two-endpoint state machine — `/cgi-bin/luci` (login) and
-//     `/cgi-bin/luci/ubus/` (ubus call) — keyed on `currentOutcome`
-//     so a single in-test toggle per step covers both transports.
+//     `/cgi-bin/luci/admin/services/openclash/config_name` (read) —
+//     keyed on `currentOutcome` so a single in-test toggle per step
+//     covers both transports.
 //   * Drive 1..20 steps per run (the spec's stated bound) with
 //     strictly increasing timestamps. After each call, recompute the
 //     property's expected row from the trace and assert pointwise
@@ -60,23 +61,31 @@
 //
 //   1. ensureSession(): if no cached cookie, POST /cgi-bin/luci
 //      with form-encoded creds and capture sysauth cookie.
-//   2. ubusCall(): POST /cgi-bin/luci/ubus/ with the cached cookie.
-//      On 401 the privilegedFetch helper invalidates the cookie,
-//      logs back in once, and retries the request exactly once.
+//   2. pluginCall(): GET /cgi-bin/luci/admin/services/openclash/
+//      config_name with the cached cookie. On 401 the privilegedFetch
+//      helper invalidates the cookie, logs back in once, and retries
+//      the request exactly once.
+//
+// As of the 2026-05-28 transport rewrite (see
+// `docs/postmortems/openclash-management-transport.md`) we no longer
+// hit the LuCI ubus endpoints — the `config_name` GET delivers the
+// active path directly (as a basename, normalised by the management
+// client to absolute form).
 //
 // The four outcomes therefore map onto the fake fetch as follows:
 //
-//   * success      — login: 200 + Set-Cookie. ubus: 200 + valid envelope.
-//   * http_error   — login: 200 + Set-Cookie. ubus: 500 (any non-2xx
-//                    non-401). The privilegedFetch helper returns it
-//                    verbatim and ubusCall maps to `http_error`.
-//   * network_error — login: 200 + Set-Cookie. ubus: throws TypeError.
-//                    privilegedFetch wraps as `network_error`.
-//   * auth_error   — login: 401 (no cookie); ubus: 401. Either the
-//                    initial ensureSession login fails (first call,
-//                    no cached cookie) or the ubus 401 → invalidate
-//                    cookie → re-login fails path triggers; both
-//                    surface `auth_error`.
+//   * success      — login: 200 + Set-Cookie. config_name: 200 + JSON.
+//   * http_error   — login: 200 + Set-Cookie. config_name: 500.
+//                    The privilegedFetch helper returns it verbatim
+//                    and pluginCall maps to `http_error`.
+//   * network_error — login: 200 + Set-Cookie. config_name: throws
+//                     TypeError. privilegedFetch wraps as
+//                     `network_error`.
+//   * auth_error   — login: 401 (no cookie); config_name: 401.
+//                    Either the initial ensureSession login fails
+//                    (first call, no cached cookie) or the
+//                    config_name 401 → invalidate cookie → re-login
+//                    fails path triggers; both surface `auth_error`.
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
@@ -214,10 +223,13 @@ function buildFakeFetch(): FakeFetchHandle {
   let currentOutcome: Outcome = 'success';
   let cookieCounter = 0;
 
-  const ubusSuccessBody = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    result: [0, { value: '/etc/openclash/config/foo.yaml' }],
+  // The OpenClash plugin's `action_config_name` reply shape — the
+  // `config_path` value is a basename which the management client's
+  // `canonicalConfigPath()` normalises to `/etc/openclash/config/<name>`
+  // before exposing it to callers.
+  const configNameSuccessBody = JSON.stringify({
+    config_name: [{ name: 'foo.yaml' }],
+    config_path: 'foo.yaml',
   });
 
   const fakeFetch: typeof fetch = async (input, _init) => {
@@ -247,13 +259,10 @@ function buildFakeFetch(): FakeFetchHandle {
       });
     }
 
-    // ---- LuCI ubus endpoints ---------------------------------------------
-    if (
-      path === '/cgi-bin/luci/ubus/' ||
-      path === '/cgi-bin/luci/admin/ubus/'
-    ) {
+    // ---- OpenClash plugin: GET config_name -------------------------------
+    if (path === '/cgi-bin/luci/admin/services/openclash/config_name') {
       if (currentOutcome === 'success') {
-        return new Response(ubusSuccessBody, {
+        return new Response(configNameSuccessBody, {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -272,11 +281,11 @@ function buildFakeFetch(): FakeFetchHandle {
         Object.assign(err, { cause });
         throw err;
       }
-      // currentOutcome === 'auth_error': both the initial ubus call
-      // and the privilegedFetch retry land here. Returning 401 from
-      // the retry too triggers `ubusCall`'s `auth_error` mapping if
-      // the re-login somehow succeeded; in practice the re-login
-      // hits the login endpoint (401 above) and throws first.
+      // currentOutcome === 'auth_error': both the initial call and
+      // the privilegedFetch retry land here. Returning 401 from the
+      // retry triggers the management client's `auth_error` mapping
+      // — in practice the re-login hits the login endpoint (401
+      // above) and throws first.
       return new Response('', { status: 401 });
     }
 

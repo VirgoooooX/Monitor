@@ -564,9 +564,14 @@
   color: var(--compact-text);
   letter-spacing: 0.01em;
   white-space: nowrap;
+  /* The HEALTH_STATUS_LABELS map (dashboard.service.ts) is now bounded
+     to 4 CJK glyphs per status, which fits in ~60px at this font
+     size. We keep the overflow guards as a defense-in-depth
+     fallback in case a future label rewrite slips past the
+     width-budget comment in dashboard.service.ts. */
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+  max-width: 92px;
 }
 
 .compact-frame .status-hero__latency {
@@ -583,9 +588,22 @@
 }
 
 .compact-frame .status-hero__fails {
-  font-size: 10px;
+  /* Match the latency pill's geometry so the two badges read as a
+     sibling pair rather than "pill + stray red word". The colour
+     tokens stay in the danger family (no theme tokens for `bad-soft`
+     are defined globally; we use color-mix to derive a translucent
+     red on the fly so themes inherit the right look without a token
+     plumb job). */
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #ef4444 16%, transparent);
   color: #ef4444;
+  font-size: 11px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ── QuotaStrip re-skin (compact) ──────────────────────────────── */

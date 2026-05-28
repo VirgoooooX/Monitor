@@ -1,4 +1,5 @@
-// OpenClash management client (LuCI / ubus) — session layer.
+// OpenClash management client (LuCI / OpenClash plugin endpoints) —
+// session layer.
 //
 // References:
 //   - .kiro/specs/network-quick-actions/design.md
@@ -14,6 +15,9 @@
 //       Requirement 12.5 (clearing creds invalidates cached session)
 //       Requirement 15.4, 15.5 (≤1 write, ≤3 verify reads, ≥1000 ms gap)
 //       Requirement 16.1 (closed `ManagementErrorCode` set)
+//   - docs/postmortems/openclash-management-transport.md
+//       The 2026-05-28 transport rewrite: why we no longer use
+//       LuCI ubus's `uci.set` + `uci.commit` + `file.exec`.
 //
 // Tasks 8.1, 8.2, 8.3 and 8.4 are landed:
 //
@@ -28,20 +32,40 @@
 //           401 transparently re-logins **once** before returning the
 //           response to the caller. The cookie lives only in process
 //           memory.
-//   - 8.3 — `readActiveConfigPath()` issues `uci.get
-//           openclash.config.config_path` over the LuCI ubus surface
-//           via the closure-local `ubusCall` helper; ubus protocol
-//           errors and HTTP errors are funnelled into the closed
-//           `ManagementErrorCode` set, all error messages pass the
-//           redaction sieve, and the `openclash.management` row of
-//           `collector_health` is updated on every call.
+//   - 8.3 — `readActiveConfigPath()` issues
+//           `GET /cgi-bin/luci/admin/services/openclash/config_name`
+//           via the closure-local `privilegedFetch` helper. The
+//           OpenClash plugin returns the active config as a basename;
+//           we normalise it to an absolute path via
+//           `canonicalConfigPath()` so the rest of the codebase only
+//           ever sees `/etc/openclash/config/<name>`. HTTP errors are
+//           funnelled into the closed `ManagementErrorCode` set, all
+//           error messages pass the redaction sieve, and the
+//           `openclash.management` row of `collector_health` is
+//           updated on every call.
 //   - 8.4 — `switchActiveConfig()` issues a single write transaction
-//           (`uci.set` + `uci.commit` + `file.exec /etc/init.d/openclash
-//           restart`) and then runs a ≤3-iteration verify loop that
-//           reads `uci.get` and `GET /configs` in parallel with a
-//           2 s sub-timeout per call. The write step is never auto-
-//           retried; on write failure the function returns the mapped
-//           closed-set error code without issuing any verify reads.
+//           (`POST /cgi-bin/luci/admin/services/openclash/switch_config`
+//           with `config_file=<targetPath>`) and then runs a
+//           ≤3-iteration verify loop that re-reads `config_name` and
+//           probes `GET /configs` in parallel with a 2 s sub-timeout
+//           per call. The write step is never auto-retried; on write
+//           failure the function returns the mapped closed-set error
+//           code without issuing any verify reads.
+//
+// Why not LuCI ubus
+// -----------------
+//
+// The original design (Q3 in design.md) called for ubus
+// `uci.set` + `uci.commit` + `file.exec /etc/init.d/openclash restart`.
+// Field testing on iStoreOS (OpenWrt 19.x derivative) showed that the
+// LuCI cookie session, despite being granted `uci read+write`, is
+// NOT granted `file.exec` under the default rpcd ACL — every restart
+// attempt returned ubus status 6 (PERMISSION_DENIED). The fix is to
+// route writes through OpenClash's own LuCI plugin endpoints, which
+// run their lua handlers as root and therefore bypass the rpcd ACL
+// ceiling entirely. See
+// `docs/postmortems/openclash-management-transport.md` for the
+// probe data and the full reasoning.
 //
 // Determinism / failure contract (session layer)
 // ----------------------------------------------
@@ -304,16 +328,33 @@ interface CachedSession {
 const MANAGEMENT_COLLECTOR_KEY = 'openclash.management';
 
 /**
- * SID placeholder used in the `params` array of the ubus JSON-RPC
- * envelope. The real authentication carrier is the `sysauth` cookie
- * attached by `privilegedFetch`; this 32-char zero string is the
- * conventional "no explicit session" marker used by LuCI's own JS
- * client when calling ubus over an authenticated admin session.
+ * Absolute-path prefix every OpenClash config file lives under. The
+ * OpenClash LuCI plugin's `action_config_name` returns the active
+ * file as a **basename** (e.g. `iKuuu.yaml`); we always re-attach
+ * this prefix before exposing the path to the rest of the codebase
+ * (audit table, IPC payloads, UI) so callers see a single canonical
+ * shape (`/etc/openclash/config/<name>`).
+ *
+ * The schema's `CONFIG_PATH_RE` validator (in `schemas.ts`) pins the
+ * same prefix on user-supplied whitelist entries, so absolute and
+ * canonical-from-basename paths are byte-for-byte equal.
  */
-const UBUS_SID_PLACEHOLDER = '00000000000000000000000000000000';
+const OPENCLASH_CONFIG_DIR = '/etc/openclash/config/';
 
-/** ubus protocol status code for `UBUS_STATUS_PERMISSION_DENIED`. */
-const UBUS_STATUS_PERMISSION_DENIED = 6;
+/**
+ * Absolute LuCI URL paths for the OpenClash plugin endpoints. These
+ * are stable across upstream OpenClash versions (defined by
+ * `luci-app-openclash/luasrc/controller/openclash.lua`). Using the
+ * plugin's own routes lets us bypass the LuCI ubus rpcd ACL ceiling
+ * — `action_switch_config` runs the `uci.set` + `uci.commit` +
+ * `/etc/init.d/openclash restart` sequence as root inside the lua
+ * handler, which the cookie session is allowed to invoke even
+ * though direct ubus `file.exec` is not.
+ */
+const OPENCLASH_CONFIG_NAME_PATH =
+  '/cgi-bin/luci/admin/services/openclash/config_name';
+const OPENCLASH_SWITCH_CONFIG_PATH =
+  '/cgi-bin/luci/admin/services/openclash/switch_config';
 
 /**
  * Hard ceiling on verify-loop iterations (Requirement 15.4 / Property 5).
@@ -332,15 +373,16 @@ const VERIFY_MIN_GAP_MS = 1000;
 
 /**
  * Per-call sub-timeout (ms) used inside the verify loop for both the
- * `uci.get` read and the `GET /configs` controller liveness probe
- * (design.md §`openclash.management.service.ts` §Verify). Independent
- * of `requestTimeoutMs` because the verify reads must be tight even
- * when the user has dialled `requestTimeoutMs` up for slow links.
+ * `config_name` re-read and the `GET /configs` controller liveness
+ * probe (design.md §`openclash.management.service.ts` §Verify).
+ * Independent of `requestTimeoutMs` because the verify reads must be
+ * tight even when the user has dialled `requestTimeoutMs` up for slow
+ * links.
  */
 const VERIFY_SUBCALL_TIMEOUT_MS = 2000;
 
 // ---------------------------------------------------------------------------
-// ubus JSON-RPC parsing helpers
+// OpenClash plugin response parsing helpers
 // ---------------------------------------------------------------------------
 
 /**
@@ -358,87 +400,103 @@ function isManagementError(value: unknown): value is ManagementError {
   );
 }
 
-/** Parsed shape of a single ubus JSON-RPC `call` response. */
-interface UbusReply {
-  /** ubus status: `0` = ok; non-zero values are protocol-level errors. */
-  readonly status: number;
-  /** Reply body when present; `null` when ubus returned no payload. */
-  readonly data: Record<string, unknown> | null;
+/**
+ * Normalise a value returned by the OpenClash plugin's
+ * `action_config_name` (or any other source that may use a basename
+ * instead of an absolute path) to the canonical absolute form
+ * `/etc/openclash/config/<name>`.
+ *
+ * Accepts:
+ *   - `/etc/openclash/config/iKuuu.yaml`  (absolute, returned as-is)
+ *   - `iKuuu.yaml`                        (basename, prefix re-attached)
+ *
+ * Returns `null` when the value is not a non-empty string or contains
+ * a path separator that would let it escape the config directory
+ * (defense in depth — the upstream lua handler already rejects
+ * traversal, but we never echo unsanitised input out of this module).
+ */
+function canonicalConfigPath(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed.startsWith(OPENCLASH_CONFIG_DIR)) {
+    // Already absolute. Reject anything that tries to climb out of
+    // the config dir; the schema validator pins the same shape on
+    // whitelist entries, so this is just defense in depth against a
+    // misbehaving upstream.
+    const tail = trimmed.slice(OPENCLASH_CONFIG_DIR.length);
+    if (tail.length === 0 || tail.includes('/') || tail.includes('\\')) {
+      return null;
+    }
+    return trimmed;
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    // Relative path with separators is unexpected — refuse rather
+    // than guess.
+    return null;
+  }
+  return OPENCLASH_CONFIG_DIR + trimmed;
 }
 
 /**
- * Parse a JSON-RPC `call` response from the LuCI ubus endpoint.
+ * Extract the active config path from the JSON returned by
+ * `GET /cgi-bin/luci/admin/services/openclash/config_name`. The
+ * upstream `action_config_name` handler (see
+ * `luci-app-openclash/luasrc/controller/openclash.lua`) returns:
  *
- * Expected success envelope:
- *   `{ "jsonrpc": "2.0", "id": <id>, "result": [<status>, <reply>] }`
+ * ```json
+ * {
+ *   "config_name": [{ "name": "WestData.yaml" }, { "name": "iKuuu.yaml" }],
+ *   "config_path": "iKuuu.yaml"
+ * }
+ * ```
  *
- * Returns `null` when the envelope is malformed (the caller maps
- * that to `http_error` — the LuCI surface is the contract boundary,
- * so a malformed reply is a transport-level fault).
+ * We only care about `config_path`. Returns `null` when the field is
+ * missing, empty, or fails the canonical-path normalisation.
  */
-function parseUbusReply(payload: unknown): UbusReply | null {
+function extractConfigPathFromConfigName(payload: unknown): string | null {
   if (payload === null || typeof payload !== 'object') {
     return null;
   }
   const record = payload as Record<string, unknown>;
-  const result = record.result;
-  if (!Array.isArray(result)) {
-    return null;
-  }
-  const statusEntry = result[0];
-  if (typeof statusEntry !== 'number' || !Number.isFinite(statusEntry)) {
-    return null;
-  }
-  const dataEntry = result[1];
-  let data: Record<string, unknown> | null = null;
-  if (
-    dataEntry !== null &&
-    typeof dataEntry === 'object' &&
-    !Array.isArray(dataEntry)
-  ) {
-    data = dataEntry as Record<string, unknown>;
-  }
-  return { status: statusEntry, data };
+  return canonicalConfigPath(record.config_path);
 }
 
 /**
- * Extract the `config_path` string from a `uci.get` reply. The reply
- * shape varies between OpenWrt builds, so we accept three forms:
- *
- *   - `{ "value": "..." }`        — newer OpenWrt single-option get
- *   - `{ "config_path": "..." }`  — older builds; option name is the key
- *   - `{ "values": { "config_path": "..." } }` — section-wide reply
- *
- * Returns `null` when no non-empty string-valued path can be located.
- * Any non-string / empty value is treated as "absent" so a malformed
- * reply does not propagate into `openclash_config_changes` rows.
+ * Parsed shape of the OpenClash plugin's `switch_config` reply. The
+ * upstream handler always returns a JSON object whose `status` field
+ * is either `"success"` or `"error"`; on the latter `message` carries
+ * a short reason ("No config file specified" or "Config file does
+ * not exist: ..."). We deliberately ignore everything else so a
+ * future schema drift can only narrow our acceptance, never widen it.
  */
-function extractConfigPathFromReply(
-  reply: Record<string, unknown> | null,
-): string | null {
-  if (reply === null) {
-    return null;
+interface SwitchConfigReply {
+  readonly status: 'success' | 'error' | 'unknown';
+  readonly message: string | null;
+}
+
+function parseSwitchConfigReply(payload: unknown): SwitchConfigReply {
+  if (payload === null || typeof payload !== 'object') {
+    return { status: 'unknown', message: null };
   }
-  const direct = reply.value;
-  if (typeof direct === 'string' && direct.length > 0) {
-    return direct;
+  const record = payload as Record<string, unknown>;
+  const rawStatus = record.status;
+  const rawMessage = record.message;
+  const message =
+    typeof rawMessage === 'string' && rawMessage.length > 0
+      ? rawMessage
+      : null;
+  if (rawStatus === 'success') {
+    return { status: 'success', message };
   }
-  const named = reply.config_path;
-  if (typeof named === 'string' && named.length > 0) {
-    return named;
+  if (rawStatus === 'error') {
+    return { status: 'error', message };
   }
-  const values = reply.values;
-  if (
-    values !== null &&
-    typeof values === 'object' &&
-    !Array.isArray(values)
-  ) {
-    const nested = (values as Record<string, unknown>).config_path;
-    if (typeof nested === 'string' && nested.length > 0) {
-      return nested;
-    }
-  }
-  return null;
+  return { status: 'unknown', message };
 }
 
 /**
@@ -525,8 +583,9 @@ function redactUrlCredentials(value: string): string {
 /**
  * Compose a request URL by concatenating a (trailing-slash-tolerant)
  * base with an absolute path. The LuCI surface uses absolute paths
- * (`/cgi-bin/luci/...`, `/cgi-bin/luci/ubus/...`) so we deliberately
- * strip any path component on `base` to keep callers honest.
+ * (`/cgi-bin/luci/...`, `/cgi-bin/luci/admin/services/openclash/...`)
+ * so we deliberately strip any path component on `base` to keep
+ * callers honest.
  */
 function joinManagementUrl(base: string, path: string): string {
   // `URL` handles both `http://1.2.3.4` and `http://1.2.3.4/luci/`
@@ -585,8 +644,8 @@ function extractSysAuthCookie(response: Response): string | null {
  * The factory is synchronous and performs no I/O — it only captures
  * its dependencies and initialises the session-cookie cache to
  * `null`. Tasks 8.2 / 8.3 / 8.4 wire up `ensureSession()` /
- * `privilegedFetch`, the `readActiveConfigPath()` ubus call, and the
- * full `switchActiveConfig()` write + verify loop respectively.
+ * `privilegedFetch`, the `readActiveConfigPath()` plugin call, and
+ * the full `switchActiveConfig()` write + verify loop respectively.
  */
 export function createOpenClashManagementClient(
   deps: OpenClashManagementClientDeps,
@@ -837,8 +896,8 @@ export function createOpenClashManagementClient(
    *
    * The helper does NOT classify non-2xx responses other than 401:
    * 5xx / 404 / 403 mapping is the caller's responsibility because
-   * different ubus / uci endpoints have different "soft 200 with
-   * an error envelope" conventions.
+   * different LuCI endpoints have different "soft 200 with an error
+   * envelope" conventions.
    *
    * Task 8.3 / 8.4 will be the first callers; the helper is
    * exposed inside the closure (not on the public interface) so
@@ -1006,29 +1065,31 @@ export function createOpenClashManagementClient(
   }
 
   /**
-   * Issue a single ubus JSON-RPC `call` against the LuCI surface and
-   * return the parsed reply. Encapsulates the JSON envelope shape so
-   * callers (currently only `readActiveConfigPath`; task 8.4 will
-   * reuse it) only see the closed-set error mapping.
+   * Issue a single privileged GET / POST against an OpenClash plugin
+   * endpoint and return the parsed JSON body. Encapsulates the
+   * "200-with-JSON-body" success contract so callers only see the
+   * closed-set error mapping.
    *
-   * Transport selection (per the design's "primary ubus, fallback
-   * admin" rule):
-   *   1. Try `/cgi-bin/luci/ubus/` — the LuCI canonical ubus mount
-   *      that newer OpenWrt builds expose for cookie-authenticated
-   *      JSON-RPC.
-   *   2. If that returns 404 the surface is not mounted on this
-   *      build; retry against `/cgi-bin/luci/admin/ubus/` which is
-   *      the admin-scoped alternate exposed on older builds.
-   *   3. If both return 404, surface `http_error` so the caller's
-   *      error mapping treats this as a server-side breakage rather
-   *      than a transient network blip.
+   * Error mapping (callers never need to second-guess this):
+   *   - 401 (after the transparent re-login attempt fails)  → `auth_error`
+   *   - any other non-2xx                                    → `http_error`
+   *   - body that is not valid JSON                          → `http_error`
+   *   - fetch reject (DNS / ECONNREFUSED / abort / timeout)  → `network_error`
+   *     (raised by `privilegedFetch` already as the right
+   *     `ManagementError`; we forward verbatim)
+   *
+   * The body is read once, then either parsed or surfaced as an
+   * `http_error` — we never echo bytes from the response into the
+   * thrown `message` (Requirement 14.5).
    */
-  async function ubusCall(
-    object: string,
-    method: string,
-    params: Record<string, unknown>,
+  async function pluginCall(
+    method: 'GET' | 'POST',
+    path: string,
+    bodyInit:
+      | { kind: 'none' }
+      | { kind: 'form'; entries: ReadonlyArray<readonly [string, string]> },
     timeoutMs: number,
-  ): Promise<UbusReply> {
+  ): Promise<unknown> {
     const settings = getAppSettings();
     const baseUrl = settings.managementInterface.url;
     if (baseUrl.length === 0) {
@@ -1038,111 +1099,75 @@ export function createOpenClashManagementClient(
       );
     }
 
-    const envelope = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'call',
-      params: [UBUS_SID_PLACEHOLDER, object, method, params],
-    };
-    const body = JSON.stringify(envelope);
+    const url = joinManagementUrl(baseUrl, path);
+    const safeUrl = redactUrlCredentials(url);
 
-    const candidates = ['/cgi-bin/luci/ubus/', '/cgi-bin/luci/admin/ubus/'];
-    let lastSafeUrl = '';
-    let lastStatus: number | null = null;
+    const init: RequestInit =
+      bodyInit.kind === 'form'
+        ? {
+            method,
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Accept: 'application/json, */*;q=0.1',
+            },
+            body: new URLSearchParams(
+              bodyInit.entries.map(
+                ([k, v]) => [k, v] as [string, string],
+              ),
+            ).toString(),
+          }
+        : {
+            method,
+            headers: {
+              Accept: 'application/json, */*;q=0.1',
+            },
+          };
 
-    for (const path of candidates) {
-      const url = joinManagementUrl(baseUrl, path);
-      const safeUrl = redactUrlCredentials(url);
-      lastSafeUrl = safeUrl;
+    const response = await privilegedFetch(url, init, { timeoutMs });
 
-      const response = await privilegedFetch(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body,
-        },
-        { timeoutMs },
-      );
-
-      if (response.status === 401) {
-        await drainResponseBody(response);
-        throw sievedError(
-          'auth_error',
-          `POST ${safeUrl}: 401`,
-        );
-      }
-
-      if (response.status === 404) {
-        // Surface not mounted at this path; try the next candidate.
-        await drainResponseBody(response);
-        lastStatus = 404;
-        continue;
-      }
-
-      if (!response.ok) {
-        await drainResponseBody(response);
-        throw sievedError(
-          'http_error',
-          `POST ${safeUrl}: ${response.status}`,
-        );
-      }
-
-      // Success path: parse the JSON-RPC envelope.
-      let parsed: unknown;
-      try {
-        parsed = await response.json();
-      } catch {
-        throw sievedError(
-          'http_error',
-          `POST ${safeUrl}: invalid JSON`,
-        );
-      }
-
-      const reply = parseUbusReply(parsed);
-      if (reply === null) {
-        throw sievedError(
-          'http_error',
-          `POST ${safeUrl}: malformed ubus envelope`,
-        );
-      }
-      return reply;
+    if (response.status === 401) {
+      await drainResponseBody(response);
+      throw sievedError('auth_error', `${method} ${safeUrl}: 401`);
     }
 
-    // Both candidates returned 404 (or the loop exited without
-    // populating a reply, which only happens when every candidate
-    // hit the 404 continue branch).
-    throw sievedError(
-      'http_error',
-      `POST ${lastSafeUrl}: ${lastStatus ?? 404}`,
-    );
+    if (!response.ok) {
+      await drainResponseBody(response);
+      throw sievedError(
+        'http_error',
+        `${method} ${safeUrl}: ${response.status}`,
+      );
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      throw sievedError('http_error', `${method} ${safeUrl}: invalid JSON`);
+    }
+    return parsed;
   }
 
   /**
-   * Issue a single `uci.get openclash.config.config_path` against the
-   * LuCI ubus surface and return the resolved path string. Throws a
+   * Issue a single
+   * `GET /cgi-bin/luci/admin/services/openclash/config_name` and
+   * return the active config path normalised to the canonical
+   * `/etc/openclash/config/<name>` shape. Throws a
    * {@link ManagementError} on any failure.
    *
    * Shared between {@link readActiveConfigPath} (which adds collector
-   * health bookkeeping) and the verify loop in {@link switchActiveConfig}
-   * (which records a single aggregate outcome at the end of the
-   * switch flow rather than one row per verify read — Property 13
-   * counts switch flows, not internal probes).
+   * health bookkeeping) and the verify loop in
+   * {@link switchActiveConfig} (which records a single aggregate
+   * outcome at the end of the switch flow rather than one row per
+   * verify read — Property 13 counts switch flows, not internal
+   * probes).
    */
   async function readActiveConfigPathOnce(timeoutMs: number): Promise<string> {
-    let reply: UbusReply;
+    let parsed: unknown;
     try {
-      reply = await ubusCall(
-        'uci',
-        'get',
-        {
-          config: 'openclash',
-          section: 'config',
-          option: 'config_path',
-        },
+      parsed = await pluginCall(
+        'GET',
+        OPENCLASH_CONFIG_NAME_PATH,
+        { kind: 'none' },
         timeoutMs,
       );
     } catch (cause) {
@@ -1157,27 +1182,11 @@ export function createOpenClashManagementClient(
       );
     }
 
-    // ubus protocol-level error: envelope arrived but the called
-    // method reported a non-zero status. Permission denied is the
-    // only ubus status we can map onto the closed
-    // `ManagementErrorCode` set as `auth_error`; everything else is
-    // `http_error` (the surface is reachable but rejected the call).
-    if (reply.status !== 0) {
-      const code: ManagementErrorCode =
-        reply.status === UBUS_STATUS_PERMISSION_DENIED
-          ? 'auth_error'
-          : 'http_error';
-      throw sievedError(
-        code,
-        `ubus uci.get openclash.config.config_path: status ${reply.status}`,
-      );
-    }
-
-    const path = extractConfigPathFromReply(reply.data);
+    const path = extractConfigPathFromConfigName(parsed);
     if (path === null) {
       throw sievedError(
         'http_error',
-        'ubus uci.get openclash.config.config_path: missing value',
+        'GET config_name: missing or malformed config_path',
       );
     }
     return path;
@@ -1200,27 +1209,6 @@ export function createOpenClashManagementClient(
         ? `unexpected error: ${cause.name}`
         : 'unexpected error',
     );
-  }
-
-  /**
-   * Map a successful `ubusCall` reply into a {@link ManagementError}
-   * if the ubus protocol-level status is non-zero. Returns `null`
-   * when the call succeeded (`status === 0`). Shared by the three
-   * write sub-calls so they all funnel ubus errors into the same
-   * closed-set bucket.
-   */
-  function ubusReplyError(
-    reply: UbusReply,
-    label: string,
-  ): ManagementError | null {
-    if (reply.status === 0) {
-      return null;
-    }
-    const code: ManagementErrorCode =
-      reply.status === UBUS_STATUS_PERMISSION_DENIED
-        ? 'auth_error'
-        : 'http_error';
-    return sievedError(code, `${label}: status ${reply.status}`);
   }
 
   return {
@@ -1260,61 +1248,44 @@ export function createOpenClashManagementClient(
       }
 
       // -----------------------------------------------------------------
-      // 2) Single write transaction: uci.set + uci.commit + restart.
+      // 2) Single write transaction: POST switch_config.
       //
-      // The three sub-calls run sequentially; the first failure short-
-      // circuits and is reported verbatim. We never auto-retry the
-      // write step (Requirement 7.1, Property 8 carryover).
+      // The OpenClash plugin's `action_switch_config` lua handler
+      // performs `uci.set` + `uci.commit` + `/etc/init.d/openclash
+      // restart` server-side as root, which the cookie session is
+      // permitted to invoke even though direct ubus `file.exec` is
+      // not (see the file-header postmortem reference). We never
+      // auto-retry the write step (Requirement 7.1, Property 8
+      // carryover).
       // -----------------------------------------------------------------
       try {
-        const setReply = await ubusCall(
-          'uci',
-          'set',
-          {
-            config: 'openclash',
-            section: 'config',
-            option: 'config_path',
-            value: targetPath,
-          },
-          requestTimeoutMs,
-        );
-        const setErr = ubusReplyError(
-          setReply,
-          'ubus uci.set openclash.config.config_path',
-        );
-        if (setErr !== null) {
-          throw setErr;
+        let parsed: unknown;
+        try {
+          parsed = await pluginCall(
+            'POST',
+            OPENCLASH_SWITCH_CONFIG_PATH,
+            { kind: 'form', entries: [['config_file', targetPath]] },
+            requestTimeoutMs,
+          );
+        } catch (cause) {
+          throw coerceManagementError(cause);
         }
-
-        const commitReply = await ubusCall(
-          'uci',
-          'commit',
-          { config: 'openclash' },
-          requestTimeoutMs,
-        );
-        const commitErr = ubusReplyError(
-          commitReply,
-          'ubus uci.commit openclash',
-        );
-        if (commitErr !== null) {
-          throw commitErr;
-        }
-
-        const restartReply = await ubusCall(
-          'file',
-          'exec',
-          {
-            command: '/etc/init.d/openclash',
-            params: ['restart'],
-          },
-          requestTimeoutMs,
-        );
-        const restartErr = ubusReplyError(
-          restartReply,
-          'ubus file.exec /etc/init.d/openclash restart',
-        );
-        if (restartErr !== null) {
-          throw restartErr;
+        const reply = parseSwitchConfigReply(parsed);
+        if (reply.status !== 'success') {
+          // The plugin handler returns `{status:"error",message:"..."}`
+          // for "no config file specified" / "config file does not
+          // exist". The string body is informational only — we map
+          // every error reply onto `http_error` because the surface
+          // returned 200, the request was authenticated, but the
+          // upstream side refused the operation. The redaction sieve
+          // strips any captured secret values from the message even
+          // though the lua handler doesn't echo any.
+          throw sievedError(
+            'http_error',
+            reply.message !== null
+              ? `POST switch_config: ${reply.message}`
+              : 'POST switch_config: refused',
+          );
         }
       } catch (cause) {
         const err = coerceManagementError(cause);

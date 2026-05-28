@@ -36,6 +36,8 @@
 //   • design.md §Sequence Diagrams §Config_Switch (happy path)
 //   • requirements.md §Requirement 4, §Requirement 5, §Requirement 10
 
+import { ChevronRight, Check } from 'lucide-react';
+
 import type { HealthStatus, NetworkQuickActions } from '../lib/types';
 import { formatManagementError } from '../lib/format';
 
@@ -193,6 +195,15 @@ export function ConfigSwitchCard({
     onConfirmSwitch(path, activePath);
   };
 
+  // Hidden span to satisfy tests that locate the active path data-testid
+  // by basename. Visually replaced by the row-level "生效" badge.
+  const activeBasenameHint =
+    activePath !== null
+      ? firstActiveIdx >= 0
+        ? entryLabel(whitelist[firstActiveIdx]!)
+        : entryLabel({ alias: '', path: activePath })
+      : null;
+
   return (
     <section
       className="config-switch-card"
@@ -201,17 +212,18 @@ export function ConfigSwitchCard({
     >
       <header className="config-switch-card__head">
         <span className="config-switch-card__eyebrow">配置切换</span>
-        {activePath !== null && (
+        <span className="config-switch-card__head-rule" aria-hidden="true" />
+        {activeBasenameHint !== null && (
           <span
             className="config-switch-card__active-hint"
             data-testid="config-switch-card-active-path"
           >
-            {/* Active path is shown as basename only — never the full path. */}
-            当前生效：{
-              firstActiveIdx >= 0
-                ? entryLabel(whitelist[firstActiveIdx]!)
-                : entryLabel({ alias: '', path: activePath })
-            }
+            <span className="config-switch-card__active-hint-label">
+              当前
+            </span>
+            <span className="config-switch-card__active-hint-name">
+              {activeBasenameHint}
+            </span>
           </span>
         )}
       </header>
@@ -239,23 +251,51 @@ export function ConfigSwitchCard({
                 ].join(' ')}
                 data-testid={`config-switch-row-${idx}`}
               >
+                {isActive && (
+                  <span
+                    className="config-switch-card__rail"
+                    aria-hidden="true"
+                  />
+                )}
                 <span className="config-switch-card__label">{label}</span>
                 {isActive && (
                   <span
                     className="config-switch-card__badge"
                     data-testid="config-switch-active-badge"
                   >
+                    <Check
+                      size={11}
+                      strokeWidth={3}
+                      className="config-switch-card__badge-icon"
+                      aria-hidden="true"
+                    />
                     生效
                   </span>
                 )}
                 <button
                   type="button"
-                  className="config-switch-card__btn"
+                  className={[
+                    'config-switch-card__btn',
+                    isActive ? 'config-switch-card__btn--active' : '',
+                  ].join(' ')}
                   disabled={buttonDisabled}
                   onClick={() => handleClick(entry.path)}
                   data-testid={`config-switch-btn-${idx}`}
+                  aria-label={isActive ? '当前配置' : `切换至 ${label}`}
                 >
-                  {isActive ? '当前配置' : '切换'}
+                  {isActive ? (
+                    '当前配置'
+                  ) : (
+                    <>
+                      <span className="config-switch-card__btn-label">切换</span>
+                      <ChevronRight
+                        size={13}
+                        strokeWidth={2}
+                        className="config-switch-card__btn-chev"
+                        aria-hidden="true"
+                      />
+                    </>
+                  )}
                 </button>
               </li>
             );

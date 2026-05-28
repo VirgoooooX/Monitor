@@ -198,6 +198,79 @@ body.mode-expanded[data-color-mode='light'] {
   color: var(--ex-text-mute);
 }
 
+/* ── Light-mode network strip ──────────────────────────────────────
+   Single-row instrument panel: tighten the surface to a clean
+   white card with a subtle emerald bleed in the upper-right so
+   the brand colour is implicit even before the sparkline draws. */
+[data-color-mode='light'] .ex .ex__card--network {
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(4, 120, 87, 0.06), transparent 55%),
+    #ffffff;
+  border-color: var(--ex-border);
+  box-shadow:
+    0 1px 0 rgba(15, 23, 42, 0.02),
+    0 6px 18px rgba(15, 23, 42, 0.04);
+}
+
+[data-color-mode='light'] .ex .ex__card-eyebrow {
+  color: var(--ex-text-mute);
+  font-weight: 700;
+}
+
+[data-color-mode='light'] .ex .ex__card-pulse {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .ex__card-range {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--ex-border);
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .ex__card-range-num {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__strip-label {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__strip-node {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .ex__strip-node-tag {
+  color: var(--ex-text);
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .ex__strip-node-name {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__strip-metric-num {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .ex__strip-metric-unit {
+  color: var(--ex-text-mute);
+}
+
+[data-color-mode='light'] .ex .ex__strip-node::before,
+[data-color-mode='light'] .ex .ex__strip-trend::before,
+[data-color-mode='light'] .ex .ex__strip-metric::before {
+  background: var(--ex-border);
+}
+
+/* Trend tint — emerald in light, indigo in dark via inherited color.
+   The Sparkline component reads `currentColor`, so setting `color`
+   on the trend container is enough to recolour the curve, area
+   fill, and trailing dot. */
+[data-color-mode='light'] .ex .ex__strip-trend {
+  color: var(--ex-accent);
+}
+
 /* Badges — the dark-mode chips are a translucent white wash over a
    black surface; mirror them with a translucent ink wash on white. */
 [data-color-mode='light'] .ex .ex__badge {
@@ -641,24 +714,24 @@ body.mode-expanded[data-color-mode='light'] {
 .ex__stack {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* ── Cards (network glance) ─────────────────────────────────────────── */
 
 .ex__card {
   position: relative;
-  display: grid;
-  grid-template-rows: auto auto auto auto;
-  gap: 10px;
-  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px 18px;
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.04),
     rgba(255, 255, 255, 0.015)
   );
   border: 1px solid var(--ex-border);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
 }
 
@@ -680,97 +753,300 @@ body.mode-expanded[data-color-mode='light'] {
 
 .ex__card-head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .ex__card-eyebrow {
   font-family: var(--ex-display-font);
-  font-size: var(--type-micro);
+  font-size: 10px;
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--ex-text-faint);
-}
-
-.ex__card-title {
-  font-size: var(--type-base);
-  font-weight: 600;
-  color: var(--ex-text-mute);
-  letter-spacing: 0.02em;
-}
-
-.ex__card--network .status-hero {
-  -webkit-app-region: no-drag;
-  gap: 10px;
-  align-items: center;
-}
-
-.ex__card--network .status-hero__label {
-  font-size: var(--type-title, 23px);
   font-weight: 700;
-  letter-spacing: -0.005em;
-  line-height: 1.15;
-}
-
-.ex__card--network .status-hero__latency {
-  font-family: var(--ex-ui-font);
-  font-size: var(--type-base);
-  color: var(--ex-text-mute);
-  margin-left: 6px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-
-.ex__card--network .status-hero__dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
   flex: 0 0 auto;
 }
 
-.ex__node-line {
-  display: flex;
+/* Latency range pill — shows min–max from the visible sparkline
+   window so users get the spread at a glance. Pinned right of the
+   eyebrow; collapses gracefully when there's no data. */
+.ex__card-range {
+  display: inline-flex;
   align-items: baseline;
-  gap: 8px;
-  font-size: var(--type-sm);
+  gap: 3px;
+  font-family: var(--ex-display-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
   color: var(--ex-text-mute);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--ex-border);
+  flex: 0 0 auto;
+}
+
+.ex__card-range-num {
+  color: var(--ex-text);
+}
+
+.ex__card-range-sep {
+  color: var(--ex-text-faint);
+  margin: 0 1px;
+}
+
+.ex__card-range-unit {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-left: 3px;
+  opacity: 0.75;
+}
+
+.ex__card-pulse {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--ex-display-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ex-text-faint);
+  flex: 0 0 auto;
+}
+
+.ex__card-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ok);
+  box-shadow: 0 0 8px var(--color-ok);
+  flex: 0 0 auto;
+}
+
+.ex__card-pulse[data-status='node_slow'] .ex__card-pulse-dot,
+.ex__card-pulse[data-status='partial_outage'] .ex__card-pulse-dot {
+  background: var(--color-warn);
+  box-shadow: 0 0 8px var(--color-warn);
+}
+
+.ex__card-pulse[data-status='node_down'] .ex__card-pulse-dot,
+.ex__card-pulse[data-status='openclash_unreachable'] .ex__card-pulse-dot,
+.ex__card-pulse[data-status='home_down'] .ex__card-pulse-dot {
+  background: var(--color-bad);
+  box-shadow: 0 0 8px var(--color-bad);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ex__card-pulse-dot {
+    animation: ex-pulse-breath 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes ex-pulse-breath {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── Network glance strip — single dense row
+ *
+ * Grid columns:
+ *   [status]  [node]  [trend (flex)]  [latency]
+ *
+ * Each cell is separated by a vertical hairline (a CSS pseudo-element
+ * on the *next* cell) to read like an instrument panel. The status
+ * cell is fixed-width by content; the node cell can ellipsis; the
+ * trend cell takes all the slack so the curve is the real estate
+ * winner; the metric cell is fixed-width by content.
+ */
+.ex__strip {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  min-height: 84px;
+}
+
+.ex__strip-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.ex__strip-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--color-unknown);
+}
+
+.ex__strip-dot[data-status='healthy'] {
+  background: var(--color-ok);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-ok) 18%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-ok) 55%, transparent);
+}
+
+.ex__strip-dot[data-status='warn'] {
+  background: var(--color-warn);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-warn) 18%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-warn) 55%, transparent);
+}
+
+.ex__strip-dot[data-status='bad'],
+.ex__strip-dot[data-status='critical'] {
+  background: var(--color-bad);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-bad) 18%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-bad) 55%, transparent);
+}
+
+.ex__strip-label {
+  font-family: var(--ex-display-font);
+  font-size: var(--type-lg, 17px);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--ex-text);
+  white-space: nowrap;
+  line-height: 1.1;
+}
+
+.ex__strip-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--type-xs);
+  color: var(--ex-text-mute);
+  position: relative;
+  padding-left: 14px;
+}
+
+/* Vertical hairline between status cell and node cell */
+.ex__strip-node::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--ex-border);
+}
+
+.ex__strip-node-tag {
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ex-text);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--ex-border);
+}
+
+.ex__strip-node-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--ex-text);
+  letter-spacing: 0.005em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ex__node-group {
-  font-family: var(--ex-display-font);
-  font-size: var(--type-micro);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ex-text-faint);
-  padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 4px;
-  border: 1px solid var(--ex-border);
-  flex: 0 0 auto;
-}
-
-.ex__node-name {
-  flex: 1 1 auto;
+.ex__strip-trend {
+  position: relative;
+  height: 84px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
-  color: var(--ex-text);
-  letter-spacing: 0.005em;
+  color: var(--ex-accent);
+  padding-left: 18px;
 }
 
-.ex__trend {
-  margin: 2px -2px 0;
-  height: 72px;
+/* Vertical hairline between node cell and trend */
+.ex__strip-trend::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--ex-border);
 }
 
-.ex__trend .sparkline {
+.ex__strip-trend .sparkline,
+.ex__strip-trend .telemetry-wave {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.ex__strip-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-family: var(--ex-display-font);
+  color: var(--ex-text);
+  padding-left: 14px;
+  position: relative;
+  line-height: 1;
+}
+
+/* Vertical hairline between trend and metric */
+.ex__strip-metric::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--ex-border);
+}
+
+.ex__strip-metric-num {
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ex-text);
+}
+
+.ex__strip[data-status='warn'] .ex__strip-metric-num {
+  color: var(--color-warn);
+}
+
+.ex__strip[data-status='bad'] .ex__strip-metric-num,
+.ex__strip[data-status='critical'] .ex__strip-metric-num {
+  color: var(--color-bad);
+}
+
+.ex__strip-metric-unit {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ex-text-faint);
+  margin-bottom: 4px;
 }
 
 .ex__badges {
@@ -982,66 +1258,49 @@ body.mode-expanded[data-color-mode='light'] {
    trend → badges) is preserved; we just remap regions via
    grid-template-areas. */
 
+/* ── Network card — single dense strip ───────────────────────────── */
+
 .ex__card--network {
-  display: grid;
-  /* Right column tightened (was minmax(220px, 38%)) so the
-     sparkline sits closer to the hero text — the 4 status pills
-     that justified extra breathing room have moved into the
-     network glance card itself, not the gutter beside it. */
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 46%);
-  grid-template-areas:
-    'head head'
-    'hero trend'
-    'node trend';
-  column-gap: 10px;
-  row-gap: 6px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.ex__card--network .ex__card-head {
-  grid-area: head;
-}
-
-.ex__card--network .ex__hero {
-  grid-area: hero;
-  min-width: 0;
-}
-
-.ex__card--network .ex__node-line {
-  grid-area: node;
-  min-width: 0;
-}
-
-.ex__card--network .ex__trend {
-  grid-area: trend;
-  align-self: stretch;
-  height: auto;
-  min-height: 72px;
-  margin: 0;
-}
-
-.ex__card--network .ex__trend .sparkline {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* Narrow expanded window — collapse to a single column so the
-   sparkline stays readable instead of being squeezed into a
-   tiny rail. Matches the existing `(max-width: 760px)` block at
-   the bottom of integrations.css for the rest of the shell. */
-@media (max-width: 760px) {
-  .ex__card--network {
-    grid-template-columns: 1fr;
+@media (max-width: 540px) {
+  .ex__strip {
+    grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
-      'head'
-      'hero'
-      'node'
-      'trend';
+      'status node metric'
+      'trend trend trend';
+    row-gap: 12px;
+    min-height: 0;
   }
 
-  .ex__card--network .ex__trend {
-    min-height: 56px;
+  .ex__strip-status {
+    grid-area: status;
+  }
+
+  .ex__strip-node {
+    grid-area: node;
+    padding-left: 12px;
+  }
+
+  .ex__strip-trend {
+    grid-area: trend;
+    padding-left: 0;
+    height: 64px;
+  }
+
+  .ex__strip-trend::before {
+    display: none;
+  }
+
+  .ex__strip-metric {
+    grid-area: metric;
+  }
+
+  .ex__strip-metric-num {
+    font-size: 28px;
   }
 }
 
@@ -1075,6 +1334,27 @@ body.mode-expanded[data-color-mode='light'] {
   color: var(--ex-text-mute);
 }
 
+[data-color-mode='light'] .ex .config-switch-card__active-hint-label {
+  color: var(--ex-text-faint);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__active-hint-name {
+  color: var(--ex-text);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__head {
+  border-bottom-color: var(--ex-border);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__head-rule {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--ex-border),
+    transparent
+  );
+}
+
 [data-color-mode='light'] .ex .quick-node-card__btn {
   background: #ffffff;
   border-color: var(--ex-border-strong);
@@ -1104,16 +1384,34 @@ body.mode-expanded[data-color-mode='light'] {
 
 [data-color-mode='light'] .ex .config-switch-card__row {
   border-color: var(--ex-border);
+  background: #ffffff;
+}
+
+[data-color-mode='light'] .ex .config-switch-card__row:not(.config-switch-card__row--active):hover {
+  border-color: var(--ex-border-strong);
+  background: rgba(15, 23, 42, 0.02);
 }
 
 [data-color-mode='light'] .ex .config-switch-card__row--active {
-  background: rgba(34, 197, 94, 0.08);
-  border-color: rgba(34, 197, 94, 0.28);
+  background:
+    linear-gradient(
+      90deg,
+      rgba(34, 197, 94, 0.12),
+      rgba(34, 197, 94, 0.0) 65%
+    ),
+    #ffffff;
+  border-color: rgba(4, 120, 87, 0.32);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__rail {
+  background: rgba(4, 120, 87, 0.85);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.35);
 }
 
 [data-color-mode='light'] .ex .config-switch-card__badge {
   background: rgba(34, 197, 94, 0.16);
   color: #047857;
+  border-color: rgba(4, 120, 87, 0.28);
 }
 
 [data-color-mode='light'] .ex .config-switch-card__btn {
@@ -1126,6 +1424,15 @@ body.mode-expanded[data-color-mode='light'] {
   background: rgba(4, 120, 87, 0.08);
   border-color: rgba(4, 120, 87, 0.34);
   color: var(--ex-accent);
+  box-shadow: 0 1px 0 rgba(4, 120, 87, 0.18);
+}
+
+[data-color-mode='light'] .ex .config-switch-card__btn--active,
+[data-color-mode='light'] .ex .config-switch-card__btn--active:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: #047857;
+  box-shadow: none;
 }
 
 /* Node card grid — light-mode skin. Mirrors the table-row treatment

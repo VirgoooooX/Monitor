@@ -35,8 +35,7 @@ import { NodeTable } from './components/NodeTable';
 import { QuickActionsPanel } from './components/QuickActionsPanel';
 import { UsagePanel } from './components/UsagePanel';
 import { SettingsView } from './components/SettingsView';
-import { StatusHero } from './components/StatusHero';
-import { Sparkline } from './components/Sparkline';
+import { TelemetryWave } from './components/TelemetryWave';
 import type {
   AppearanceSettings,
   DashboardState,
@@ -185,6 +184,61 @@ function previewDashboardState(): DashboardState {
     },
     usageToday: { codex: 0, gemini: 0, opencode: 0 },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Network glance helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a latency value as a bare integer for the giant numeric
+ * readout on the network glance card. Returns "—" when the input is
+ * not a finite number so the metric slot stays the same width.
+ */
+function formatLatencyNumber(latencyMs: number | null): string {
+  if (latencyMs === null || !Number.isFinite(latencyMs)) {
+    return '—';
+  }
+  return String(Math.round(latencyMs));
+}
+
+function sparklineMin(samples: number[]): number | null {
+  if (samples.length === 0) return null;
+  let min = samples[0]!;
+  for (let i = 1; i < samples.length; i += 1) {
+    if (samples[i]! < min) min = samples[i]!;
+  }
+  return min;
+}
+
+function sparklineMax(samples: number[]): number | null {
+  if (samples.length === 0) return null;
+  let max = samples[0]!;
+  for (let i = 1; i < samples.length; i += 1) {
+    if (samples[i]! > max) max = samples[i]!;
+  }
+  return max;
+}
+
+/**
+ * Map a `HealthStatus` to one of four visual tones used by the new
+ * network card. Aligns with the StatusHero helper, but kept local so
+ * App.tsx never has to import the StatusHero component just to
+ * recover this single mapping.
+ */
+function networkStatusTone(status: DashboardState['status']): 'healthy' | 'warn' | 'bad' | 'critical' {
+  switch (status) {
+    case 'healthy':
+      return 'healthy';
+    case 'node_slow':
+    case 'partial_outage':
+      return 'warn';
+    case 'node_down':
+    case 'openclash_unreachable':
+      return 'bad';
+    case 'home_down':
+      return 'critical';
+  }
 }
 
 export function App(): JSX.Element | null {
@@ -613,7 +667,16 @@ function ExpandedRoot({
     void reloadNodes();
 
     const unsub = desktop.on('dashboard.updated', (d) => {
-      if (!cancelled) setDashboard(d);
+      if (!cancelled) {
+        setDashboard(d);
+        // Refetch the live OpenClash details on every push so the
+        // NodeTable and current-group label keep up with collector
+        // ticks and config-switch completions. Without this, the
+        // expanded window stays pinned to whatever `getOpenClashDetails`
+        // returned at mount — `dashboard.updated` itself doesn't carry
+        // the per-node rows.
+        void reloadNodes();
+      }
     });
 
     const unsubTab = desktop.on('navigate-tab', (targetTab) => {
@@ -689,39 +752,86 @@ function ExpandedRoot({
 
         {tab === 'network' && (
           <div className="ex__stack">
-            {/* Network glance — moved from the global header so it
-                lives with the rest of the network tab. */}
+            {/* Network glance — compact telemetry strip layout.
+                One primary row that packs all live signals in a single
+                horizontal scan: status pill · node ribbon · sparkline
+                · latency readout. The ratio is intentional — the
+                sparkline gets the most width because it carries time-
+                series information; the latency number anchors the
+                right edge as the "current value". */}
             <article className="ex__card ex__card--network" aria-label="网络状态">
               <header className="ex__card-head">
-                <span className="ex__card-eyebrow">network</span>
-                <span className="ex__card-title">连通性</span>
+                <span className="ex__card-eyebrow">network · 连通性</span>
+                {dashboard?.currentNode.sparkline.length ? (
+                  <span className="ex__card-range" aria-label="延迟区间">
+                    <span className="ex__card-range-num">
+                      {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
+                    </span>
+                    <span className="ex__card-range-sep">–</span>
+                    <span className="ex__card-range-num">
+                      {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
+                    </span>
+                    <span className="ex__card-range-unit">ms</span>
+                  </span>
+                ) : null}
+                {dashboard && (
+                  <span
+                    className="ex__card-pulse"
+                    data-status={dashboard.status}
+                    aria-label="实时数据"
+                    title="实时数据"
+                  >
+                    <span className="ex__card-pulse-dot" aria-hidden="true" />
+                    LIVE
+                  </span>
+                )}
               </header>
 
               {dashboard ? (
-                <>
-                  <div className="ex__hero">
-                    <StatusHero state={dashboard} />
+                <div
+                  className="ex__strip"
+                  data-status={networkStatusTone(dashboard.status)}
+                >
+                  {/* Status cell */}
+                  <div className="ex__strip-status">
+                    <span
+                      className="ex__strip-dot"
+                      aria-hidden="true"
+                      data-status={networkStatusTone(dashboard.status)}
+                    />
+                    <span className="ex__strip-label">{dashboard.statusLabel}</span>
                   </div>
 
-                  <div className="ex__node-line" title={dashboard.currentNode.node ?? ''}>
+                  {/* Node cell */}
+                  <div className="ex__strip-node" title={dashboard.currentNode.node ?? ''}>
                     {dashboard.currentNode.group && (
-                      <span className="ex__node-group">{dashboard.currentNode.group}</span>
+                      <span className="ex__strip-node-tag">
+                        {dashboard.currentNode.group}
+                      </span>
                     )}
-                    <span className="ex__node-name">
+                    <span className="ex__strip-node-name">
                       {dashboard.currentNode.node ?? '等待节点数据'}
                     </span>
                   </div>
 
-                  <div className="ex__trend" aria-hidden="true">
-                    <Sparkline
+                  {/* Sparkline cell — takes the slack */}
+                  <div className="ex__strip-trend" aria-hidden="true">
+                    <TelemetryWave
                       data={dashboard.currentNode.sparkline}
-                      width={920}
-                      height={72}
-                      strokeWidth={1.5}
-                      fill
+                      width={520}
+                      height={84}
+                      strokeWidth={1.75}
                     />
                   </div>
-                </>
+
+                  {/* Latency cell */}
+                  <div className="ex__strip-metric" aria-label="平均延迟">
+                    <span className="ex__strip-metric-num">
+                      {formatLatencyNumber(dashboard.currentNode.avgLatencyMs)}
+                    </span>
+                    <span className="ex__strip-metric-unit">ms</span>
+                  </div>
+                </div>
               ) : (
                 <div className="ex__placeholder">等待数据中…</div>
               )}

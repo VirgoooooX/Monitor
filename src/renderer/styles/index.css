@@ -19,6 +19,7 @@
 @import './components/confirm-dialog.css';
 @import './components/quick-actions-panel.css';
 @import './components/provider-auth-list.css';
+@import './components/telemetry-wave.css';
 
 @import './expanded/shell.css';
 @import './expanded/integrations.css';

@@ -52,8 +52,25 @@
   color: var(--color-text-secondary);
 }
 
+/* Failure-count badge ------------------------------------------------------
+ *
+ * Mirrors the latency pill's geometry (same height, same border-
+ * radius, same padding) but in the danger tone so it reads as a
+ * sibling rather than a stray red word. The badge is suppressed
+ * when the count is zero — the renderer never mounts it in that
+ * case, so we do not need a `:empty` fallback here.
+ *
+ * Color tokens fall back to a hard-coded translucent red because not
+ * every theme defines a `--color-bad-soft` token; themes that want
+ * a tighter integration override this rule (see compact themes.css). */
 .status-hero__fails {
-  font-size: 10px;
-  color: var(--color-bad);
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 16%, transparent);
 }

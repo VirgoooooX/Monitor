@@ -1010,6 +1010,19 @@ function openOrFocusExpanded(
     session: session.defaultSession,
   });
   _expandedWindow = expandedWindow;
+
+  // Subscribe the expanded window to the dashboard push channel.
+  // Without this the renderer would only ever paint the snapshot it
+  // gets from its initial `getDashboard()` call — every collector
+  // tick, every node-switch verify cycle, and every config-switch
+  // completion already calls `broadcastDashboard()` but those pushes
+  // were silently dropped because only the compact window was a
+  // subscriber. The `destroyed` listener inside `attachPushChannel`
+  // takes care of removing the entry when the window closes.
+  if (_dashboardService !== null) {
+    _dashboardService.attachPushChannel(expandedWindow.webContents);
+  }
+
   expandedWindow.on('closed', () => {
     _expandedWindow = null;
   });

@@ -9,30 +9,28 @@
 // §Verify and tasks.md §8.5:
 //
 //   1. AT MOST ONE write transaction. Across the whole call the fake
-//      fetch sees `uci.set` and `uci.commit` and `file.exec` AT MOST
-//      once each (Requirement 7.1, Property 8 carryover). When the
-//      first write sub-call fails the call returns immediately and
-//      the remaining writes plus every verify read are skipped
-//      entirely (Requirement 5.6).
+//      fetch sees `POST switch_config` AT MOST once
+//      (Requirement 7.1, Property 8 carryover). When the write
+//      sub-call fails the call returns immediately and every verify
+//      read is skipped entirely (Requirement 5.6).
 //
 //   2. AT MOST 3 verify iterations. After write success the fake
-//      fetch sees `uci.get openclash.config.config_path` AT MOST
-//      `VERIFY_MAX_ITERATIONS` (3) additional times beyond the
-//      single pre-write read of the start path (Requirement 15.4 /
-//      15.5).
+//      fetch sees `GET config_name` AT MOST `VERIFY_MAX_ITERATIONS`
+//      (3) additional times beyond the single pre-write read of the
+//      start path (Requirement 15.4 / 15.5).
 //
 //   3. >= 1000 ms gap between consecutive verify reads. The fake
-//      clock between any two consecutive verify-loop `uci.get` calls
-//      is at least `VERIFY_MIN_GAP_MS` (1000 ms). The first verify
-//      read may follow the restart with no gap; only iteration N+1
-//      vs iteration N is bounded (design.md §`openclash.management
-//      .service.ts` §Verify enforces the gap as a sleep BETWEEN
-//      reads, not before the first one).
+//      clock between any two consecutive verify-loop `config_name`
+//      calls is at least `VERIFY_MIN_GAP_MS` (1000 ms). The first
+//      verify read may follow the restart with no gap; only iteration
+//      N+1 vs iteration N is bounded (design.md §`openclash
+//      .management.service.ts` §Verify enforces the gap as a sleep
+//      BETWEEN reads, not before the first one).
 //
 //   4. Total elapsed wall-clock <= verifyWindowMs + requestTimeoutMs.
 //      The verify loop's own budget is `verifyWindowMs`; each in-
-//      flight ubus call can add up to one `requestTimeoutMs` worth
-//      of waiting on a fake `now` controlled by the harness. Real
+//      flight LuCI call can add up to one `requestTimeoutMs` worth of
+//      waiting on a fake `now` controlled by the harness. Real
 //      network latency is zero in the harness, but we still assert
 //      the conservative loose bound the design pins for the
 //      orchestrator's lock TTL.
@@ -51,6 +49,18 @@
 //      (Requirement 15.5 groups "3 reads exhausted" and "window
 //      elapsed" under the same code).
 //
+// Transport
+// ---------
+//
+// As of the 2026-05-28 transport rewrite (see
+// `docs/postmortems/openclash-management-transport.md`) the management
+// client talks to OpenClash via the LuCI plugin's own HTTP endpoints
+// (`config_name` / `switch_config`) instead of LuCI ubus's `uci.set`
+// + `uci.commit` + `file.exec`. This test mirrors that contract: the
+// fake fetch routes by pathname and the property's "single write"
+// invariant counts a single `POST switch_config` instead of three
+// ubus sub-calls.
+//
 // References:
 //   - .kiro/specs/network-quick-actions/design.md §Property 5
 //   - .kiro/specs/network-quick-actions/requirements.md
@@ -67,8 +77,8 @@
 //     `runMigrations` + `createRepositories` factory so the
 //     `openclash.management` row is written by the same
 //     `CollectorHealthRepository` used in production.
-//   * Inject a fake `fetch` programmable per ubus method (`set` /
-//     `commit` / `exec` / `get`) plus a programmable login outcome.
+//   * Inject a fake `fetch` programmable per OpenClash plugin
+//     endpoint plus a programmable login outcome.
 //   * Inject a fake `now` + fake `sleep` that share a single
 //     `clock` variable. `sleep(ms)` advances the clock by `ms` and
 //     resolves immediately; `now()` returns the current clock. This
@@ -82,9 +92,9 @@
 // -----
 //
 //   * The fake fetch is a counting state machine — every call is
-//     recorded in a flat array of `{ url, method, body }` records so
-//     the property can directly count `uci.set` / `uci.commit` /
-//     `file.exec` / `uci.get` invocations by inspecting the body.
+//     recorded in a flat array of `{ pathname, method }` records so
+//     the property can directly count `config_name` reads and
+//     `switch_config` writes by inspecting the pathname.
 //   * The fake fetch is deliberately NOT given any per-call latency:
 //     `now()` advances ONLY when the verify loop calls `sleep(gap)`.
 //     This makes "elapsed time" identically equal to "total sleep
@@ -127,7 +137,6 @@ type ManagementErrorCode = types.ManagementErrorCode;
 // ---------------------------------------------------------------------------
 
 const TARGET_PATH = '/etc/openclash/config/target.yaml';
-const WRONG_PATH = '/etc/openclash/config/wrong.yaml';
 
 const VERIFY_MAX_ITERATIONS = 3;
 const VERIFY_MIN_GAP_MS = 1000;
@@ -201,7 +210,7 @@ const fakeSecrets: SecretsModule = {
 // Iteration-outcome arbitraries
 // ---------------------------------------------------------------------------
 
-/** What the fake's `uci.get` returns on a given verify iteration. */
+/** What the fake's `config_name` GET returns on a given verify iteration. */
 type PathOutcome = 'targetPath' | 'wrongPath' | 'http_error' | 'network_error';
 
 interface IterationOutcome {
@@ -214,16 +223,21 @@ interface PropertyInput {
   requestTimeoutMs: number;
   writeSucceeds: boolean;
   /**
-   * Optional ubus protocol error to deliver on the write transaction
-   * when `writeSucceeds === false`. Drives the closed-set mapping
-   * for the write-failure branch.
+   * How the write call (`POST switch_config`) fails when
+   * `writeSucceeds === false`. The plugin endpoint surfaces three
+   * shapes the management client maps onto distinct closed-set
+   * codes:
+   *   - `'http_error'`    — non-2xx response   (mapped to `http_error`)
+   *   - `'auth_error'`    — 401 after re-login (mapped to `auth_error`)
+   *   - `'network_error'` — fetch throws       (mapped to `network_error`)
+   *   - `'plugin_error'`  — 200 with body `{status:"error",...}`
+   *                          (mapped to `http_error`)
    */
-  writeFailureKind: 'http_error' | 'auth_error' | 'network_error';
-  /**
-   * Which write sub-call fails (1 = uci.set, 2 = uci.commit,
-   * 3 = file.exec). Only consulted when `writeSucceeds === false`.
-   */
-  writeFailureIndex: 1 | 2 | 3;
+  writeFailureKind:
+    | 'http_error'
+    | 'auth_error'
+    | 'network_error'
+    | 'plugin_error';
   /** Verify-loop schedule. Length 1..5; the implementation caps at 3. */
   iterationOutcomes: IterationOutcome[];
 }
@@ -244,12 +258,9 @@ const propertyInputArb: fc.Arbitrary<PropertyInput> = fc.record({
   verifyWindowMs: fc.integer({ min: 1_000, max: 30_000 }),
   requestTimeoutMs: fc.integer({ min: 1_000, max: 30_000 }),
   writeSucceeds: fc.boolean(),
-  writeFailureKind: fc.constantFrom<'http_error' | 'auth_error' | 'network_error'>(
-    'http_error',
-    'auth_error',
-    'network_error',
-  ),
-  writeFailureIndex: fc.constantFrom<1 | 2 | 3>(1, 2, 3),
+  writeFailureKind: fc.constantFrom<
+    'http_error' | 'auth_error' | 'network_error' | 'plugin_error'
+  >('http_error', 'auth_error', 'network_error', 'plugin_error'),
   iterationOutcomes: fc.array(iterationOutcomeArb, { minLength: 1, maxLength: 5 }),
 });
 
@@ -283,7 +294,7 @@ function buildFakeClock(start: number): FakeClock {
 }
 
 // ---------------------------------------------------------------------------
-// Fake fetch — counting LuCI state machine
+// Fake fetch — counting LuCI / OpenClash plugin state machine
 // ---------------------------------------------------------------------------
 
 /** A single fetch invocation captured for property assertions. */
@@ -292,10 +303,12 @@ interface FetchRecord {
   pathname: string;
   /** Upper-cased HTTP method. */
   method: string;
-  /** ubus method when the body is a ubus envelope, else `null`. */
-  ubusMethod: string | null;
-  /** ubus object (e.g. 'uci', 'file') when present. */
-  ubusObject: string | null;
+  /**
+   * High-level call kind, derived from `(pathname, method)`. Lets
+   * the property count writes / reads / logins without re-parsing
+   * the pathname.
+   */
+  kind: 'login' | 'config_name' | 'switch_config' | 'other';
   /** Wall-clock time the request was issued (from the fake `now()`). */
   at: number;
 }
@@ -305,40 +318,35 @@ interface FakeFetchHandle {
   records: ReadonlyArray<FetchRecord>;
 }
 
+function classifyCall(pathname: string, method: string): FetchRecord['kind'] {
+  if (pathname === '/cgi-bin/luci' && method === 'POST') {
+    return 'login';
+  }
+  if (pathname === '/cgi-bin/luci/admin/services/openclash/config_name') {
+    return 'config_name';
+  }
+  if (pathname === '/cgi-bin/luci/admin/services/openclash/switch_config') {
+    return 'switch_config';
+  }
+  return 'other';
+}
+
 function buildFakeFetch(
   input: PropertyInput,
   clock: FakeClock,
 ): FakeFetchHandle {
   const records: FetchRecord[] = [];
-  // Track which verify-loop iteration we are servicing. The
-  // implementation issues exactly ONE pre-write `uci.get` (the start-
-  // path read) before the write transaction; subsequent `uci.get`
-  // calls are verify-loop reads, indexed 0..N-1 into
-  // `iterationOutcomes`.
+  // Track whether the pre-write `config_name` read has been served.
+  // Subsequent `config_name` calls are verify-loop reads, indexed
+  // 0..N-1 into `iterationOutcomes`.
   let preWriteReadConsumed = false;
   let verifyIterationIndex = 0;
 
-  const ubusOk = (data: Record<string, unknown>): Response =>
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [0, data] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
-
-  const ubusPermissionDenied = (): Response =>
-    // ubus protocol-level permission-denied; the client maps this
-    // onto the `auth_error` slot of the closed set.
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [6, null] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
-
-  const ubusGenericError = (): Response =>
-    // ubus protocol-level non-zero status the client maps to
-    // `http_error` (every non-permission-denied non-zero status).
-    new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: [4, null] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    );
+  const jsonOk = (data: Record<string, unknown>): Response =>
+    new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
 
   const fakeFetch: typeof fetch = async (request, init) => {
     const url =
@@ -349,145 +357,112 @@ function buildFakeFetch(
           : (request as Request).url;
     const pathname = new URL(url).pathname;
     const method = (init?.method ?? 'GET').toUpperCase();
+    const kind = classifyCall(pathname, method);
+
+    records.push({ pathname, method, kind, at: clock.now() });
 
     // ---- LuCI login ------------------------------------------------------
-    if (pathname === '/cgi-bin/luci') {
-      records.push({
-        pathname,
-        method,
-        ubusMethod: null,
-        ubusObject: null,
-        at: clock.now(),
-      });
+    if (kind === 'login') {
       // Always succeed at login — the property does not exercise
       // the auth_error→relogin path on the LuCI form (the
       // collector-health PBT covers that). Failed-write outcomes
-      // are surfaced through the ubus protocol-level reply codes.
+      // are surfaced through the plugin endpoint's HTTP/JSON shape.
       return new Response('', {
         status: 200,
         headers: { 'Set-Cookie': 'sysauth=token1; Path=/; HttpOnly' },
       });
     }
 
-    // ---- LuCI ubus -------------------------------------------------------
-    if (
-      pathname === '/cgi-bin/luci/ubus/' ||
-      pathname === '/cgi-bin/luci/admin/ubus/'
-    ) {
-      // Parse the ubus envelope so we can dispatch on `(object, method)`.
-      let body: { params?: unknown[]; method?: string } = {};
-      try {
-        const raw =
-          typeof init?.body === 'string'
-            ? init.body
-            : new TextDecoder().decode(
-                (init?.body as ArrayBuffer | undefined) ?? new Uint8Array(),
-              );
-        body = JSON.parse(raw) as { params?: unknown[]; method?: string };
-      } catch {
-        // Treat malformed bodies as a server error.
-        return new Response('', { status: 500 });
-      }
-
-      const params = Array.isArray(body.params) ? body.params : [];
-      const ubusObject = typeof params[1] === 'string' ? (params[1] as string) : null;
-      const ubusMethod = typeof params[2] === 'string' ? (params[2] as string) : null;
-
-      records.push({
-        pathname,
-        method,
-        ubusMethod,
-        ubusObject,
-        at: clock.now(),
-      });
-
-      // ---- uci.get -------------------------------------------------------
-      if (ubusObject === 'uci' && ubusMethod === 'get') {
-        if (!preWriteReadConsumed) {
-          // First `uci.get` is the implementation's pre-write read
-          // of the start path. We deliberately return a path that
-          // is NOT `targetPath` so `startPath !== targetPath`; this
-          // is observability only, the property never asserts on
-          // `startPath`.
-          preWriteReadConsumed = true;
-          return ubusOk({ value: WRONG_PATH });
-        }
-
-        // Subsequent `uci.get` calls are verify-loop reads.
-        const idx = verifyIterationIndex;
-        verifyIterationIndex += 1;
-        // The implementation caps verify reads at 3 — any read
-        // beyond `iterationOutcomes.length` is a test-plumbing
-        // bug that we surface as an http_error so fast-check
-        // shrinks to a counterexample.
-        const outcome =
-          idx < input.iterationOutcomes.length
-            ? input.iterationOutcomes[idx]
-            : null;
-        if (outcome === null) {
-          return new Response('', { status: 500 });
-        }
-        if (outcome.pathReturns === 'targetPath') {
-          return ubusOk({ value: TARGET_PATH });
-        }
-        if (outcome.pathReturns === 'wrongPath') {
-          return ubusOk({ value: WRONG_PATH });
-        }
-        if (outcome.pathReturns === 'http_error') {
-          return new Response('', { status: 500 });
-        }
-        // 'network_error' — throw a TypeError mirroring Node's
-        // fetch network-failure shape.
-        const cause = Object.assign(new Error('ECONNREFUSED'), {
-          name: 'Error',
+    // ---- Read: GET config_name -------------------------------------------
+    if (kind === 'config_name') {
+      if (!preWriteReadConsumed) {
+        // First `config_name` call is the implementation's pre-
+        // write read of the start path. Return a path that is NOT
+        // `targetPath` so `startPath !== targetPath`; this is
+        // observability only, the property never asserts on
+        // `startPath`. The plugin returns basenames, which the
+        // client normalises via `canonicalConfigPath()`.
+        preWriteReadConsumed = true;
+        return jsonOk({
+          config_name: [{ name: 'wrong.yaml' }, { name: 'target.yaml' }],
+          config_path: 'wrong.yaml',
         });
-        const err = new TypeError('fetch failed');
-        Object.assign(err, { cause });
-        throw err;
       }
 
-      // ---- Write transaction sub-calls ----------------------------------
-      // `writeFailureIndex` is 1-based (set / commit / exec). When
-      // `writeSucceeds` is true every sub-call returns ubus status 0.
-      const isSet = ubusObject === 'uci' && ubusMethod === 'set';
-      const isCommit = ubusObject === 'uci' && ubusMethod === 'commit';
-      const isExec = ubusObject === 'file' && ubusMethod === 'exec';
-      const subCallIndex = isSet ? 1 : isCommit ? 2 : isExec ? 3 : 0;
-
-      if (subCallIndex !== 0) {
-        if (input.writeSucceeds) {
-          return ubusOk({});
-        }
-        if (subCallIndex < input.writeFailureIndex) {
-          // Earlier write sub-calls succeed; failure happens at
-          // `writeFailureIndex`.
-          return ubusOk({});
-        }
-        if (subCallIndex === input.writeFailureIndex) {
-          if (input.writeFailureKind === 'auth_error') {
-            return ubusPermissionDenied();
-          }
-          if (input.writeFailureKind === 'http_error') {
-            return ubusGenericError();
-          }
-          // 'network_error' — fetch throws.
-          const cause = Object.assign(new Error('ECONNREFUSED'), {
-            name: 'Error',
-          });
-          const err = new TypeError('fetch failed');
-          Object.assign(err, { cause });
-          throw err;
-        }
-        // Sub-calls AFTER the failure point should never be
-        // reached (Property 5: write fails ⇒ no further writes).
-        // Surface a 500 so a regression that auto-retries is
-        // caught at the fake fetch boundary.
+      // Subsequent calls are verify-loop reads.
+      const idx = verifyIterationIndex;
+      verifyIterationIndex += 1;
+      const outcome =
+        idx < input.iterationOutcomes.length
+          ? input.iterationOutcomes[idx]
+          : null;
+      if (outcome === null) {
+        // Test-plumbing bug: implementation issued more verify reads
+        // than the schedule provides for. Surface as 500 so fast-
+        // check shrinks to a counterexample.
         return new Response('', { status: 500 });
       }
+      if (outcome.pathReturns === 'targetPath') {
+        return jsonOk({
+          config_name: [{ name: 'wrong.yaml' }, { name: 'target.yaml' }],
+          config_path: 'target.yaml',
+        });
+      }
+      if (outcome.pathReturns === 'wrongPath') {
+        return jsonOk({
+          config_name: [{ name: 'wrong.yaml' }, { name: 'target.yaml' }],
+          config_path: 'wrong.yaml',
+        });
+      }
+      if (outcome.pathReturns === 'http_error') {
+        return new Response('', { status: 500 });
+      }
+      // 'network_error' — throw a TypeError mirroring Node's
+      // fetch network-failure shape.
+      const cause = Object.assign(new Error('ECONNREFUSED'), {
+        name: 'Error',
+      });
+      const err = new TypeError('fetch failed');
+      Object.assign(err, { cause });
+      throw err;
+    }
 
-      // Unrecognized ubus call — server error so a malformed test
-      // setup is visible.
-      return new Response('', { status: 500 });
+    // ---- Write: POST switch_config ---------------------------------------
+    if (kind === 'switch_config') {
+      if (input.writeSucceeds) {
+        return jsonOk({
+          status: 'success',
+          message: 'Config file switched successfully',
+          config_file: TARGET_PATH,
+        });
+      }
+      if (input.writeFailureKind === 'http_error') {
+        return new Response('', { status: 500 });
+      }
+      if (input.writeFailureKind === 'auth_error') {
+        // Returning 401 from the write endpoint forces
+        // privilegedFetch's transparent re-login; with the login
+        // endpoint always succeeding above, the retry will land here
+        // again and the management client maps the second 401 to
+        // `auth_error`.
+        return new Response('', { status: 401 });
+      }
+      if (input.writeFailureKind === 'plugin_error') {
+        // 200 with `{status:"error",...}` — the plugin handler's
+        // refusal shape (e.g. "config file does not exist"). Mapped
+        // to `http_error` by the management client.
+        return jsonOk({
+          status: 'error',
+          message: 'Config file does not exist',
+        });
+      }
+      // 'network_error' — fetch throws.
+      const cause = Object.assign(new Error('ECONNREFUSED'), {
+        name: 'Error',
+      });
+      const err = new TypeError('fetch failed');
+      Object.assign(err, { cause });
+      throw err;
     }
 
     throw new Error(`fakeFetch: unexpected URL ${url}`);
@@ -524,11 +499,16 @@ function expectedOutcome(input: PropertyInput): {
   expectedCode?: ManagementErrorCode;
 } {
   if (!input.writeSucceeds) {
-    // Closed-set mapping for the three write failure kinds:
-    //   * 'http_error'    → 'http_error'   (ubus status 4)
-    //   * 'auth_error'    → 'auth_error'   (ubus status 6 / PERMISSION_DENIED)
+    // Closed-set mapping for the four write failure kinds:
+    //   * 'http_error'    → 'http_error'    (HTTP 5xx from the plugin endpoint)
+    //   * 'auth_error'    → 'auth_error'    (401 even after re-login)
     //   * 'network_error' → 'network_error' (fetch throws)
-    return { ok: false, expectedCode: input.writeFailureKind };
+    //   * 'plugin_error'  → 'http_error'    (200 with `{status:"error"}`)
+    const code: ManagementErrorCode =
+      input.writeFailureKind === 'plugin_error'
+        ? 'http_error'
+        : input.writeFailureKind;
+    return { ok: false, expectedCode: code };
   }
 
   const accessibleIterations = Math.min(
@@ -618,59 +598,42 @@ describe.skipIf(!canRun)(
           // ---- Inspect the recorded call sequence -------------------------
           const records = fakeFetchHandle.records;
 
-          // Count write sub-calls by ubus identity.
-          const setCount = records.filter(
-            (r) => r.ubusObject === 'uci' && r.ubusMethod === 'set',
-          ).length;
-          const commitCount = records.filter(
-            (r) => r.ubusObject === 'uci' && r.ubusMethod === 'commit',
-          ).length;
-          const execCount = records.filter(
-            (r) => r.ubusObject === 'file' && r.ubusMethod === 'exec',
+          // Count switch_config writes by kind.
+          const writeCount = records.filter(
+            (r) => r.kind === 'switch_config',
           ).length;
 
-          // Collect uci.get records in order. The first is the pre-
-          // write start-path read; the rest belong to the verify
+          // Collect config_name records in order. The first is the
+          // pre-write start-path read; the rest belong to the verify
           // loop.
-          const ucigetRecords = records.filter(
-            (r) => r.ubusObject === 'uci' && r.ubusMethod === 'get',
+          const configNameRecords = records.filter(
+            (r) => r.kind === 'config_name',
           );
-          const verifyReads = ucigetRecords.slice(1);
+          const verifyReads = configNameRecords.slice(1);
 
           // ---- Invariant 1: AT MOST ONE write transaction ----------------
-          // Each of `set` / `commit` / `exec` is invoked at most
-          // once. The implementation never auto-retries the write
-          // step (Requirement 7.1).
-          if (setCount > 1 || commitCount > 1 || execCount > 1) {
+          // The plugin endpoint is invoked at most once. The
+          // implementation never auto-retries the write step
+          // (Requirement 7.1).
+          if (writeCount > 1) {
             db.close();
             return false;
           }
 
           if (input.writeSucceeds) {
-            // All three sub-calls must have run when the write
-            // succeeds; otherwise the verify loop would have been
-            // skipped.
-            if (setCount !== 1 || commitCount !== 1 || execCount !== 1) {
+            // Exactly one write must have run; otherwise the verify
+            // loop would have been skipped.
+            if (writeCount !== 1) {
               db.close();
               return false;
             }
           } else {
-            // Write failure: the failed sub-call ran exactly once;
-            // every later sub-call must NOT have run (no retry, no
-            // fall-through).
-            const expectedSet = input.writeFailureIndex >= 1 ? 1 : 0;
-            const expectedCommit = input.writeFailureIndex >= 2 ? 1 : 0;
-            const expectedExec = input.writeFailureIndex >= 3 ? 1 : 0;
-            if (
-              setCount !== expectedSet ||
-              commitCount !== expectedCommit ||
-              execCount !== expectedExec
-            ) {
+            // Write failure: exactly one write attempt; no verify
+            // reads issued (Requirement 5.6).
+            if (writeCount !== 1) {
               db.close();
               return false;
             }
-            // No verify reads on write failure (Requirement 5.6 —
-            // task 8.4 returns immediately on write failure).
             if (verifyReads.length !== 0) {
               db.close();
               return false;
@@ -747,7 +710,6 @@ describe.skipIf(!canRun)(
         requestTimeoutMs: 10_000,
         writeSucceeds: true,
         writeFailureKind: 'http_error',
-        writeFailureIndex: 1,
         iterationOutcomes: [{ pathReturns: 'targetPath', apiOk: true }],
       };
       const fakeFetchHandle = buildFakeFetch(input, clock);
@@ -780,24 +742,13 @@ describe.skipIf(!canRun)(
       expect(result.targetPath).toBe(TARGET_PATH);
       expect(result.finalPath).toBe(TARGET_PATH);
 
-      // Exactly one of each write sub-call.
+      // Exactly one POST switch_config.
       const records = fakeFetchHandle.records;
-      expect(
-        records.filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'set')
-          .length,
-      ).toBe(1);
-      expect(
-        records.filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'commit')
-          .length,
-      ).toBe(1);
-      expect(
-        records.filter((r) => r.ubusObject === 'file' && r.ubusMethod === 'exec')
-          .length,
-      ).toBe(1);
+      expect(records.filter((r) => r.kind === 'switch_config').length).toBe(1);
 
       // First verify iteration short-circuits (apiOk + pathOk).
       const verifyReads = records
-        .filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'get')
+        .filter((r) => r.kind === 'config_name')
         .slice(1);
       expect(verifyReads.length).toBe(1);
       expect(healthcheckCalls).toBe(1);
@@ -817,7 +768,6 @@ describe.skipIf(!canRun)(
         requestTimeoutMs: 10_000,
         writeSucceeds: false,
         writeFailureKind: 'auth_error',
-        writeFailureIndex: 1,
         iterationOutcomes: [{ pathReturns: 'targetPath', apiOk: true }],
       };
       const fakeFetchHandle = buildFakeFetch(input, clock);
@@ -846,24 +796,12 @@ describe.skipIf(!canRun)(
       expect(result.error?.code).toBe('auth_error');
       expect(CLOSED_ERROR_CODES).toContain(result.error!.code);
 
-      // Only `uci.set` ran among the write sub-calls; commit and
-      // exec were skipped on the failure.
+      // Exactly one switch_config attempt; no verify reads
+      // (Requirement 5.6 — write failure skips the verify loop).
       const records = fakeFetchHandle.records;
-      expect(
-        records.filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'set')
-          .length,
-      ).toBe(1);
-      expect(
-        records.filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'commit')
-          .length,
-      ).toBe(0);
-      expect(
-        records.filter((r) => r.ubusObject === 'file' && r.ubusMethod === 'exec')
-          .length,
-      ).toBe(0);
-      // No verify reads after a write failure.
+      expect(records.filter((r) => r.kind === 'switch_config').length).toBe(1);
       const verifyReads = records
-        .filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'get')
+        .filter((r) => r.kind === 'config_name')
         .slice(1);
       expect(verifyReads.length).toBe(0);
 
@@ -882,7 +820,6 @@ describe.skipIf(!canRun)(
         requestTimeoutMs: 10_000,
         writeSucceeds: true,
         writeFailureKind: 'http_error',
-        writeFailureIndex: 1,
         iterationOutcomes: [
           { pathReturns: 'wrongPath', apiOk: true },
           { pathReturns: 'wrongPath', apiOk: true },
@@ -916,7 +853,7 @@ describe.skipIf(!canRun)(
 
       const records = fakeFetchHandle.records;
       const verifyReads = records
-        .filter((r) => r.ubusObject === 'uci' && r.ubusMethod === 'get')
+        .filter((r) => r.kind === 'config_name')
         .slice(1);
       // Verify capped at the iteration limit.
       expect(verifyReads.length).toBeLessThanOrEqual(VERIFY_MAX_ITERATIONS);

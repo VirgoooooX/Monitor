@@ -115,14 +115,33 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
  * total: every variant of `HealthStatus` is represented exactly once.
  *
  * Source: PLAN.md §UI 状态文字.
+ *
+ * Width budget
+ * ------------
+ * The compact rail's `StatusHero` renders these labels inside a
+ * single-line flex row that has to coexist with a status dot, a
+ * latency pill, and (under degraded conditions) a fail-count badge.
+ * On the narrowest "mini" compact width (~300 px) we have roughly
+ * 8–10 CJK glyphs of horizontal budget for the label before
+ * `text-overflow: ellipsis` kicks in. The current six labels are
+ * therefore all 4-glyph CJK so any combination of dot + label +
+ * pill + badge fits without truncation. Rewriting any label below
+ * to a longer string MUST be paired with a re-measure on the
+ * "mini" rail.
  */
 export const HEALTH_STATUS_LABELS: Record<HealthStatus, string> = {
   healthy: '外网正常',
   node_slow: '节点变慢',
-  node_down: '节点不可用',
-  openclash_unreachable: 'OpenClash 不可控',
-  home_down: '家里网络断',
-  partial_outage: '部分外网异常',
+  node_down: '节点中断',
+  // `openclash_unreachable` means "the OpenClash controller API
+  // (`/configs`, `/proxies`) is not responding". The previous
+  // wording "OpenClash 不可控" leaked the implementation surface and
+  // read as a permission/authority issue; "内核异常" describes the
+  // user-visible symptom — the Clash core (running inside OpenClash)
+  // can't be reached — at the same severity tier as "节点中断".
+  openclash_unreachable: '内核异常',
+  home_down: '家庭离线',
+  partial_outage: '部分中断',
 };
 
 // ---------------------------------------------------------------------------

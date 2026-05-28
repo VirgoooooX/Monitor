@@ -59,6 +59,7 @@
 //   • network-quick-actions/requirements.md §Requirement 2, 10, 14
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertCircle, AlertTriangle, Info } from 'lucide-react';
 
 import { ConfigSwitchCard } from './ConfigSwitchCard';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -88,9 +89,19 @@ export interface QuickActionsPanelProps {
 
 type BannerTone = 'critical' | 'warn' | 'notice';
 
+/**
+ * Banner copy is split into a short `headline` (renders inline,
+ * always visible, kept to ≤ ~12 CJK glyphs so the banner stays a
+ * single compact row even on the narrowest expanded layout) and an
+ * optional `detail` (full sentence with the actionable suggestion,
+ * surfaced in the native `title` tooltip on hover). The selector
+ * helper below builds both halves so the renderer never has to know
+ * whether a particular state has a separate detail line.
+ */
 interface BannerSpec {
   readonly tone: BannerTone;
-  readonly text: string;
+  readonly headline: string;
+  readonly detail?: string;
 }
 
 /**
@@ -111,14 +122,16 @@ function selectBanner(
   if (health === 'home_down') {
     return {
       tone: 'critical',
-      text: '路由器不可达，无法执行切换',
+      headline: '家庭离线',
+      detail: '路由器不可达，所有切换都会失败；请检查家中网络与路由器电源',
     };
   }
 
   if (management !== null && management.consecutiveFailures >= 5) {
     return {
       tone: 'warn',
-      text: 'OpenClash 管理接口持续失败，请检查凭据或网络',
+      headline: '管理接口持续失败',
+      detail: 'OpenClash 管理接口已连续失败 5 次以上，请检查凭据或网络',
     };
   }
 
@@ -126,19 +139,22 @@ function selectBanner(
     if (management !== null && !management.reachable) {
       return {
         tone: 'warn',
-        text: 'OpenClash 管理接口不可达',
+        headline: '管理接口不可达',
+        detail: 'OpenClash 管理接口暂时无法连接；切换操作将不可用',
       };
     }
     return {
       tone: 'notice',
-      text: 'OpenClash 暂不可达，可尝试切换配置以恢复',
+      headline: '内核暂不可达',
+      detail: 'OpenClash 内核暂时无响应，可尝试切换配置以恢复',
     };
   }
 
   if (management !== null && management.lastErrorCode === 'auth_error') {
     return {
       tone: 'warn',
-      text: formatManagementError('auth_error'),
+      headline: '凭据错误',
+      detail: formatManagementError('auth_error'),
     };
   }
 
@@ -149,11 +165,58 @@ function selectBanner(
   ) {
     return {
       tone: 'notice',
-      text: '网络降级，建议切换节点或配置',
+      headline: '网络降级',
+      detail: '当前节点出现降级，建议切换节点或配置',
     };
   }
 
   return null;
+}
+
+/**
+ * Tone → icon mapping. Matches the colour semantics already encoded
+ * in `--banner--{tone}` css classes: `critical` is the loudest
+ * (system-down), `warn` is "investigate now", `notice` is "FYI". We
+ * use the same three Lucide glyphs every screen in the app uses for
+ * these tones so the visual vocabulary stays consistent.
+ */
+const BANNER_ICON: Record<BannerTone, typeof AlertCircle> = {
+  critical: AlertCircle,
+  warn: AlertTriangle,
+  notice: Info,
+};
+
+/**
+ * Compact banner row: icon + short headline. The full sentence
+ * (`spec.detail`) lives on the native `title` tooltip so users who
+ * want the actionable copy can hover, and screen readers still get
+ * it via `aria-label`. Renders as a single line; the underlying
+ * `.quick-actions-panel__banner` style supplies the chip-like chrome.
+ */
+function Banner({ spec }: { readonly spec: BannerSpec }): JSX.Element {
+  const Icon = BANNER_ICON[spec.tone];
+  const ariaLabel =
+    spec.detail !== undefined && spec.detail.length > 0
+      ? `${spec.headline}：${spec.detail}`
+      : spec.headline;
+  return (
+    <div
+      className={`quick-actions-panel__banner quick-actions-panel__banner--${spec.tone}`}
+      role="status"
+      data-testid="quick-actions-panel-banner"
+      data-tone={spec.tone}
+      title={spec.detail}
+      aria-label={ariaLabel}
+    >
+      <Icon
+        size={14}
+        strokeWidth={2.25}
+        className="quick-actions-panel__banner-icon"
+        aria-hidden="true"
+      />
+      <span className="quick-actions-panel__banner-text">{spec.headline}</span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -293,16 +356,7 @@ export function QuickActionsPanel({
         aria-label="快捷动作"
         aria-busy="true"
       >
-        {banner && (
-          <div
-            className={`quick-actions-panel__banner quick-actions-panel__banner--${banner.tone}`}
-            role="status"
-            data-testid="quick-actions-panel-banner"
-            data-tone={banner.tone}
-          >
-            {banner.text}
-          </div>
-        )}
+        {banner && <Banner spec={banner} />}
         <div
           className="quick-actions-panel__skeleton quick-actions-panel__skeleton--config"
           data-testid="quick-actions-panel-skeleton-config"
@@ -330,16 +384,7 @@ export function QuickActionsPanel({
       data-degraded={degraded ? 'true' : 'false'}
       aria-label="快捷动作"
     >
-      {banner && (
-        <div
-          className={`quick-actions-panel__banner quick-actions-panel__banner--${banner.tone}`}
-          role="status"
-          data-testid="quick-actions-panel-banner"
-          data-tone={banner.tone}
-        >
-          {banner.text}
-        </div>
-      )}
+      {banner && <Banner spec={banner} />}
 
       {switchError && (
         <div
