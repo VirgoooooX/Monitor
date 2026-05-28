@@ -1238,7 +1238,11 @@ export const createProviderAuthApiKeyInputSchema = z
       }
     } else if (input.provider === 'opencode') {
       // OpenCode Go uses an opaque Iron-encrypted `auth` cookie
-      // value plus a workspace dashboard URL.
+      // value plus a workspace dashboard URL. Both fields are
+      // required: the URL identifies the workspace (each user has
+      // their own `wrk_<id>`) and the cookie authenticates the
+      // SSR HTML fetch. opencode.ai has no public REST surface
+      // that returns Go usage, so we keep scraping the dashboard.
       if (!input.opencodeAuthCookie) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

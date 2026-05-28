@@ -662,7 +662,10 @@ export function createProviderAuthService(
   //   - `provider === 'opencode'` requires `opencodeAuthCookie` AND
   //     `opencodeWorkspaceUrl` (Iron-encrypted session cookie +
   //     workspace dashboard URL); `apiKey` is rejected because
-  //     OpenCode Go has no public REST surface for usage.
+  //     OpenCode Go has no public REST surface for usage. Note the
+  //     SSR endpoint returns HTTP 500 (not 302/401) when the
+  //     server-side session has been invalidated; the adapter maps
+  //     500 → `auth_expired` so users know to re-paste the cookie.
   //   - For any provider, `baseUrl` (when present) is forwarded
   //     verbatim — additional URL parsing is the schema's job.
   //

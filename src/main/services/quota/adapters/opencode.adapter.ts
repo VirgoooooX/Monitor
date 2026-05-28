@@ -19,7 +19,15 @@
 //   2. Detect a redirect to the OpenAuth login page (302 →
 //      `/auth/login`) or a 401/403 response and surface that as
 //      `auth_expired` so the renderer prompts the user to re-paste
-//      the cookie.
+//      the cookie. ALSO map HTTP 500 to `auth_expired` because
+//      opencode.ai responds with 500 (not 302) when the Iron
+//      cookie is well-formed but its session has been invalidated
+//      server-side — for example, after the platform rotated
+//      session secrets or simply because the cookie's TTL expired
+//      (browsers stay logged in via `Set-Cookie` rolling renewal,
+//      which the adapter does not persist). Without this mapping
+//      stale cookies surface as "upstream changed" and confuse
+//      users into waiting for an upstream fix that never comes.
 //   3. Scrape the SSR HTML for the three usage rows. The block
 //      uses SolidStart's `data-slot` attributes which are stable:
 //        <div data-slot="usage-item">
@@ -151,6 +159,23 @@ export function createOpenCodeAdapter(
           now,
           'auth_expired',
           'OpenCode dashboard rejected auth cookie',
+          'quota',
+        );
+      }
+      // opencode.ai returns 500 instead of 302/401 when the Iron
+      // session is stale (cookie format is valid but the server-
+      // side session has been invalidated — typically because the
+      // user has not visited the dashboard in their browser
+      // recently, so the rolling Set-Cookie renewal stopped
+      // happening and our stored cookie went past its TTL).
+      // Surface as auth_expired so users know to re-paste, not
+      // wait for an upstream fix.
+      if (response.status === 500) {
+        return unavailableSnapshot(
+          account,
+          now,
+          'auth_expired',
+          'OpenCode session likely expired (HTTP 500 — re-paste auth cookie)',
           'quota',
         );
       }

@@ -689,7 +689,10 @@ export interface ProviderAuthSecretPayload {
    * `https://opencode.ai`. The adapter cannot decrypt it; it
    * forwards verbatim as `Cookie: auth=<...>` to the workspace
    * dashboard URL and parses the SSR-rendered HTML for usage
-   * percentages. NEVER logged.
+   * percentages. opencode.ai responds with HTTP 500 (not 401/302)
+   * when the cookie is well-formed but the server-side session
+   * has been invalidated, so the adapter maps 500 → auth_expired.
+   * NEVER logged.
    */
   opencodeAuthCookie?: string;
   /**

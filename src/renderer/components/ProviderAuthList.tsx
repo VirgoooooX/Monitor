@@ -573,9 +573,11 @@ function ProviderAuthRow({
           <AlertCircle size={12} strokeWidth={2} aria-hidden="true" />
           {row.provider === 'xiaomi'
             ? '小米 passToken 已被服务端拒绝；请从 account.xiaomi.com 重新复制 passToken 与 userId 后保存'
-            : canRetryExpired
-              ? '认证状态可能已过期，可先刷新重试；仍失败再从 CPA 重新导出 / 导入'
-              : '认证已过期，请从 CPA 重新导出 / 导入'}
+            : row.provider === 'opencode'
+              ? 'OpenCode 的 auth cookie 已过期（通常是几天没访问浏览器导致 session 没续期）；请从 opencode.ai Cookie 中重新复制 auth 值并保存'
+              : canRetryExpired
+                ? '认证状态可能已过期，可先刷新重试；仍失败再从 CPA 重新导出 / 导入'
+                : '认证已过期，请从 CPA 重新导出 / 导入'}
           {row.lastErrorMessage !== null && (
             <span className="provider-auth-list__error-detail">
               {' · '}

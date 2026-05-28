@@ -523,6 +523,10 @@ export function SettingsView(): JSX.Element {
   // OpenCode Go only — opaque Iron-encrypted `auth` cookie and the
   // workspace dashboard URL. The dashboard SSR-renders usage
   // percentages directly into the HTML; the adapter scrapes them.
+  // The Iron session has a TTL that is renewed by `Set-Cookie` on
+  // every browser visit; our stored cookie never gets renewed, so
+  // it eventually goes stale and the dashboard returns HTTP 500.
+  // The adapter surfaces that as `auth_expired` so users re-paste.
   const [opencodeAuthCookie, setOpencodeAuthCookie] = useState('');
   const [opencodeWorkspaceUrl, setOpencodeWorkspaceUrl] = useState('');
   const [opencodeAuthCookieShow, setOpencodeAuthCookieShow] = useState(false);
@@ -1035,8 +1039,8 @@ export function SettingsView(): JSX.Element {
     }
 
     // OpenCode Go uses an opaque `auth` cookie + workspace URL
-    // (also no API key). The cookie is Iron-encrypted on the
-    // server side; we treat it as an opaque opaque blob.
+    // (no API key). The cookie is Iron-encrypted on the server
+    // side; we treat it as an opaque blob and forward verbatim.
     if (apiKeyProvider === 'opencode') {
       const trimmedAuth = opencodeAuthCookie.trim();
       const trimmedUrl = opencodeWorkspaceUrl.trim();
@@ -1970,7 +1974,7 @@ export function SettingsView(): JSX.Element {
                     <>
                       <Field
                         label="auth Cookie"
-                        hint="从 opencode.ai 域 Cookie 复制 `auth` 的值（Fe26.2 开头）；保存后即加密落库"
+                        hint="从 opencode.ai 域 Cookie 复制 `auth` 的值（Fe26.2 开头）；保存后即加密落库。session 会过期，过期后重新粘一次即可"
                       >
                         <div className="settings-view__input-affix">
                           <input

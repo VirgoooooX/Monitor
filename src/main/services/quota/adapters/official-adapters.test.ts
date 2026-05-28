@@ -1102,8 +1102,9 @@ describe('official quota adapters — Xiaomi MiMo', () => {
 });
 
 describe('official quota adapters — OpenCode Go', () => {
-  // Helpers reused below — declared inline so the diff against the
-  // Xiaomi block above is obvious and we don't fight scoping.
+  // The dashboard at https://opencode.ai/workspace/<id>/go is
+  // SolidStart SSR HTML; the adapter scrapes data-slot attributes
+  // out of it. Auth is an opaque Iron-encrypted `auth` cookie.
   type RawResponse = {
     status: number;
     headers?: Readonly<Record<string, readonly string[]>>;
@@ -1236,6 +1237,32 @@ describe('official quota adapters — OpenCode Go', () => {
           headers: { location: ['/auth/login'] },
           body: '',
         }),
+      },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./opencode.adapter')).createOpenCodeAdapter({
+      requestRaw: requestRaw as any,
+    });
+    const snapshot = await adapter.refresh({
+      account: row('opencode'),
+      getSecret: () => ({
+        opencodeAuthCookie: FAKE_AUTH_COOKIE,
+        opencodeWorkspaceUrl: FAKE_WORKSPACE_URL,
+      }),
+      now: NOW,
+    });
+    expect(snapshot.status).toBe('unavailable');
+    expect(snapshot.lastErrorCode).toBe('auth_expired');
+  });
+
+  it('reports auth_expired on HTTP 500 (stale Iron session)', async () => {
+    // opencode.ai answers 500 — not 302/401 — when the Iron
+    // session has been invalidated server-side. We surface this
+    // as auth_expired so users know to re-paste the cookie.
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/workspace/',
+        respond: () => ({ status: 500, body: '500 | Internal Server Error' }),
       },
     ]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
