@@ -27,6 +27,46 @@
 //     each line as the dedup key. Combined with the file path this
 //     gives us the same idempotent re-scan property the other
 //     local collectors rely on.
+//
+// Known limitations (verified 2026-05-28 against Kiro IDE 0.12.x on
+// Windows; logged here so future investigators don't redo the work):
+//
+//   1. `promptTokens` is the *full context* sent into each model
+//      call, not the new tokens added that turn. Kiro emits a row
+//      every model invocation (including tool-call follow-ups), so
+//      the same conversation history is re-counted on every line:
+//
+//          12011 → 12102 → 12117 → 12130 → 12141 → 12194 → 12230
+//                  └── each row includes the previous turn's prompt ──┘
+//
+//      Summing the column therefore over-reports compared with what
+//      Kiro actually bills. We still emit one row per line so the
+//      bar chart reflects activity density correctly; just don't
+//      treat the sum as "tokens consumed."
+//
+//   2. `generatedTokens` is always 0 in the local log. Kiro does
+//      not record output tokens client-side. Output-token totals
+//      for `kiro-ide` will always be 0 — that's the source, not a
+//      bug here.
+//
+//   3. The `model` field is always the string `"agent"`. Kiro's
+//      real model name (e.g. `claude-opus-4.7`) lives in
+//      `workspace-sessions/<encoded-cwd>/<sessionId>.json` under
+//      the `selectedModel` key, but the JSONL has no per-row
+//      session id, so we cannot reliably correlate. We pass the
+//      raw value through unchanged.
+//
+//   4. Authoritative usage (Kiro's own credit/invocation balance,
+//      shown in the IDE's settings popup) does not live in this
+//      JSONL at all. The `kiro-ide` quota adapter at
+//      `services/quota/adapters/kiro-ide.adapter.ts` calls the
+//      Kiro account API directly to retrieve `usageBreakdownList`.
+//      An equivalent cached snapshot is also stored in
+//      `globalStorage/state.vscdb` under the ItemTable key
+//      `kiro.kiroAgent` →
+//      `kiro.resourceNotifications.usageState.usageBreakdowns[]`,
+//      but we do not read it here — the API response is fresher.
+//      This collector stays focused on token counts.
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';

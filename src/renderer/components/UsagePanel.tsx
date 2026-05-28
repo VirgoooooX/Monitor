@@ -10,9 +10,8 @@
 //   - codex-monitor: rolling 5h window + 5-min slot heatmap
 //   - PLAN.md §AI Usage Collectors
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 
-import { formatTokens } from '../lib/format';
 import {
   groupQuotaWindowsByDisplay,
   quotaWindowDisplayName,
@@ -25,11 +24,9 @@ import { ProviderIcon } from './ProviderIcon';
 import { PROVIDER_LABELS, providerIconKey, maskedEmailLabel } from './ProviderAuthList';
 import { UsageBarChart } from './UsageBarChart';
 import type {
-  CollectorStatus,
   QuotaSnapshot,
   QuotaStatus,
   QuotaWindow,
-  UsageProviderSummary,
   UsageRange,
   UsageSummary,
   ProviderId,
@@ -49,20 +46,6 @@ const RANGE_OPTIONS: { value: UsageRange; label: string }[] = [
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function statusLabel(status: CollectorStatus): string {
-  switch (status) {
-    case 'ok': return '正常';
-    case 'degraded': return '降级';
-    case 'unavailable': return '不可用';
-    case 'disabled': return '已禁用';
-  }
-}
-
-function formatCost(costUsd: number | null): string {
-  if (costUsd === null) return '—';
-  return `$${costUsd.toFixed(2)}`;
-}
 
 function formatClock(timestamp: number | null): string {
   if (timestamp === null) return '—';
@@ -432,45 +415,10 @@ export function UsagePanel(): JSX.Element {
         />
       )}
 
-      {/* Totals summary bar */}
-      {usageData && <TotalsSummary providers={usageData.perProvider} />}
-
       {/* Loading state */}
       {loading && !usageData && (
         <p className="usage-panel-v2__loading" aria-live="polite">加载中…</p>
       )}
-
-      {/* Provider detail cards — kept as a secondary surface for
-          per-provider in/out/cache breakdown, request count, and
-          status. The bar chart already answers "where did the
-          tokens go" at the by-provider × by-time grid; these cards
-          drill in to "what kind of tokens" + "is the collector
-          healthy". */}
-      {usageData && (() => {
-        const visibleProviders = usageData.perProvider.filter(
-          (p) =>
-            p.inputTokens + p.outputTokens + p.cacheTokens > 0 ||
-            p.eventCount > 0 ||
-            p.source === 'quotaDailyUsage'
-        );
-
-        if (visibleProviders.length === 0) {
-          return (
-            <div className="usage-panel-v2__empty-state">
-              <h3 className="usage-panel-v2__empty-title">暂无 Token 记录</h3>
-              <p className="usage-panel-v2__empty-desc">已开始采集，下一次刷新后会显示本地日志或官方日用量。</p>
-            </div>
-          );
-        }
-
-        return (
-          <div className="usage-panel-v2__grid">
-            {visibleProviders.map((provider) => (
-              <ProviderCard key={provider.provider} provider={provider} />
-            ))}
-          </div>
-        );
-      })()}
     </section>
   );
 }
@@ -779,177 +727,6 @@ function QuotaWindowRow({
           role="progressbar"
         />
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Totals summary
-// ---------------------------------------------------------------------------
-
-function TotalsSummary({ providers }: { providers: UsageProviderSummary[] }): JSX.Element | null {
-  const activeProviders = providers.filter((p) => p.source !== 'none');
-  if (activeProviders.length === 0) return null;
-
-  const totalInput = activeProviders.reduce((s, p) => s + p.inputTokens, 0);
-  const totalOutput = activeProviders.reduce((s, p) => s + p.outputTokens, 0);
-  const totalCache = activeProviders.reduce((s, p) => s + p.cacheTokens, 0);
-  const totalTokens = totalInput + totalOutput + totalCache;
-  const totalCost = activeProviders.reduce((s, p) => s + (p.costUsd ?? 0), 0);
-  const totalEvents = activeProviders.reduce((s, p) => s + p.eventCount, 0);
-
-  if (totalTokens === 0) return null;
-
-  return (
-    <div className="usage-totals">
-      <div className="usage-totals__item">
-        <span className="usage-totals__value">{formatTokens(totalTokens)}</span>
-        <span className="usage-totals__label">总 Tokens</span>
-      </div>
-      <div className="usage-totals__item">
-        <span className="usage-totals__value">{formatCost(totalCost > 0 ? totalCost : null)}</span>
-        <span className="usage-totals__label">预估费用</span>
-      </div>
-      <div className="usage-totals__item">
-        <span className="usage-totals__value">{totalEvents}</span>
-        <span className="usage-totals__label">请求数</span>
-      </div>
-      <div className="usage-totals__item usage-totals__item--breakdown">
-        <span className="usage-totals__mini">
-          In {formatTokens(totalInput)} · Out {formatTokens(totalOutput)} · Cache {formatTokens(totalCache)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Provider detail card
-// ---------------------------------------------------------------------------
-
-function ProviderCard({ provider }: { provider: UsageProviderSummary }): JSX.Element {
-  const totalTokens = provider.inputTokens + provider.outputTokens + provider.cacheTokens;
-
-  return (
-    <div
-      className={`provider-card provider-card--${provider.status}`}
-      data-testid={`provider-card-${provider.provider}`}
-    >
-      {/* Header */}
-      <div className="provider-card__header">
-        <span className="provider-card__name">
-          {providerDisplayName(provider.provider)}
-        </span>
-        <span className={`provider-card__badge provider-card__badge--${provider.status}`}>
-          {statusLabel(provider.status)}
-        </span>
-      </div>
-
-      <div className="provider-card__content">
-        {provider.source === 'events' && provider.hasTokenBreakdown ? (
-          <>
-            {/* Token breakdown */}
-            <div className="provider-card__breakdown">
-              <TokenRow label="Input" value={provider.inputTokens} total={totalTokens} color="var(--color-input)" />
-              <TokenRow label="Output" value={provider.outputTokens} total={totalTokens} color="var(--color-output)" />
-              <TokenRow label="Cache" value={provider.cacheTokens} total={totalTokens} color="var(--color-cache)" />
-            </div>
-
-            {/* Totals */}
-            <div className="provider-card__footer">
-              <div className="provider-card__stat">
-                <span className="provider-card__stat-value">{formatTokens(totalTokens)}</span>
-                <span className="provider-card__stat-label">合计</span>
-              </div>
-              {provider.costUsd !== null && (
-                <div className="provider-card__stat">
-                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
-                  <span className="provider-card__stat-label">费用</span>
-                </div>
-              )}
-              <div className="provider-card__stat">
-                <span className="provider-card__stat-value">{provider.eventCount}</span>
-                <span className="provider-card__stat-label">请求</span>
-              </div>
-            </div>
-          </>
-        ) : provider.source === 'events' && !provider.hasTokenBreakdown ? (
-          <>
-            <div className="provider-card__no-breakdown">
-              <p className="provider-card__no-breakdown-text">已记录请求，暂无 token 字段</p>
-            </div>
-
-            <div className="provider-card__footer">
-              <div className="provider-card__stat">
-                <span className="provider-card__stat-value">{provider.eventCount}</span>
-                <span className="provider-card__stat-label">请求</span>
-              </div>
-              {provider.costUsd !== null && (
-                <div className="provider-card__stat">
-                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
-                  <span className="provider-card__stat-label">费用</span>
-                </div>
-              )}
-            </div>
-          </>
-        ) : provider.source === 'quotaDailyUsage' ? (
-          <>
-            <div className="provider-card__daily-usage-main">
-              <div className="provider-card__daily-usage-value-group">
-                <span className="provider-card__daily-usage-value">{formatTokens(provider.inputTokens)}</span>
-                <span className="provider-card__daily-usage-label">总 Tokens</span>
-              </div>
-              <span className="provider-card__source-tag">来自官方日用量</span>
-            </div>
-
-            <div className="provider-card__footer">
-              {provider.costUsd !== null && (
-                <div className="provider-card__stat">
-                  <span className="provider-card__stat-value">{formatCost(provider.costUsd)}</span>
-                  <span className="provider-card__stat-label">官方费用</span>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="provider-card__inactive">
-            {provider.reason && (
-              <p className="provider-card__reason">{provider.reason}</p>
-            )}
-            {provider.status === 'disabled' && (
-              <p className="provider-card__hint">在设置中启用后可显示用量数据</p>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Token row with proportion bar
-// ---------------------------------------------------------------------------
-
-interface TokenRowProps {
-  label: string;
-  value: number;
-  total: number;
-  color: string;
-}
-
-function TokenRow({ label, value, total, color }: TokenRowProps): JSX.Element {
-  const percent = total > 0 ? (value / total) * 100 : 0;
-
-  return (
-    <div className="token-row">
-      <span className="token-row__label">{label}</span>
-      <div className="token-row__bar-track">
-        <div
-          className="token-row__bar-fill"
-          style={{ width: `${percent}%`, backgroundColor: color }}
-        />
-      </div>
-      <span className="token-row__value">{formatTokens(value)}</span>
     </div>
   );
 }

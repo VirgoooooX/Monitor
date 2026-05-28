@@ -1,69 +1,18 @@
 /*
- * Usage panel, quota overview, provider card, and legacy usage tile styles.
+ * Usage panel, quota overview, and per-account quota card styles.
+ *
+ * The token-consumption surface used to live in `<TotalsSummary>`
+ * + `<ProviderCard>` (legacy `.usage-panel-v2__grid` / `.provider-card`
+ * / `.token-row` / `.usage-totals` / `.usage-tile` rules), but the
+ * stacked bar chart in `UsageBarChart.tsx` now carries every signal
+ * those cards used to surface (per-provider totals, in/out/cache
+ * breakdown, request count, daily-usage fallback). Those rules have
+ * been deleted along with the components that produced them.
  */
-
-/* Usage panel (expanded window) ------------------------------------------- */
-
-.usage-panel {
-  padding: 16px;
-}
-
-.usage-panel__tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-}
-
-.usage-panel__tab {
-  padding: 6px 14px;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: transparent;
-  color: #1f2328;
-  font-size: var(--type-sm, 13px);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.usage-panel__tab:hover {
-  background: #f6f8fa;
-}
-
-.usage-panel__tab--active {
-  background: #0969da;
-  color: #fff;
-  border-color: #0969da;
-}
-
-.usage-panel__tab--active:hover {
-  background: #0860c4;
-}
-
-.usage-panel__error {
-  color: var(--color-bad);
-  font-size: var(--type-sm, 13px);
-  margin: 8px 0;
-}
-
-.usage-panel__loading {
-  color: #6a737d;
-  font-size: var(--type-sm, 13px);
-  margin: 8px 0;
-}
-
-.usage-panel__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-}
 
 /* Usage panel v2 ---------------------------------------------------------- */
 
 .usage-panel-v2 {
-  --color-input: #60a5fa;
-  --color-output: #34d399;
-  --color-cache: #a78bfa;
   --usage-card-bg: rgba(255, 255, 255, 0.035);
   --usage-card-border: rgba(255, 255, 255, 0.08);
   --usage-card-border-strong: rgba(255, 255, 255, 0.15);
@@ -189,8 +138,7 @@
   font-weight: 600;
 }
 
-.quota-overview__grid,
-.usage-panel-v2__grid {
+.quota-overview__grid {
   display: grid;
   gap: 12px;
 }
@@ -205,9 +153,7 @@
   .quota-overview__grid { grid-template-columns: 1fr; }
 }
 
-.quota-account-card,
-.usage-totals,
-.provider-card {
+.quota-account-card {
   background: var(--usage-card-bg);
   border: 1px solid var(--usage-card-border);
   border-radius: 8px;
@@ -241,15 +187,9 @@
   border-color: rgba(245, 158, 11, 0.30);
 }
 
-.quota-account-card__header,
-.usage-totals,
-.provider-card__header,
-.provider-card__footer {
+.quota-account-card__header {
   display: flex;
   align-items: center;
-}
-
-.quota-account-card__header {
   justify-content: space-between;
   gap: 10px;
 }
@@ -576,331 +516,6 @@
   background: rgba(148, 163, 184, 0.12);
   color: #cbd5e1;
 }
-
-.usage-totals {
-  gap: 18px;
-  padding: 12px 16px;
-}
-
-.usage-totals__item {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.usage-totals__item--breakdown {
-  margin-left: auto;
-}
-
-.usage-totals__value {
-  color: var(--usage-text);
-  font-size: var(--type-xl, 20px);
-  font-weight: 600;
-  line-height: 1.1;
-}
-
-.usage-totals__label {
-  color: var(--usage-text-faint);
-  font-size: var(--type-micro, 11px);
-}
-
-.usage-totals__mini {
-  color: var(--usage-text-mute);
-  font-size: var(--type-xs, 12px);
-  white-space: nowrap;
-}
-
-.usage-panel-v2__grid {
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-}
-
-.provider-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  transition: border-color 140ms ease-out, opacity 140ms ease-out;
-}
-
-.provider-card:hover {
-  border-color: var(--usage-card-border-strong);
-}
-
-.provider-card--disabled {
-  opacity: 0.65;
-}
-
-.provider-card__header {
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.provider-card__name {
-  color: var(--usage-text);
-  font-weight: 700;
-}
-
-.provider-card__badge {
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: var(--type-micro, 11px);
-  font-weight: 600;
-}
-
-.provider-card__badge--ok {
-  background: rgba(34, 197, 94, 0.14);
-  color: #86efac;
-}
-
-.provider-card__badge--degraded {
-  background: rgba(245, 158, 11, 0.14);
-  color: #fcd34d;
-}
-
-.provider-card__badge--unavailable,
-.provider-card__badge--disabled {
-  background: rgba(148, 163, 184, 0.14);
-  color: #cbd5e1;
-}
-
-.provider-card__breakdown {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.token-row {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) minmax(44px, auto);
-  gap: 10px;
-  align-items: center;
-}
-
-.token-row__label {
-  color: var(--usage-text-mute);
-  font-size: var(--type-micro, 11px);
-  font-weight: 600;
-}
-
-.token-row__bar-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.token-row__bar-fill {
-  height: 100%;
-  min-width: 2px;
-  border-radius: inherit;
-  transition: width 200ms ease-out;
-}
-
-.token-row__value {
-  color: var(--usage-text);
-  font-size: var(--type-xs, 12px);
-  font-weight: 600;
-  text-align: right;
-}
-
-.provider-card__footer {
-  gap: 16px;
-  padding-top: 10px;
-  border-top: 1px solid var(--usage-card-border);
-}
-
-.provider-card__stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.provider-card__stat-value {
-  color: var(--usage-text);
-  font-size: var(--type-md, 15px);
-  font-weight: 700;
-}
-
-.provider-card__stat-label {
-  color: var(--usage-text-faint);
-  font-size: var(--type-micro, 11px);
-}
-
-.provider-card__inactive {
-  min-height: 56px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-}
-
-.provider-card__reason,
-.provider-card__hint {
-  margin: 0;
-  color: var(--usage-text-mute);
-  font-size: var(--type-xs, 12px);
-  line-height: 1.45;
-}
-
-/* Provider tile ----------------------------------------------------------- */
-
-.usage-tile {
-  border: 1px solid #e1e4e8;
-  border-radius: 8px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: border-color 0.15s;
-}
-
-.usage-tile:hover {
-  border-color: #d0d7de;
-}
-
-.usage-tile[data-status='disabled'] {
-  opacity: 0.55;
-}
-
-.usage-tile__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.usage-tile__name {
-  font-size: var(--type-base, 14px);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.usage-tile__badge {
-  flex: 0 0 auto;
-  font-size: var(--type-micro, 11px);
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: 10px;
-  white-space: nowrap;
-}
-
-.usage-tile__badge--ok {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-}
-
-.usage-tile__badge--degraded {
-  background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
-}
-
-.usage-tile__badge--unavailable {
-  background: rgba(107, 114, 128, 0.12);
-  color: #6b7280;
-}
-
-.usage-tile__badge--disabled {
-  background: rgba(107, 114, 128, 0.08);
-  color: #9ca3af;
-}
-
-.usage-tile__tokens {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.usage-tile__total {
-  font-size: var(--type-xl, 20px);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.usage-tile__unit {
-  font-size: var(--type-xs, 12px);
-  color: #6a737d;
-}
-
-.usage-tile__reason {
-  font-size: var(--type-xs, 12px);
-  color: #6a737d;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.usage-panel-v2__empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 16px;
-  background: var(--usage-card-bg);
-  border: 1px dashed var(--usage-card-border);
-  border-radius: 8px;
-  text-align: center;
-}
-
-.usage-panel-v2__empty-title {
-  margin: 0 0 6px;
-  color: var(--usage-text-mute);
-  font-size: var(--type-sm, 13px);
-  font-weight: 700;
-}
-
-.usage-panel-v2__empty-desc {
-  margin: 0;
-  color: var(--usage-text-faint);
-  font-size: var(--type-xs, 12px);
-  line-height: 1.4;
-}
-
-.provider-card__no-breakdown,
-.provider-card__daily-usage-main {
-  min-height: 52px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.provider-card__no-breakdown-text {
-  margin: 0;
-  color: var(--usage-text-faint);
-  font-size: var(--type-xs, 12px);
-}
-
-.provider-card__daily-usage-value-group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.provider-card__daily-usage-value {
-  color: var(--usage-text);
-  font-size: var(--type-lg, 16px);
-  font-weight: 700;
-}
-
-.provider-card__daily-usage-label {
-  color: var(--usage-text-faint);
-  font-size: var(--type-micro, 11px);
-}
-
-.provider-card__source-tag {
-  align-self: flex-start;
-  margin-top: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--usage-text-mute);
-  font-size: var(--type-micro, 10px);
-  font-weight: 600;
-}
-
-
 
 
 /* ──────────────────────────────────────────────────────────────────────

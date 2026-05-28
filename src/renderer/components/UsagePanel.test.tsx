@@ -274,87 +274,11 @@ describe('UsagePanel quota card kinds and states', () => {
   });
 });
 
-describe('UsagePanel token consumption list', () => {
-  it('renders empty state when there is no usage data', async () => {
-    installDesktopBridge({ snapshots: [] }, { range: 'today', perProvider: [] });
-    render(<UsagePanel />);
-    expect(await screen.findByText('暂无 Token 记录')).toBeTruthy();
-    expect(screen.getByText('已开始采集，下一次刷新后会显示本地日志或官方日用量。')).toBeTruthy();
-  });
-
-  it('renders provider cards with and without token breakdown and from daily usage fallback', async () => {
-    installDesktopBridge(
-      { snapshots: [] },
-      {
-        range: 'today',
-        perProvider: [
-          {
-            provider: 'codex',
-            status: 'ok',
-            inputTokens: 1000,
-            outputTokens: 500,
-            cacheTokens: 200,
-            costUsd: 0.05,
-            eventCount: 3,
-            source: 'events',
-            hasTokenBreakdown: true
-          },
-          {
-            provider: 'gemini-cli',
-            status: 'degraded',
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheTokens: 0,
-            costUsd: null,
-            eventCount: 5,
-            source: 'events',
-            hasTokenBreakdown: false
-          },
-          {
-            provider: 'deepseek',
-            status: 'ok',
-            inputTokens: 8000,
-            outputTokens: 0,
-            cacheTokens: 0,
-            costUsd: 0.12,
-            eventCount: 0,
-            source: 'quotaDailyUsage',
-            hasTokenBreakdown: false
-          }
-        ]
-      }
-    );
-
-    render(<UsagePanel />);
-
-    // Totals summary checks
-    await waitFor(() => {
-      expect(document.querySelector('.usage-totals')).toBeTruthy();
-    });
-    const totalsContainer = document.querySelector('.usage-totals') as HTMLElement;
-    expect(within(totalsContainer).getByText('总 Tokens')).toBeTruthy();
-    expect(within(totalsContainer).getByText(/In\s*9\.0k\s*·\s*Out\s*500\s*·\s*Cache\s*200/)).toBeTruthy();
-    expect(within(totalsContainer).getByText('预估费用')).toBeTruthy();
-    expect(screen.getByText('$0.17')).toBeTruthy(); // 0.05 + 0.12
-
-    // Codex: events with breakdown
-    expect(screen.getByText('Codex')).toBeTruthy();
-    expect(screen.getByText('Input')).toBeTruthy();
-    expect(screen.getByText('Output')).toBeTruthy();
-    expect(screen.getByText('Cache')).toBeTruthy();
-    expect(screen.getByText('1.7k')).toBeTruthy(); // total: 1700
-    expect(screen.getByText('3')).toBeTruthy(); // requests count
-
-    // Gemini API / CLI: events without breakdown
-    expect(screen.getByText('Gemini CLI')).toBeTruthy();
-    expect(screen.getByText('已记录请求，暂无 token 字段')).toBeTruthy();
-    expect(screen.getByText('5')).toBeTruthy(); // requests count
-
-    // DeepSeek: daily usage fallback
-    expect(screen.getByText('DeepSeek')).toBeTruthy();
-    expect(screen.getByText('来自官方日用量')).toBeTruthy();
-    expect(screen.getByText('8.0k')).toBeTruthy();
-    expect(screen.getByText('官方费用')).toBeTruthy();
-    expect(screen.getByText('$0.12')).toBeTruthy();
-  });
-});
+// Note: the `UsagePanel token consumption list` describe block used to
+// cover `<TotalsSummary>` and `<ProviderCard>` rendering. Both
+// components were removed when the stacked bar chart in
+// `UsageBarChart.tsx` took over the same information (per-provider
+// totals, breakdown, request count, daily-usage fallback). The chart
+// has its own bucket-level rendering test, and the panel-level smoke
+// coverage in the `UsagePanel quota overview` block above already
+// exercises the page integration, so no replacement tests are needed.

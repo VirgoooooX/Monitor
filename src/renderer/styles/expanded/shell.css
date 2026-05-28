@@ -166,11 +166,6 @@ body.mode-expanded[data-color-mode='light'] {
 [data-color-mode='light'] .ex .quota-overview__title,
 [data-color-mode='light'] .ex .quota-account-card__chip,
 [data-color-mode='light'] .ex .quota-account-card__status,
-[data-color-mode='light'] .ex .usage-totals__label,
-[data-color-mode='light'] .ex .provider-card__name,
-[data-color-mode='light'] .ex .provider-card__badge,
-[data-color-mode='light'] .ex .token-row__label,
-[data-color-mode='light'] .ex .provider-card__stat-label,
 [data-color-mode='light'] .ex .settings-view__eyebrow,
 [data-color-mode='light'] .ex .settings-view__section-title,
 [data-color-mode='light'] .ex .settings-view__collector-label {
@@ -182,10 +177,6 @@ body.mode-expanded[data-color-mode='light'] {
 [data-color-mode='light'] .ex .ex__card-eyebrow,
 [data-color-mode='light'] .ex .usage-panel-v2__title,
 [data-color-mode='light'] .ex .quota-overview__title,
-[data-color-mode='light'] .ex .usage-totals__label,
-[data-color-mode='light'] .ex .provider-card__badge,
-[data-color-mode='light'] .ex .token-row__label,
-[data-color-mode='light'] .ex .provider-card__stat-label,
 [data-color-mode='light'] .ex .settings-view__eyebrow {
   letter-spacing: 0.08em;
 }
@@ -350,11 +341,7 @@ body.mode-expanded[data-color-mode='light'] {
 [data-color-mode='light'] .ex .quota-overview__mode,
 [data-color-mode='light'] .ex .quota-account-card__meta,
 [data-color-mode='light'] .ex .quota-account-card__plan,
-[data-color-mode='light'] .ex .quota-window-row__reset,
-[data-color-mode='light'] .ex .usage-totals__mini,
-[data-color-mode='light'] .ex .token-row__value,
-[data-color-mode='light'] .ex .provider-card__reason,
-[data-color-mode='light'] .ex .provider-card__hint {
+[data-color-mode='light'] .ex .quota-window-row__reset {
   color: var(--ex-text-mute);
   font-weight: 600;
 }
@@ -395,22 +382,6 @@ body.mode-expanded[data-color-mode='light'] {
 }
 
 [data-color-mode='light'] .ex .quota-account-card__status[data-tone='neutral'] {
-  background: rgba(107, 114, 128, 0.14);
-  color: #4b5563;
-}
-
-[data-color-mode='light'] .ex .provider-card__badge--ok {
-  background: rgba(34, 197, 94, 0.14);
-  color: #047857;
-}
-
-[data-color-mode='light'] .ex .provider-card__badge--degraded {
-  background: rgba(245, 158, 11, 0.18);
-  color: #92400e;
-}
-
-[data-color-mode='light'] .ex .provider-card__badge--unavailable,
-[data-color-mode='light'] .ex .provider-card__badge--disabled {
   background: rgba(107, 114, 128, 0.14);
   color: #4b5563;
 }
