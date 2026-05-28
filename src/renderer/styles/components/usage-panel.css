@@ -901,3 +901,982 @@
 }
 
 
+
+
+/* ──────────────────────────────────────────────────────────────────────
+   Usage chart  (range-uniform stacked bar — "Editorial Telemetry")
+   ──────────────────────────────────────────────────────────────────────
+
+   Three commitments:
+     1. The plot canvas is the same size for 7 / 24 / 30 columns.
+        Bars are flex children so the rhythm scales smoothly.
+     2. Vertical scale is locked: yMax → 100% of plot, and the
+        grid lines, y-axis labels, and stack heights all derive
+        from the same percentage so they stay visually aligned.
+     3. One signature detail: the peak column gets a thin
+        chevron "crown" + a subtle outline ring; "now" gets a
+        dotted underline.
+
+   Color tokens reuse the panel's existing --usage-* variables so
+   the chart automatically follows the light/dark theme defined in
+   `expanded/shell.css`.
+*/
+
+.usage-chart {
+  /* Plot canvas is 220px tall total. The vertical layout is fixed
+     so the bar rail, y-axis labels, and gridlines all share the
+     same coordinate space — see UsageBarChart.tsx for the math.
+       y =   0  .. 12px : top breathing room
+       y =  12  .. 198  : bar plot area (186px inner height)
+       y = 198  .. 220  : x-axis lane (22px) */
+  --plot-h: 220px;
+  --col-min-w: 6px;
+  --col-max-w: 28px;
+  --col-gap: 3px;
+  --crown-size: 6px;
+  /* Events polyline / right-axis colour. Muted slate so the line
+     reads as a secondary annotation overlay rather than a primary
+     series — the bars are the headline, the events curve is the
+     subtitle. Same hue family as the chart's neutral text tokens. */
+  --usage-events-stroke: rgba(245, 245, 247, 0.42);
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 14px;
+  background:
+    radial-gradient(120% 70% at 0% 0%,
+      rgba(165, 180, 252, 0.06),
+      transparent 55%),
+    var(--usage-card-bg);
+  border: 1px solid var(--usage-card-border);
+  border-radius: 10px;
+  /* Subtle inset highlight on the top edge — adds depth without a
+     heavy shadow. Light theme overrides below remove it. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+[data-color-mode='light'] .ex .usage-chart {
+  background:
+    radial-gradient(120% 70% at 0% 0%,
+      rgba(4, 120, 87, 0.05),
+      transparent 55%),
+    var(--usage-card-bg);
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.04);
+  --usage-events-stroke: rgba(15, 23, 42, 0.45);
+}
+
+/* Header ------------------------------------------------------------ */
+
+.usage-chart__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.usage-chart__heading {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.usage-chart__eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--usage-text-faint);
+  font-feature-settings: 'tnum';
+}
+
+.usage-chart__rule {
+  flex: 0 0 24px;
+  height: 1px;
+  background: var(--usage-card-border-strong);
+}
+
+.usage-chart__columns-meta {
+  font-size: var(--type-micro, 11px);
+  color: var(--usage-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-chart__stats {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+}
+
+.usage-chart__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-chart__stat dt {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--usage-text-faint);
+}
+
+.usage-chart__stat dd {
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--usage-text);
+  font-size: var(--type-md, 15px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.usage-chart__stat-unit {
+  color: var(--usage-text-faint);
+  font-size: var(--type-micro, 11px);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+/* Plot canvas ------------------------------------------------------- */
+
+.usage-chart__plot {
+  /*
+   * Three columns:
+   *   col 1 (44px) — left y-axis (token count)
+   *   col 2 (1fr)  — bar rail + events polyline overlay
+   *   col 3 (44px) — right y-axis (request count, hidden when empty)
+   *
+   * Both side gutters share the same width so the canvas centre
+   * stays mathematically identical regardless of whether the events
+   * axis is rendered, which means the bars (and their gridline
+   * coordinate space) never shift on data changes.
+   */
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-rows: auto;
+  align-items: stretch;
+  gap: 0;
+  position: relative;
+}
+
+.usage-chart__yaxis {
+  width: 44px;
+  height: var(--plot-h);
+  /* The y-axis text uses absolute coords inside its own viewBox so
+     it lines up with the gridlines drawn in the canvas. */
+}
+
+/*
+ * Right y-axis carries the events-per-bucket scale. Uses the same
+ * coordinate space as the left axis so 0 lines up with the bar
+ * baseline. When `data-active="false"` (no events recorded yet) we
+ * keep the gutter visible (so the bar centre doesn't shift) but
+ * hide the labels.
+ *
+ * Stroke colour is inherited from `.usage-chart` via the
+ * `--usage-events-stroke` variable so the axis labels, polyline,
+ * and area gradient all stay in sync across light/dark themes.
+ */
+.usage-chart__yaxis--right {
+  /* Empty by default — the parent sets --usage-events-stroke. */
+}
+
+.usage-chart__yaxis-label {
+  fill: var(--usage-text-faint);
+  font-size: 10px;
+  font-family: var(--ex-display-font, var(--ui-font-family, system-ui));
+  font-feature-settings: 'tnum';
+}
+
+.usage-chart__yaxis-label--right {
+  /* Match the events stroke colour so the right-axis ticks read as
+     "this scale is for the muted line", not as a second token
+     scale. */
+  fill: var(--usage-events-stroke);
+}
+
+.usage-chart__canvas {
+  position: relative;
+  /* Cap canvas width to the bar rail's natural footprint so the
+     bar rail, events polyline, x-axis labels, and the floating
+     hover dot all share one coordinate space. Without this cap
+     low column counts (今日 24h, 本周 7d) clamp the bars at
+     `--col-max-w` while the events SVG stretches edge-to-edge,
+     drifting the curve off the bar centres.
+
+     Canvas centres inside its grid cell so the gridlines keep
+     spanning the full plot width regardless of the canvas's
+     reduced footprint. */
+  max-width: var(--rail-max-width, 100%);
+  margin: 0 auto;
+  width: 100%;
+  height: var(--plot-h);
+  /* Pad the canvas to leave room for the x-axis labels below. */
+  padding-bottom: 22px;
+  isolation: isolate;
+}
+
+.usage-chart__grid {
+  position: absolute;
+  inset: 0 0 22px 0;
+  width: 100%;
+  height: var(--plot-h);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.usage-chart__gridline {
+  stroke: var(--usage-card-border);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.usage-chart__gridline--top {
+  stroke-dasharray: 2 4;
+  stroke: var(--usage-card-border-strong);
+  opacity: 0.7;
+}
+
+.usage-chart__gridline--baseline {
+  stroke: var(--usage-card-border-strong);
+  stroke-dasharray: 0;
+  opacity: 0.9;
+}
+
+/* Bar rail ---------------------------------------------------------- */
+
+.usage-chart__rail {
+  position: absolute;
+  /* Vertical range MUST match the y-axis + grid math in
+     UsageBarChart.tsx: top = 12px, bottom = 22px (x-axis lane).
+     The bars sit on the rail's bottom edge — which is exactly the
+     baseline drawn at canvas-y = 198. Any deviation here produces
+     the "bars floating in mid-air" bug because the y-axis "0" label
+     and the actual bar bases stop agreeing. */
+  inset: 12px 0 22px 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--col-gap);
+  /*
+   * No `z-index` here on purpose. An explicit z-index would turn
+   * the rail into its own stacking context, painting all the bars
+   * inside as a single unit — and the events SVG sibling
+   * (z-index: 2) couldn't slip its line through individual bars.
+   * Leaving the rail at `z-index: auto` keeps every bar in the
+   * canvas's stacking context where the events SVG can stack on
+   * top of them one bar at a time.
+   */
+}
+
+.usage-chart__col {
+  flex: 1 1 0;
+  min-width: var(--col-min-w);
+  max-width: var(--col-max-w);
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  font: inherit;
+  color: inherit;
+  /* The hover/active styles live on .__seg / .__crown — the button
+     itself only carries focus-ring + the entrance animation. */
+  outline: none;
+  /*
+   * Deliberately no `transform` / `animation` on the col. Either
+   * one would create a per-column stacking context, which then
+   * paints in front of the events SVG overlay regardless of how
+   * the events SVG's z-index is set — leaving tall bars chopping
+   * the line into visual "dashes". The rise animation lives on
+   * `.usage-chart__stack` instead, where it's inside
+   * `overflow: hidden` and doesn't affect col-level stacking.
+   */
+}
+
+.usage-chart__col:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: -2px -1px;
+  border-radius: 4px;
+  border: 1.5px solid var(--ex-accent, #a5b4fc);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-chart__col {
+    animation: none;
+  }
+  .usage-chart__stack {
+    animation: none;
+  }
+}
+
+@keyframes usage-chart-rise {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.usage-chart__col-track {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  /* Subtle "trough" — gives empty buckets a visible footprint
+     without competing with the bars. */
+  background: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.025) 0%,
+    rgba(255, 255, 255, 0) 30%
+  );
+  border-radius: 3px 3px 0 0;
+}
+
+[data-color-mode='light'] .ex .usage-chart__col-track {
+  background: linear-gradient(
+    to top,
+    rgba(15, 23, 42, 0.04) 0%,
+    rgba(15, 23, 42, 0) 30%
+  );
+}
+
+.usage-chart__col--placeholder .usage-chart__col-track {
+  /* Empty-state placeholder columns sit at varying low heights to
+     hint at the chart's purpose without misleading the user. */
+  background: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0) 60%
+  );
+}
+
+.usage-chart__stack {
+  display: flex;
+  flex-direction: column-reverse;
+  width: 100%;
+  min-height: 0;
+  /* Smooth height transitions when data updates (e.g. on a
+     refresh tick). Disabled in reduced-motion mode below. */
+  transition: height 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: 3px 3px 0 0;
+  overflow: hidden;
+  /* Soft inner highlight on the top edge — depth without a heavy
+     shadow that would compete with the gridlines. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 1px 0 rgba(0, 0, 0, 0.10);
+  /*
+   * Stagger entrance: bars rise from the column floor. The animation
+   * lives here (NOT on `.usage-chart__col`) — putting `transform`
+   * on the col would promote each col to its own stacking context,
+   * which lets tall bars paint in front of the events polyline
+   * overlay regardless of z-index. The stack already has
+   * `overflow: hidden`, so scaling its inner content is visually
+   * identical and keeps cols sharing the canvas's stacking context.
+   */
+  animation: usage-chart-rise 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: bottom center;
+}
+
+[data-color-mode='light'] .ex .usage-chart__stack {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 1px 0 rgba(15, 23, 42, 0.10);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-chart__stack {
+    transition: none;
+  }
+}
+
+.usage-chart__seg {
+  display: flex;
+  flex-direction: column-reverse;
+  width: 100%;
+  min-height: 1px;
+  flex-grow: 0;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  /* Hairline divider between provider segments — keeps the eye
+     able to separate two providers of similar hue. Falls away on
+     hover so the segment reads as a single solid band. */
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.18);
+  transition: filter 140ms ease-out;
+}
+
+[data-color-mode='light'] .ex .usage-chart__seg {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.usage-chart__seg:first-child {
+  /* The bottom-most provider band sits flush against the baseline,
+     no need for an internal separator above the next-door floor. */
+  box-shadow: none;
+}
+
+/* Kind sub-bands (output / input / cache) inside a provider seg.
+   Each band uses the same hue as its parent seg but at a different
+   lightness — output (dark) at the bottom, cache (light) at the
+   top. The thin internal divider doubles up as the eye's anchor
+   between bands. */
+.usage-chart__kind {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  flex-grow: 0;
+  flex-shrink: 0;
+  position: relative;
+  background-image: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.12) 0%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  background-blend-mode: overlay;
+}
+
+.usage-chart__kind + .usage-chart__kind {
+  /* Hairline between kind bands within a single provider seg. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+[data-color-mode='light'] .ex .usage-chart__kind + .usage-chart__kind {
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.10);
+}
+
+/* Hover state ------------------------------------------------------- */
+
+/* Dim siblings when any column is being interacted with. The rail
+   itself owns the :hover-within so the dim cascades from a single
+   source-of-truth, not per-segment. */
+.usage-chart__rail:hover .usage-chart__col:not(:hover):not(.usage-chart__col--hover) .usage-chart__seg,
+.usage-chart__rail:focus-within .usage-chart__col:not(:focus-visible):not(.usage-chart__col--hover) .usage-chart__seg {
+  filter: saturate(0.4) brightness(0.85);
+  opacity: 0.55;
+}
+
+.usage-chart__col:hover .usage-chart__seg,
+.usage-chart__col--hover .usage-chart__seg,
+.usage-chart__col:focus-visible .usage-chart__seg {
+  filter: brightness(1.12) saturate(1.08);
+}
+
+.usage-chart__col:hover .usage-chart__col-track,
+.usage-chart__col--hover .usage-chart__col-track {
+  background: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0) 40%
+  );
+}
+
+[data-color-mode='light'] .ex .usage-chart__col:hover .usage-chart__col-track,
+[data-color-mode='light'] .ex .usage-chart__col--hover .usage-chart__col-track {
+  background: linear-gradient(
+    to top,
+    rgba(15, 23, 42, 0.07) 0%,
+    rgba(15, 23, 42, 0) 40%
+  );
+}
+
+/* Peak crown -------------------------------------------------------- */
+
+.usage-chart__crown {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: var(--crown-size) solid transparent;
+  border-right: var(--crown-size) solid transparent;
+  border-top: var(--crown-size) solid var(--ex-accent, #a5b4fc);
+  filter: drop-shadow(0 0 4px rgba(165, 180, 252, 0.45));
+  /* Reveal in slightly delayed so it lands after the bars. */
+  animation: usage-chart-crown-in 280ms 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes usage-chart-crown-in {
+  from { transform: translate(-50%, -4px); opacity: 0; }
+  to   { transform: translate(-50%, 0);    opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-chart__crown {
+    animation: none;
+  }
+}
+
+/* "Now" indicator --------------------------------------------------- */
+
+.usage-chart__col--now .usage-chart__col-track::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  bottom: -3px;
+  height: 2px;
+  background: var(--ex-accent, #a5b4fc);
+  border-radius: 2px;
+  opacity: 0.85;
+  box-shadow: 0 0 6px rgba(165, 180, 252, 0.6);
+}
+
+/* X axis ------------------------------------------------------------ */
+
+.usage-chart__xaxis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 22px;
+  display: flex;
+  gap: var(--col-gap);
+  pointer-events: none;
+}
+
+.usage-chart__xaxis-tick {
+  flex: 1 1 0;
+  min-width: var(--col-min-w);
+  max-width: var(--col-max-w);
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--usage-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  align-self: end;
+  padding-top: 4px;
+}
+
+.usage-chart__xaxis-tick--blank::before {
+  /* A tiny tick mark on unlabeled positions so the rhythm reads
+     even where the label is suppressed. */
+  content: '';
+  display: block;
+  width: 1px;
+  height: 3px;
+  margin: 0 auto;
+  background: var(--usage-card-border-strong);
+  opacity: 0.6;
+}
+
+/* Empty state ------------------------------------------------------- */
+
+.usage-chart__plot--empty .usage-chart__col-track {
+  /* Random heights mimic a faint chart silhouette without showing
+     real data. We use nth-child variance to keep the markup clean. */
+}
+
+.usage-chart__plot--empty .usage-chart__col:nth-child(1)  { opacity: 0.30; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(2)  { opacity: 0.20; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(3)  { opacity: 0.35; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(4)  { opacity: 0.22; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(5)  { opacity: 0.30; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(6)  { opacity: 0.18; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(7)  { opacity: 0.32; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(8)  { opacity: 0.20; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(9)  { opacity: 0.28; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(10) { opacity: 0.22; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(11) { opacity: 0.30; }
+.usage-chart__plot--empty .usage-chart__col:nth-child(12) { opacity: 0.18; }
+
+.usage-chart__empty {
+  position: absolute;
+  inset: 0 0 22px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+  text-align: center;
+  z-index: 2;
+}
+
+.usage-chart__empty-glyph {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--usage-card-border-strong);
+  margin-bottom: 4px;
+  position: relative;
+}
+
+.usage-chart__empty-glyph::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--usage-card-border-strong);
+}
+
+.usage-chart__empty-title {
+  margin: 0;
+  font-size: var(--type-sm, 13px);
+  font-weight: 600;
+  color: var(--usage-text-mute);
+}
+
+.usage-chart__empty-desc {
+  margin: 0;
+  font-size: var(--type-micro, 11px);
+  color: var(--usage-text-faint);
+}
+
+/* Footer (legend + hover detail) ------------------------------------ */
+
+/*
+ * Layout strategy:
+ *
+ * The hover detail pill changes width significantly between its
+ * inactive ("hint") and active (per-kind chips) states. If the pill
+ * lived in the flex flow, that width swing would either reserve a
+ * large min-width gap (wasteful) or push the legend to wrap a row
+ * deeper, both of which we want to avoid.
+ *
+ * Solution: pin the pill with `position: absolute` so it floats over
+ * the right edge of the footer. Legend lays out across the full row
+ * width and only wraps based on window width, never on hover state.
+ * Card height is therefore locked across hover / not-hover (UX rule
+ * §3 layout-shift-avoid).
+ *
+ * `min-height` on the footer reserves space for the pill so the
+ * dashed border + legend don't collapse vertically when the legend
+ * is empty.
+ */
+.usage-chart__footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px dashed var(--usage-card-border);
+  min-height: calc(24px + 12px);
+}
+
+.usage-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  /* Reserve right-side runway so the floating pill doesn't sit on
+     top of the last legend item in the most common case. The pill
+     can still overflow this gutter for very long active states —
+     it just briefly overlaps the legend's right edge. */
+  padding-right: 12px;
+}
+
+.usage-chart__legend-empty {
+  font-size: var(--type-micro, 11px);
+  color: var(--usage-text-faint);
+}
+
+.usage-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-micro, 11px);
+  color: var(--usage-text-mute);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 160ms ease-out;
+}
+
+.usage-chart__legend-item--dim {
+  opacity: 0.36;
+}
+
+.usage-chart__legend-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  /* Match the bar's inner highlight so swatch ≈ segment top. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.usage-chart__legend-label {
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.usage-chart__detail {
+  /*
+   * Floating pill — see `.usage-chart__footer` for the rationale.
+   * Width hugs its content (no min-width / max-width / fixed-width
+   * to reserve), so the pill stays compact when idle and only grows
+   * to fit the active state's chips. Because it's absolutely
+   * positioned, that width swing never affects legend wrapping.
+   *
+   * Height is pinned to a single text line — no wrap inside the
+   * pill — so the pill's bounding box height is constant.
+   */
+  position: absolute;
+  top: 12px;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--usage-card-border);
+  font-size: var(--type-micro, 11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--usage-text-faint);
+  white-space: nowrap;
+  /* Pill's content layer stays a single line; nothing inside should
+     bleed outside the rounded shape. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Cap the floating pill at the footer's content width so it can't
+     grow beyond the chart card on extreme active states. */
+  max-width: 100%;
+  transition: background 160ms ease-out, color 160ms ease-out,
+              box-shadow 160ms ease-out;
+}
+
+.usage-chart__detail--active {
+  background: rgba(165, 180, 252, 0.16);
+  color: var(--usage-text);
+  box-shadow: inset 0 0 0 1px rgba(165, 180, 252, 0.36);
+}
+
+[data-color-mode='light'] .ex .usage-chart__detail--active {
+  background: rgba(4, 120, 87, 0.10);
+  box-shadow: inset 0 0 0 1px rgba(4, 120, 87, 0.32);
+}
+
+.usage-chart__detail-label {
+  font-weight: 600;
+  color: inherit;
+  letter-spacing: 0.01em;
+}
+
+.usage-chart__detail-sep {
+  color: var(--usage-text-faint);
+  opacity: 0.7;
+}
+
+.usage-chart__detail-value {
+  color: inherit;
+  font-weight: 600;
+}
+
+.usage-chart__detail-hint {
+  color: var(--usage-text-faint);
+}
+
+
+
+/* ──────────────────────────────────────────────────────────────────────
+   Kind tone key  (output / input / cache lightness scale)
+   ──────────────────────────────────────────────────────────────────────
+
+   Pinned to the top-right corner of the plot canvas, in the empty
+   space above the highest gridline tick. Sits inline with the
+   chart data instead of competing with header / footer for
+   attention. Uses neutral grey swatches so it reads as a "scale"
+   rather than a fourth provider — the eye maps dark→output,
+   mid→input, light→cache regardless of which provider hue is on
+   the bar.
+*/
+
+.usage-chart__kind-key {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  z-index: 2;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--usage-text-faint);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.usage-chart__kind-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1;
+}
+
+.usage-chart__kind-key-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.usage-chart__kind-key-swatch[data-kind='output'] {
+  background: hsl(220 8% 36%);
+}
+.usage-chart__kind-key-swatch[data-kind='input']  {
+  background: hsl(220 8% 56%);
+}
+.usage-chart__kind-key-swatch[data-kind='cache']  {
+  background: hsl(220 8% 76%);
+}
+
+[data-color-mode='light'] .ex .usage-chart__kind-key-swatch[data-kind='output'] {
+  background: hsl(220 8% 28%);
+}
+[data-color-mode='light'] .ex .usage-chart__kind-key-swatch[data-kind='input']  {
+  background: hsl(220 8% 50%);
+}
+[data-color-mode='light'] .ex .usage-chart__kind-key-swatch[data-kind='cache']  {
+  background: hsl(220 8% 72%);
+}
+
+/* Per-kind chips inside the hover detail pill. Kept compact so the
+   detail row stays a single line on most window widths. */
+
+.usage-chart__detail-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.usage-chart__detail-kind-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+
+.usage-chart__detail-kind-dot[data-kind='output'] { background: hsl(220 8% 36%); }
+.usage-chart__detail-kind-dot[data-kind='input']  { background: hsl(220 8% 56%); }
+.usage-chart__detail-kind-dot[data-kind='cache']  { background: hsl(220 8% 76%); }
+
+[data-color-mode='light'] .ex .usage-chart__detail-kind-dot[data-kind='output'] { background: hsl(220 8% 28%); }
+[data-color-mode='light'] .ex .usage-chart__detail-kind-dot[data-kind='input']  { background: hsl(220 8% 50%); }
+[data-color-mode='light'] .ex .usage-chart__detail-kind-dot[data-kind='cache']  { background: hsl(220 8% 72%); }
+
+.usage-chart__detail-kind-label {
+  color: var(--usage-text-faint);
+  letter-spacing: 0.04em;
+}
+
+.usage-chart__detail-kind-value {
+  color: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────
+   Events polyline overlay  (request count per bucket)
+   ──────────────────────────────────────────────────────────────────────
+
+   Sits above the bar rail in the same vertical coordinate space
+   (12..198) so 0 lines up with the bar baseline. Pointer-events
+   are disabled so the polyline never intercepts column hover.
+   The colour token (`--usage-events-stroke`) is defined on
+   `.usage-chart` so it stays consistent with the right-axis
+   labels and the dots painted below.
+*/
+
+.usage-chart__events {
+  position: absolute;
+  inset: 0 0 22px 0;
+  width: 100%;
+  height: var(--plot-h);
+  pointer-events: none;
+  /*
+   * Paint above the bars. The bar rail uses `z-index: auto` and
+   * the cols inside don't open their own stacking contexts (no
+   * `transform` / `filter` / animation on the col itself), so the
+   * cols all live in the canvas's stacking context. The events
+   * SVG at z-index: 2 then cleanly stacks on top — the curve
+   * never gets clipped by tall bars passing through it.
+   */
+  z-index: 2;
+  /* `color` flows into the line stroke + hover dot via
+     `currentColor`. */
+  color: var(--usage-events-stroke);
+}
+
+.usage-chart__events-line {
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/*
+ * Hover dot — HTML element positioned in screen-space coordinates
+ * (% horizontally, px vertically). Lives at the same z-layer as
+ * the events SVG but outside its coordinate system, so it
+ * renders as a perfect circle regardless of how wide the canvas
+ * is or how the SVG is stretched.
+ */
+.usage-chart__events-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;       /* centre on (left, top) */
+  border-radius: 50%;
+  background: currentColor;
+  color: var(--usage-events-stroke);
+  box-shadow: 0 0 0 1.5px var(--usage-card-bg);
+  /* One layer above the events SVG so the dot sits visually on
+     top of the line, not buried under it. */
+  z-index: 3;
+  pointer-events: none;
+}
+
+
+/* Events legend item ------------------------------------------------ */
+
+.usage-chart__legend-item--events {
+  color: var(--usage-events-stroke);
+}
+
+.usage-chart__legend-line {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  flex: 0 0 auto;
+  /* Stroke + dot inherit from `currentColor` set on the parent
+     legend item. */
+}

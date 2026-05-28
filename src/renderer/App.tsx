@@ -368,6 +368,23 @@ function CompactRoot({
     let lastSize: { width: number; height: number } | null = null;
     let raf = 0;
 
+    /**
+     * Tolerate ±1 CSS pixel of jitter when comparing the new
+     * measurement against the last-applied one. Without this guard
+     * the loop oscillates: a sub-pixel layout difference (e.g.
+     * `Math.ceil` rounding when zoom ≠ 1) causes the renderer to
+     * keep re-requesting a window resize, which triggers the
+     * `ResizeObserver` again, which re-measures, etc.
+     */
+    const SIZE_EPSILON = 1;
+    const sameAsLast = (next: { width: number; height: number }): boolean => {
+      if (lastSize === null) return false;
+      return (
+        Math.abs(lastSize.width - next.width) <= SIZE_EPSILON &&
+        Math.abs(lastSize.height - next.height) <= SIZE_EPSILON
+      );
+    };
+
     const measure = (): void => {
       raf = 0;
       const currentMode = displayModeRef.current;
@@ -376,10 +393,7 @@ function CompactRoot({
         return;
       }
 
-      if (
-        lastSize?.width === measuredSize.width &&
-        lastSize.height === measuredSize.height
-      ) {
+      if (sameAsLast(measuredSize)) {
         return;
       }
       lastSize = measuredSize;
@@ -397,10 +411,18 @@ function CompactRoot({
     schedule();
 
     const observer = new ResizeObserver(schedule);
-    const frame = document.querySelector<HTMLElement>('[data-testid="widget-shell"]');
-    if (frame) {
-      observer.observe(frame);
-    }
+    // We deliberately observe ONLY content elements here, never the
+    // outer `.compact-frame` / `.compact-frame--mini` / `.compact-mini-rail`
+    // root. Those roots are sized as `100%` of the BrowserWindow body
+    // (via `height: calc(100% - 8px)` on the mini frame), so observing
+    // them creates a feedback loop:
+    //   render → measure → request main resize → BrowserWindow grows →
+    //   `.compact-frame--mini` grows → ResizeObserver fires → measure
+    //   again with a slightly different rounded value → repeat.
+    // The actual content height is reported correctly by
+    // `.compact-frame__content` (expanded mode) and by the inner
+    // `.compact-mini-rail` *children* (mini mode), neither of which
+    // depend on the outer window size.
     const content = document.querySelector<HTMLElement>('.compact-frame__content');
     if (content) {
       observer.observe(content);
@@ -409,6 +431,10 @@ function CompactRoot({
     if (usageSlot) {
       observer.observe(usageSlot);
     }
+    // Mini-rail layout is driven by its child count + spacing, not by
+    // the outer frame, so observing the rail itself is safe — its
+    // intrinsic height does not track the BrowserWindow height. We
+    // skip it on themes / states where it isn't mounted.
     const miniRail = document.querySelector<HTMLElement>('.compact-mini-rail');
     if (miniRail) {
       observer.observe(miniRail);
@@ -426,6 +452,7 @@ function CompactRoot({
     appearance.colorMode,
     appearance.compactTheme,
     appearance.fontScale,
+    appearance.compactZoom,
     requestCompactWindowSize,
   ]);
 

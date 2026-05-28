@@ -25,6 +25,7 @@ import type {
   UsageRange,
   UsageSummary,
   UsageSummaryInput,
+  UsageTimeseriesBucket,
   QuotaSnapshot,
 } from '../types';
 import type {
@@ -294,7 +295,129 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
       return {
         range: input.range,
         perProvider,
+        ...buildBuckets(deps, input.range, bounds, knownProviders),
       };
     },
   };
+}
+
+/**
+ * Bucket-granularity rule:
+ *   - `today`  → 1-hour buckets (24 columns max)
+ *   - `week`   → 1-day  buckets (7 columns)
+ *   - `month`  → 1-day  buckets (30 columns)
+ *
+ * Always returns the optional `buckets` / `bucketGranularity` /
+ * `bucketRangeStartTs` / `bucketRangeEndTs` fields so the renderer
+ * can spread them into the `UsageSummary`. When the repository did
+ * not return any rows we still emit the empty `[]` plus the range
+ * anchors so the chart can render an empty grid (helpful UX
+ * confirmation that "the chart is here, you just have no data").
+ */
+function buildBuckets(
+  deps: UsageServiceDeps,
+  range: UsageRange,
+  bounds: { fromTs: number; toTs: number },
+  knownProviders: string[],
+): Pick<
+  UsageSummary,
+  'buckets' | 'bucketGranularity' | 'bucketRangeStartTs' | 'bucketRangeEndTs'
+> {
+  const granularity: 'hour' | 'day' = range === 'today' ? 'hour' : 'day';
+  // `Date#getTimezoneOffset` returns minutes WEST of UTC (e.g. UTC+8
+  // returns -480). The repository's bucket query expects "minutes
+  // east" (UTC+8 → 480) so we flip the sign once here.
+  const tzOffsetMinutes = -new Date(bounds.toTs).getTimezoneOffset();
+
+  const rows = deps.usageEvents.bucketsByProviderAndDay({
+    fromTs: bounds.fromTs,
+    toTs: bounds.toTs,
+    granularity,
+    tzOffsetMinutes,
+  });
+
+  // Group rows by bucket key, retaining provider rollups.
+  const knownProviderSet = new Set(knownProviders);
+  const byKey = new Map<
+    string,
+    {
+      key: string;
+      startTs: number;
+      perProvider: Array<UsageTimeseriesBucket['perProvider'][number]>;
+    }
+  >();
+  for (const row of rows) {
+    // Filter out provider rows that are not in the visible set —
+    // matches the same gating `perProvider` already enforces so the
+    // chart legend never references a provider that was paused or
+    // was only ever seen via local-log noise.
+    if (!knownProviderSet.has(row.provider)) continue;
+    let bucket = byKey.get(row.bucketKey);
+    if (!bucket) {
+      bucket = {
+        key: row.bucketKey,
+        startTs: row.bucketStartTs,
+        perProvider: [],
+      };
+      byKey.set(row.bucketKey, bucket);
+    }
+    bucket.perProvider.push({
+      provider: row.provider,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheTokens: row.cacheTokens,
+      costUsd: row.costUsd,
+      eventCount: row.eventCount,
+    });
+  }
+
+  // Generate the full series of buckets (including empty ones) so
+  // the chart can render a continuous x-axis without the renderer
+  // having to know how to walk the calendar. The repository skips
+  // empty buckets to keep the SQL cheap.
+  const buckets: UsageTimeseriesBucket[] = [];
+  const stepMs = granularity === 'hour' ? 3_600_000 : 86_400_000;
+  // Snap the range to local boundaries that match the bucket
+  // alignment so `from + n * stepMs` lines up with the buckets the
+  // SQL produced.
+  const snapToLocal = (ts: number): number => {
+    const d = new Date(ts);
+    if (granularity === 'hour') {
+      d.setMinutes(0, 0, 0);
+    } else {
+      d.setHours(0, 0, 0, 0);
+    }
+    return d.getTime();
+  };
+  const start = snapToLocal(bounds.fromTs);
+  const end = snapToLocal(bounds.toTs);
+  for (let t = start; t <= end; t += stepMs) {
+    const key = formatBucketKey(t, granularity);
+    const found = byKey.get(key);
+    buckets.push(
+      found ?? {
+        key,
+        startTs: t,
+        perProvider: [],
+      },
+    );
+  }
+
+  return {
+    buckets,
+    bucketGranularity: granularity,
+    bucketRangeStartTs: start,
+    bucketRangeEndTs: end,
+  };
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function formatBucketKey(ts: number, granularity: 'hour' | 'day'): string {
+  const d = new Date(ts);
+  const ymd = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  if (granularity === 'day') return ymd;
+  return `${ymd} ${pad2(d.getHours())}:00`;
 }

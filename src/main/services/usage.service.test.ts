@@ -111,6 +111,14 @@ function createUsageEventsRepoStub(
     recentForProvider(): UsageEventRow[] {
       return [];
     },
+    bucketsByProviderAndDay() {
+      // Buckets are an optional, additive surface used by the new
+      // bar-chart visualisation. The existing tests only assert
+      // `perProvider`, so returning an empty array is the safe
+      // no-op — `usage.service` will still emit the empty buckets
+      // window, which is fine for these assertions.
+      return [];
+    },
   };
 }
 

@@ -23,6 +23,7 @@ import {
 import { UsageSparkline } from './QuotaStrip';
 import { ProviderIcon } from './ProviderIcon';
 import { PROVIDER_LABELS, providerIconKey, maskedEmailLabel } from './ProviderAuthList';
+import { UsageBarChart } from './UsageBarChart';
 import type {
   CollectorStatus,
   QuotaSnapshot,
@@ -416,6 +417,21 @@ export function UsagePanel(): JSX.Element {
         </div>
       </div>
 
+      {/* Stacked bar chart — primary visualisation. We render the
+          chart frame even when there is no data so the page height
+          stays stable across data ticks (no layout shift when the
+          first event arrives) and the user knows where future data
+          will appear. */}
+      {usageData && (
+        <UsageBarChart
+          buckets={usageData.buckets ?? []}
+          granularity={usageData.bucketGranularity ?? (range === 'today' ? 'hour' : 'day')}
+          providerLabel={(p) =>
+            (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
+          }
+        />
+      )}
+
       {/* Totals summary bar */}
       {usageData && <TotalsSummary providers={usageData.perProvider} />}
 
@@ -424,7 +440,12 @@ export function UsagePanel(): JSX.Element {
         <p className="usage-panel-v2__loading" aria-live="polite">加载中…</p>
       )}
 
-      {/* Provider detail cards */}
+      {/* Provider detail cards — kept as a secondary surface for
+          per-provider in/out/cache breakdown, request count, and
+          status. The bar chart already answers "where did the
+          tokens go" at the by-provider × by-time grid; these cards
+          drill in to "what kind of tokens" + "is the collector
+          healthy". */}
       {usageData && (() => {
         const visibleProviders = usageData.perProvider.filter(
           (p) =>

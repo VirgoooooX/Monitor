@@ -627,6 +627,46 @@ export interface ProviderUsageAggregate {
   eventCount: number;
 }
 
+/**
+ * One bucket of token usage for a single provider, sliced by
+ * calendar day or hour-of-day. Powers the stacked bar chart in
+ * the renderer's `UsagePanel` (see ccusage / phuryn/claude-usage
+ * for prior art on per-day token visualisation).
+ *
+ * `bucketStartTs` is the UTC epoch-ms corresponding to the local
+ * midnight (`granularity === 'day'`) or the local hour boundary
+ * (`granularity === 'hour'`) the bucket represents. The
+ * granularity choice lives on `UsageBucketsInput.granularity` so
+ * the same query path can serve "today" (24 hourly bars) and
+ * "month" (30 daily bars).
+ */
+export interface ProviderUsageBucket {
+  /** ISO-like local label `YYYY-MM-DD` or `YYYY-MM-DD HH:00`. */
+  bucketKey: string;
+  /** Epoch ms at the local boundary the bucket starts on. */
+  bucketStartTs: number;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  costUsd: number | null;
+  eventCount: number;
+}
+
+export type UsageBucketGranularity = 'hour' | 'day';
+
+export interface UsageBucketsInput extends UsageRangeBounds {
+  granularity: UsageBucketGranularity;
+  /**
+   * Local-time offset in minutes (e.g. `-new Date().getTimezoneOffset()`)
+   * the renderer wants the buckets aligned to. SQLite has no native
+   * notion of "local time", so the caller passes the offset and the
+   * query shifts the timestamp before applying `strftime('%Y-%m-%d',
+   * ts/1000, 'unixepoch')`. Pass `0` for UTC.
+   */
+  tzOffsetMinutes: number;
+}
+
 export interface UsageRangeBounds {
   /** Inclusive lower bound (Unix ms). */
   fromTs: number;
@@ -654,6 +694,18 @@ export interface UsageEventsRepository {
     provider: string,
     bounds: UsageRangeBounds,
   ): ProviderUsageAggregate;
+  /**
+   * Aggregate totals grouped by `(bucketKey, provider)` over the
+   * closed interval, where `bucketKey` is the local-time YYYY-MM-DD
+   * (or YYYY-MM-DD HH:00) the row falls in. Returns rows sorted by
+   * `(bucketKey ASC, provider ASC)` so the renderer can iterate a
+   * pre-sorted stream into a stacked bar chart without re-sorting.
+   *
+   * Buckets with zero events are omitted; the renderer fills the gap
+   * by walking the inclusive `[fromTs, toTs]` range itself, since it
+   * already knows the granularity.
+   */
+  bucketsByProviderAndDay(input: UsageBucketsInput): ProviderUsageBucket[];
   /** Most recent N events for a provider (newest first). */
   recentForProvider(provider: string, limit: number): UsageEventRow[];
 }
@@ -725,6 +777,75 @@ export function createUsageEventsRepository(
       LIMIT ?`,
   );
 
+  // Stacked-bar chart aggregation. The two prepared statements
+  // differ only in their `strftime` format: '%Y-%m-%d' produces
+  // 24h-wide local-day buckets, '%Y-%m-%d %H:00' produces 1h-wide
+  // local-hour buckets. SQLite has no notion of a local timezone so
+  // the caller supplies a `tzOffsetMinutes` (e.g. UTC+8 → 480) which
+  // shifts the timestamp before `strftime` slices it, then the
+  // matching offset is applied again to recover the bucket's
+  // local-midnight epoch-ms via `strftime('%s', ...)`.
+  //
+  // The shift is `(timestamp + offset_ms) / 1000`. The recover step
+  // multiplies by 1000 and subtracts the offset back so renderers
+  // get the original epoch-ms anchor without doing the math again.
+  const bucketByDayStmt = db.prepare<
+    [number, number, number, number, number],
+    {
+      bucket_key: string;
+      bucket_start_ts: number;
+      provider: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_tokens: number;
+      cost_usd: number | null;
+      event_count: number;
+    }
+  >(
+    `SELECT strftime('%Y-%m-%d', (timestamp + ?) / 1000, 'unixepoch') AS bucket_key,
+            (CAST(strftime('%s',
+                strftime('%Y-%m-%d', (timestamp + ?) / 1000, 'unixepoch'))
+                AS INTEGER) * 1000) - ? AS bucket_start_ts,
+            provider,
+            COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_tokens), 0)  AS cache_tokens,
+            SUM(cost_usd)                   AS cost_usd,
+            COUNT(*)                        AS event_count
+       FROM usage_events
+      WHERE timestamp BETWEEN ? AND ?
+      GROUP BY bucket_key, provider
+      ORDER BY bucket_key ASC, provider ASC`,
+  );
+  const bucketByHourStmt = db.prepare<
+    [number, number, number, number, number],
+    {
+      bucket_key: string;
+      bucket_start_ts: number;
+      provider: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_tokens: number;
+      cost_usd: number | null;
+      event_count: number;
+    }
+  >(
+    `SELECT strftime('%Y-%m-%d %H:00', (timestamp + ?) / 1000, 'unixepoch') AS bucket_key,
+            (CAST(strftime('%s',
+                strftime('%Y-%m-%d %H:00:00', (timestamp + ?) / 1000, 'unixepoch'))
+                AS INTEGER) * 1000) - ? AS bucket_start_ts,
+            provider,
+            COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_tokens), 0)  AS cache_tokens,
+            SUM(cost_usd)                   AS cost_usd,
+            COUNT(*)                        AS event_count
+       FROM usage_events
+      WHERE timestamp BETWEEN ? AND ?
+      GROUP BY bucket_key, provider
+      ORDER BY bucket_key ASC, provider ASC`,
+  );
+
   const mapAggregate = (
     row: ProviderAggregateRawRow,
   ): ProviderUsageAggregate => ({
@@ -779,6 +900,25 @@ export function createUsageEventsRepository(
         };
       }
       return mapAggregate(row);
+    },
+    bucketsByProviderAndDay(input) {
+      const offsetMs = input.tzOffsetMinutes * 60_000;
+      const stmt =
+        input.granularity === 'hour' ? bucketByHourStmt : bucketByDayStmt;
+      // Three `?` for the offset (twice in the SELECT, once for the
+      // recovery math), then the WHERE-clause bounds.
+      return stmt
+        .all(offsetMs, offsetMs, offsetMs, input.fromTs, input.toTs)
+        .map((row) => ({
+          bucketKey: row.bucket_key,
+          bucketStartTs: row.bucket_start_ts,
+          provider: row.provider,
+          inputTokens: row.input_tokens,
+          outputTokens: row.output_tokens,
+          cacheTokens: row.cache_tokens,
+          costUsd: row.cost_usd,
+          eventCount: row.event_count,
+        }));
     },
     recentForProvider(provider, limit) {
       return recentStmt.all(provider, limit).map(mapUsageRow);

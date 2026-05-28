@@ -98,6 +98,10 @@ function buildAppSettings(): AppSettings {
       fontScale: 1,
       compactZoom: 1,
     },
+    kiroTokenRefresh: {
+      enabled: true,
+      writeBackAuthFile: true,
+    },
   };
 }
 

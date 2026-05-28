@@ -27,6 +27,7 @@ interface MockRepo {
     costUsd: number | null;
     eventCount: number;
   };
+  bucketsByProviderAndDay: () => never[];
   recentForProvider: () => never[];
 }
 
@@ -48,6 +49,7 @@ function createMockRepo(): MockRepo {
       costUsd: null,
       eventCount: 0,
     }),
+    bucketsByProviderAndDay: () => [],
     recentForProvider: () => [],
   };
 }

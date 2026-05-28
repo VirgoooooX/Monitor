@@ -52,6 +52,7 @@ function createMockUsageEvents(eventCount = 0) {
       costUsd: null,
       eventCount,
     }),
+    bucketsByProviderAndDay: () => [],
     recentForProvider: () => [],
   };
 }

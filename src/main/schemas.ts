@@ -825,6 +825,31 @@ export const usageSummarySchema = z
   .object({
     range: usageRangeSchema,
     perProvider: z.array(usageProviderSummarySchema),
+    buckets: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            startTs: z.number().int(),
+            perProvider: z.array(
+              z
+                .object({
+                  provider: z.string(),
+                  inputTokens: z.number().int().nonnegative(),
+                  outputTokens: z.number().int().nonnegative(),
+                  cacheTokens: z.number().int().nonnegative(),
+                  costUsd: z.number().nullable(),
+                  eventCount: z.number().int().nonnegative(),
+                })
+                .strict(),
+            ),
+          })
+          .strict(),
+      )
+      .optional(),
+    bucketGranularity: z.enum(['hour', 'day']).optional(),
+    bucketRangeStartTs: z.number().int().optional(),
+    bucketRangeEndTs: z.number().int().optional(),
   })
   .strict();
 

@@ -473,6 +473,15 @@
   background: var(--compact-divider);
 }
 
+/* ── Provider quota badge ──────────────────────────────────────
+   Single conic-gradient ring. The fill percentage is the
+   "effective 5h capacity" — for AND-coupled providers (codex /
+   claude-code / opencode) this folds the weekly cap into the
+   ring, so a Codex account with 5h=100% / weekly=1% renders ~3%
+   red instead of misleadingly full green. See
+   `CompactMiniRail.tsx` for the formula and the per-provider
+   WEEKLY_PER_5H constants. */
+
 .compact-mini-rail__provider {
   --quota-color: var(--color-ok);
   width: 32px;

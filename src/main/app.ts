@@ -1076,7 +1076,14 @@ function applyCompactPhysicalSize(): void {
   const size = _compactWindow.getSize();
   const currentWidth = size[0] ?? 360;
   const currentHeight = size[1] ?? COMPACT_DEFAULT_SIZE.height;
-  if (currentWidth === nextWidth && currentHeight === nextHeight) {
+  // Tolerate ±1 DIP of jitter so a sub-pixel rounding wobble in the
+  // renderer's measurement does not flap the window dimensions every
+  // ResizeObserver tick. The renderer applies the same epsilon when
+  // deciding whether to re-send the IPC.
+  if (
+    Math.abs(currentWidth - nextWidth) <= 1 &&
+    Math.abs(currentHeight - nextHeight) <= 1
+  ) {
     return;
   }
 
@@ -1091,23 +1098,17 @@ function applyCompactPhysicalSize(): void {
     _compactWindow.setResizable(true);
   }
 
-  // Temporarily widen / narrow the maxWidth constraint so Electron
-  // does not silently clamp the requested width.
-  _compactWindow.setMaximumSize(
-    Math.max(COMPACT_AUTO_MAX_WIDTH * COMPACT_MAX_ZOOM, nextWidth),
-    COMPACT_AUTO_MAX_HEIGHT * COMPACT_MAX_ZOOM,
-  );
-
   // On Windows, `setBounds` on transparent frameless windows can be
   // unreliable. Split into `setPosition` + `setSize` for robustness.
+  // We deliberately do NOT touch `setMaximumSize` here on every
+  // tick — that causes Windows DWM to recompute window metrics and
+  // visibly flap the right edge of the widget. The maximum size is
+  // configured once at window creation
+  // (`createCompactWindow` uses `COMPACT_DEFAULT_SIZE.width × COMPACT_MAX_ZOOM`)
+  // and never narrowed afterwards, so a zoom-driven resize never
+  // hits the limit anyway.
   _compactWindow.setPosition(nextX, currentY, false);
   _compactWindow.setSize(nextWidth, nextHeight, false);
-
-  // Restore the maxWidth constraint for the new mode.
-  _compactWindow.setMaximumSize(
-    Math.max(COMPACT_AUTO_MAX_WIDTH * COMPACT_MAX_ZOOM, nextWidth),
-    COMPACT_AUTO_MAX_HEIGHT * COMPACT_MAX_ZOOM,
-  );
 
   if (!wasResizable) {
     setTimeout(() => {

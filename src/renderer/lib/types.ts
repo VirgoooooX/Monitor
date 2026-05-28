@@ -51,6 +51,7 @@ export type {
   UsageProviderSummary,
   UsageSummary,
   UsageSummaryInput,
+  UsageTimeseriesBucket,
 
   // Quota
   QuotaWindow,

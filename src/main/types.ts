@@ -738,6 +738,42 @@ export interface ProviderAuthSecretPayload {
 export interface UsageSummary {
   range: UsageRange;
   perProvider: UsageProviderSummary[];
+  /**
+   * Optional time-series buckets for stacked-bar visualisation.
+   * `undefined` when the range produced no events; otherwise the
+   * renderer plots one stacked column per bucket. The granularity
+   * is implicit in the range (`today` → hourly, `week`/`month` →
+   * daily) so the renderer only needs the buckets and the
+   * inclusive `[fromTs, toTs]` window covered.
+   */
+  buckets?: UsageTimeseriesBucket[];
+  /** Granularity the buckets were computed at. */
+  bucketGranularity?: 'hour' | 'day';
+  /** Inclusive epoch-ms anchor of the first bucket. */
+  bucketRangeStartTs?: number;
+  /** Inclusive epoch-ms anchor of the last bucket. */
+  bucketRangeEndTs?: number;
+}
+
+/**
+ * One column of the stacked bar chart. `perProvider` is keyed by the
+ * provider id (`codex`, `claude-code`, …) so the chart can iterate
+ * the active providers list to colour the segments deterministically.
+ */
+export interface UsageTimeseriesBucket {
+  /** Local-time `YYYY-MM-DD` (day) or `YYYY-MM-DD HH:00` (hour). */
+  readonly key: string;
+  /** Epoch ms at the local boundary the bucket starts on. */
+  readonly startTs: number;
+  /** Per-provider totals; providers with zero usage may be omitted. */
+  readonly perProvider: ReadonlyArray<{
+    readonly provider: string;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly cacheTokens: number;
+    readonly costUsd: number | null;
+    readonly eventCount: number;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
