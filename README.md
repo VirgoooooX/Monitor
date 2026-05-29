@@ -31,52 +31,47 @@
 
 ### Window modes
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <img src="assets/mini%20Windows.png" alt="Mini widget" width="100%" />
-      <sub><b>Mini</b> — tiny status rail, sits flush at the screen edge</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/compact%20windows.png" alt="Compact widget" width="100%" />
-      <sub><b>Compact</b> — node + AI quota at a glance, always on top</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/expend%20Windows.png" alt="Expanded dashboard" width="100%" />
-      <sub><b>Expanded</b> — full dashboard with history + diagnostics</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/mini%20Windows.png" alt="Mini widget" height="360" />
+  &nbsp;&nbsp;
+  <img src="assets/compact%20windows.png" alt="Compact widget" height="360" />
+  &nbsp;&nbsp;
+  <img src="assets/expend%20Windows.png" alt="Expanded dashboard" height="360" />
+</p>
 
-### Dashboard views
+<p align="center">
+  <sub><b>Mini</b> · status rail at screen edge</sub> &nbsp;·&nbsp;
+  <sub><b>Compact</b> · node + AI quota glance</sub> &nbsp;·&nbsp;
+  <sub><b>Expanded</b> · full dashboard</sub>
+</p>
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/network.png" alt="Network panel" width="100%" />
-      <sub><b>Network</b> — OpenClash live status, node-group health, latency sparklines</sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/monthly.png" alt="Monthly usage" width="100%" />
-      <sub><b>Monthly usage</b> — per-account AI quota and token aggregation</sub>
-    </td>
-  </tr>
-</table>
+### Network panel
+
+<p align="center">
+  <img src="assets/network.png" alt="Network panel" width="80%" />
+</p>
+
+<p align="center"><sub>OpenClash live status, node-group health, latency sparklines, quick actions, full node table</sub></p>
+
+### Monthly AI usage
+
+<p align="center">
+  <img src="assets/monthly.png" alt="Monthly usage" width="80%" />
+</p>
+
+<p align="center"><sub>Per-account AI quota strip and token breakdown across providers</sub></p>
 
 ### Theming
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/themes.png" alt="Theme picker" width="100%" />
-      <sub><b>Themes</b> — built-in palette presets for the compact widget</sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/more%20themes.png" alt="Additional themes" width="100%" />
-      <sub><b>More themes</b> — extended palette gallery</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/themes.png" alt="Theme picker" height="320" />
+  &nbsp;&nbsp;
+  <img src="assets/more%20themes.png" alt="Additional themes" height="320" />
+</p>
+
+<p align="center">
+  <sub>11 built-in compact-widget themes spanning two design languages</sub>
+</p>
 
 ## Supported Platforms
 

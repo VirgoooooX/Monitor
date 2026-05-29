@@ -32,52 +32,47 @@
 
 ### 三种窗口模式
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <img src="assets/mini%20Windows.png" alt="迷你模式" width="100%" />
-      <sub><b>迷你</b> — 极小状态条，贴屏边显示</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/compact%20windows.png" alt="紧凑模式" width="100%" />
-      <sub><b>紧凑</b> — 节点 + AI 配额一览，桌面常驻</sub>
-    </td>
-    <td align="center" width="33%">
-      <img src="assets/expend%20Windows.png" alt="展开模式" width="100%" />
-      <sub><b>展开</b> — 完整仪表盘，含历史与诊断</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/mini%20Windows.png" alt="迷你模式" height="360" />
+  &nbsp;&nbsp;
+  <img src="assets/compact%20windows.png" alt="紧凑模式" height="360" />
+  &nbsp;&nbsp;
+  <img src="assets/expend%20Windows.png" alt="展开模式" height="360" />
+</p>
 
-### 仪表盘视图
+<p align="center">
+  <sub><b>迷你</b> · 极小状态条贴屏边</sub> &nbsp;·&nbsp;
+  <sub><b>紧凑</b> · 节点 + AI 配额一览</sub> &nbsp;·&nbsp;
+  <sub><b>展开</b> · 完整仪表盘</sub>
+</p>
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/network.png" alt="网络面板" width="100%" />
-      <sub><b>网络</b> — OpenClash 实时状态、节点组健康度、延迟曲线</sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/monthly.png" alt="月度用量" width="100%" />
-      <sub><b>月度用量</b> — 按账号汇总的 AI 配额与 token 趋势</sub>
-    </td>
-  </tr>
-</table>
+### 网络面板
+
+<p align="center">
+  <img src="assets/network.png" alt="网络面板" width="80%" />
+</p>
+
+<p align="center"><sub>OpenClash 实时状态、节点组健康度、延迟曲线、快捷动作、完整节点列表</sub></p>
+
+### 月度 AI 用量
+
+<p align="center">
+  <img src="assets/monthly.png" alt="月度用量" width="80%" />
+</p>
+
+<p align="center"><sub>按账号汇总的 AI 配额条 + 各 provider 的 token 用量拆分</sub></p>
 
 ### 主题
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/themes.png" alt="主题选择" width="100%" />
-      <sub><b>主题</b> — 紧凑窗口的内置配色预设</sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/more%20themes.png" alt="更多主题" width="100%" />
-      <sub><b>更多主题</b> — 扩展主题画廊</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/themes.png" alt="主题选择" height="320" />
+  &nbsp;&nbsp;
+  <img src="assets/more%20themes.png" alt="更多主题" height="320" />
+</p>
+
+<p align="center">
+  <sub>11 种紧凑窗口主题，覆盖两代设计语言</sub>
+</p>
 
 ## 支持平台
 
