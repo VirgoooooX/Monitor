@@ -1,12 +1,17 @@
 name: Release
 
-# Builds Monitor for macOS (universal: arm64 + x64) and Windows (x64),
-# then attaches the artefacts to a GitHub Release.
+# Builds Monitor for macOS (arm64 + x64) and Windows (x64), then
+# attaches the artefacts to a GitHub Release.
 #
 # Triggers:
-#   • Pushing a tag that matches `v*.*.*` (e.g. v0.1.0)        → real release
-#   • Manual `workflow_dispatch` from the Actions tab          → smoke build,
+#   • Pushing a tag matching `v*.*.*` (e.g. v0.1.0)        → real release
+#   • Manual `workflow_dispatch` from the Actions tab      → smoke build,
 #     uploads artefacts to the run but does NOT create a Release.
+#
+# Tests live in `.github/workflows/ci.yml` and run on every PR / push
+# to main. The release workflow trusts the CI signal and focuses on
+# producing artefacts, so a flaky platform-specific test never blocks
+# a tagged release.
 #
 # Concurrency: in-flight runs for the same ref are cancelled so a hot
 # re-tag doesn't double-publish.
@@ -55,7 +60,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # macOS-only: prepackage:mac probes for Xcode CLT + python3.
@@ -76,13 +81,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
-        run: npm test
-
       - name: Package
         env:
           # electron-builder uses GH_TOKEN to publish; we publish in a
-          # separate job so disable auto-publish here.
+          # separate job so disable auto-publish here. Also keep the
+          # auto code-sign discovery off — the build is intentionally
+          # unsigned (electron-builder.yml#mac.identity is null).
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run ${{ matrix.package_script }}
 
