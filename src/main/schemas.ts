@@ -927,6 +927,8 @@ export const diagnosticsReportSchema = z
     recentConfigSwitches: z.array(recentConfigSwitchEntrySchema),
     managementInterface: managementInterfaceDiagnosticsSummarySchema,
     providerAuthAccounts: z.array(providerAuthDiagnosticsEntrySchema),
+    platform: z.enum(['win32', 'darwin', 'linux']),
+    arch: z.enum(['x64', 'arm64', 'ia32']),
     schemaVersion: z.number().int().nonnegative(),
   })
   .strict();

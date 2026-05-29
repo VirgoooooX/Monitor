@@ -29,6 +29,20 @@ export interface CreateTrayDeps {
   onSettings: () => void;
   /** Returns the absolute path to the tray icon asset. */
   getIconPath: () => string;
+  /**
+   * Returns whether the application is in the middle of quitting
+   * (Requirement 8.5). The compact window's `close` event handler
+   * uses this to decide between hide-instead-of-quit (normal user
+   * close) and let-the-cascade-run (tray "退出" → `app.quit()` →
+   * `before-quit` → flag flip).
+   *
+   * Hoisted out of the previous tray-local closure to module scope
+   * in {@link app.ts} so any second `before-quit` listener
+   * registered after the application's can also observe the flag
+   * synchronously. The deps callback reads the live value through
+   * {@link app.ts#isAppQuitting} on every close-event tick.
+   */
+  isAppQuitting: () => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,11 +57,29 @@ export interface CreateTrayDeps {
  * (preventing GC from destroying the tray on Windows).
  */
 export function createTray(deps: CreateTrayDeps): Tray {
-  const { compactWindow, scheduler, onExpand, onSettings, getIconPath } = deps;
+  const { compactWindow, scheduler, onExpand, onSettings, getIconPath, isAppQuitting } = deps;
 
   // --- Tray icon ---
-  const icon = nativeImage.createFromPath(getIconPath());
-  const tray = new Tray(icon);
+  //
+  // The per-platform asset selection lives in the injected
+  // `getIconPath` closure (Requirement 5.6); this body must contain
+  // no `process.platform` branching for icon selection.
+  //
+  // The single `process.platform` reference below is **not** an icon
+  // selection — it flips the AppKit template-image flag on the
+  // already-loaded `nativeImage`. The flag has no equivalent on
+  // win32 / linux; calling `setTemplateImage(true)` on the macOS
+  // path is idempotent, and on win32 / linux the call site is
+  // guarded so the flag is never set there. AppKit also auto-
+  // detects template images by the `Template` filename suffix, so
+  // this explicit call is belt-and-suspenders defence in case a
+  // future asset rename loses the suffix — Requirement 5.4 /
+  // 5.5 / 13.4 and design.md §`src/main/tray.ts`.
+  const image = nativeImage.createFromPath(getIconPath());
+  if (process.platform === 'darwin') {
+    image.setTemplateImage(true);
+  }
+  const tray = new Tray(image);
   tray.setToolTip('Monitor');
 
   // --- Pause/resume state ---
@@ -101,18 +133,21 @@ export function createTray(deps: CreateTrayDeps): Tray {
   tray.setContextMenu(buildContextMenu());
 
   // --- Compact-window close → hide (don't quit) ---
-  let isQuitting = false;
-
-  app.on('before-quit', () => {
-    isQuitting = true;
-  });
+  //
+  // The `before-quit` flag is owned by `app.ts` (Requirement 8.5)
+  // and read here through the injected `isAppQuitting` closure so
+  // the tray module no longer registers its own `before-quit`
+  // listener. This makes the ordering observable from a unit test
+  // that subscribes a second `before-quit` listener after the
+  // application's: by the time the second listener runs, the
+  // module-level flag is already `true`.
 
   compactWindow.on('close', (event) => {
     // Only hide if the app is not quitting. When `app.quit()` is
     // called the `before-quit` event fires first; we use that to
     // distinguish an intentional quit from a user-initiated window
     // close (e.g. Alt+F4).
-    if (!isQuitting) {
+    if (!isAppQuitting()) {
       event.preventDefault();
       compactWindow.hide();
     }

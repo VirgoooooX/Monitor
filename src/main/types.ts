@@ -1111,6 +1111,18 @@ export interface DiagnosticsReport {
    * accounts have been imported.
    */
   providerAuthAccounts: ProviderAuthDiagnosticsEntry[];
+  /**
+   * `process.platform` of the running main process, snapshotted once
+   * at report assembly (macos-platform-support Requirement 11.1).
+   * The redaction sieve never treats this field as a redactable
+   * string — its value is always one of the closed set below.
+   */
+  platform: 'win32' | 'darwin' | 'linux';
+  /**
+   * `process.arch` of the running main process, snapshotted once at
+   * report assembly (macos-platform-support Requirement 11.1).
+   */
+  arch: 'x64' | 'arm64' | 'ia32';
   schemaVersion: number;
 }
 

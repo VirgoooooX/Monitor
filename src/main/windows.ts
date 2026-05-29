@@ -86,7 +86,22 @@ export const EXPANDED_DEFAULT_SIZE = { width: 760, height: 560 } as const;
 /** Sentinel origin used to represent the renderer's own `file://` URL in production. */
 export const FILE_SELF_ORIGIN = 'file://';
 
-function resolveWindowIconPath(): string {
+/**
+ * Resolve the `BrowserWindowConstructorOptions.icon` value for the
+ * current platform.
+ *
+ *   - `darwin`  → `undefined`. macOS infers the window icon from the
+ *     `.icns` bundle; passing an `.ico` here is invalid and a `.icns`
+ *     would be ignored at the `BrowserWindow` level. Returning
+ *     `undefined` causes the field to be omitted entirely (Requirement
+ *     7.8).
+ *   - everything else → `build/icon.ico` in dev, or
+ *     `process.resourcesPath/icon.ico` when packaged (Requirement 7.7).
+ */
+function resolveWindowIconPath(): string | undefined {
+  if (process.platform === 'darwin') {
+    return undefined;
+  }
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'icon.ico');
   }
@@ -623,9 +638,18 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     show: false,
-    icon: resolveWindowIconPath(),
     webPreferences: { ...SECURE_WEB_PREFERENCES, session: targetSession },
   };
+
+  // Requirement 7.7 / 7.8: omit `icon` entirely on darwin (macOS
+  // infers the window icon from the bundle and rejects the .ico
+  // anyway); set it to the .ico path on every other platform. The
+  // `exactOptionalPropertyTypes` compiler flag forbids assigning
+  // `undefined` to an optional property, so we conditionally attach.
+  const iconPath = resolveWindowIconPath();
+  if (iconPath !== undefined) {
+    options.icon = iconPath;
+  }
 
   if (savedBounds) {
     // For compact, only x/y are restored; size is fixed.
@@ -634,6 +658,21 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
   }
 
   const window = new BrowserWindow(options);
+
+  // Requirements 7.2 / 7.3: on macOS, after `new BrowserWindow(...)`
+  // returns and before the first `loadURL` / `loadFile`, raise the
+  // always-on-top level to `'screen-saver'` so the widget floats above
+  // full-screen apps and other always-on-top windows, and mark it
+  // visible on every Space (including full-screen Spaces) so switching
+  // Space does not require any user interaction (Requirement 7.4).
+  //
+  // These calls are darwin-only — Requirement 7.6 forbids the
+  // `level` argument and `setVisibleOnAllWorkspaces` on win32 / linux.
+  // Each call is invoked exactly once per window instance.
+  if (process.platform === 'darwin') {
+    window.setAlwaysOnTop(true, 'screen-saver');
+    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
 
   applyNavigationGuards(window, allowedNavigate);
   attachBoundsAutoSave(window, deps.settings, 'compact');
@@ -682,9 +721,15 @@ export function createExpandedWindow(deps: CreateWindowDeps): BrowserWindow {
     autoHideMenuBar: true,
     resizable: true,
     show: false,
-    icon: resolveWindowIconPath(),
     webPreferences: { ...SECURE_WEB_PREFERENCES, session: targetSession },
   };
+
+  // Requirement 7.7 / 7.8: same per-platform `icon` posture as the
+  // compact window — omit on darwin, set to .ico elsewhere.
+  const iconPath = resolveWindowIconPath();
+  if (iconPath !== undefined) {
+    options.icon = iconPath;
+  }
 
   if (savedBounds) {
     options.x = savedBounds.x;

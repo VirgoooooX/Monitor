@@ -365,6 +365,64 @@ let _configSwitchAudit: ConfigSwitchAuditService | null = null;
 let _inflightConfigSwitches: InflightConfigSwitchRegistry | null = null;
 let _ipcRegistry: IpcRegistry | null = null;
 
+/**
+ * Module-level flag flipped synchronously by the `before-quit`
+ * listener registered at the head of {@link boot}. Per Requirement
+ * 8.5, the flag must be observable from any subsequent `before-quit`
+ * listener registered after the application's, so we hoist it from
+ * the previous {@link tray.ts} closure to module scope and read it
+ * through {@link isAppQuitting} from collaborators (e.g. the tray's
+ * compact-window-close hide guard).
+ *
+ * Read-only outside this module; the value transitions exactly once,
+ * from `false` to `true`, when `before-quit` fires for the first
+ * time. Subsequent `before-quit` events (re-entrant or not) leave it
+ * at `true`.
+ */
+let _isQuitting = false;
+
+/**
+ * Exposed for {@link tray.ts}'s compact-window close-event hide guard
+ * and for unit tests asserting Requirement 8.5. Returns the live
+ * value of the module-level {@link _isQuitting} flag rather than a
+ * snapshot, so a caller stashed at boot can see post-flip transitions
+ * without re-resolving the import.
+ */
+export function isAppQuitting(): boolean {
+  return _isQuitting;
+}
+
+/**
+ * Register the `before-quit` listener that synchronously flips the
+ * module-level {@link _isQuitting} flag (Requirement 8.5). Extracted
+ * from the body of {@link boot} so the lifecycle unit test can drive
+ * it directly without standing up the full SQLite / scheduler / IPC
+ * stack.
+ *
+ * The listener is registered exactly once per `boot()` invocation;
+ * the test harness re-imports the module per case (`vi.resetModules`)
+ * so each case gets a fresh registration on a fresh mocked `app`.
+ *
+ * Exported only for test access; production callers reach this code
+ * path implicitly via {@link main} → {@link boot}.
+ */
+export function __registerBeforeQuitFlagFlipper(): void {
+  app.on('before-quit', () => {
+    _isQuitting = true;
+  });
+}
+
+/**
+ * Test-only reset of the module-level {@link _isQuitting} flag.
+ * Production code never resets the flag (the value is monotonic
+ * once `before-quit` fires). The lifecycle unit test resets it
+ * between cases that share the same module instance to keep the
+ * cases independent.
+ */
+export function __resetIsQuittingForTests(): void {
+  _isQuitting = false;
+}
+
 const COMPACT_AUTO_MIN_HEIGHT = 40;
 const COMPACT_AUTO_MAX_HEIGHT = 720;
 const COMPACT_AUTO_MIN_WIDTH = 56;
@@ -389,6 +447,21 @@ const COMPACT_MAX_ZOOM = 2;
 let _lastCompactCssSize: { width: number; height: number } | null = null;
 
 async function boot(): Promise<void> {
+  // 0. Register the `before-quit` listener FIRST so the module-level
+  //    `_isQuitting` flag flips synchronously before any subsequent
+  //    listener observes the event (Requirement 8.5). The flag is
+  //    read by {@link tray.ts}'s compact-window close guard via
+  //    {@link isAppQuitting} so a tray "退出" click hides nothing —
+  //    it lets the close cascade through to a real quit.
+  //
+  //    Registering the listener at the very top of `boot()` makes it
+  //    the first `before-quit` listener in the application's chain;
+  //    Electron invokes listeners in registration order, so any
+  //    second listener (an in-process unit test, a future shutdown
+  //    hook) attached later observes `_isQuitting === true`
+  //    synchronously by the time its callback runs.
+  __registerBeforeQuitFlagFlipper();
+
   // 1. Open the application database and apply migrations.
   const db = openDatabase();
   runMigrations(db);
@@ -962,20 +1035,87 @@ async function boot(): Promise<void> {
   );
 
   // 11. System tray. Holds the app lifecycle on Windows/Linux.
+  //
+  // The tray icon path is resolved through the centralised pure
+  // helper `resolveTrayIconPath` (see below) so the per-platform
+  // branch lives at this single composition root rather than inside
+  // `createTray`'s body — Requirement 5.6.
   _tray = createTray({
     compactWindow,
     scheduler,
     onExpand: () => openOrFocusExpanded(repositories, settings),
     onSettings: () => openOrFocusExpanded(repositories, settings, 'settings'),
-    getIconPath: () => {
-      // In packaged app, extraResources lands in process.resourcesPath.
-      // In dev, use the build/ folder relative to project root.
-      if (app.isPackaged) {
-        return path.join(process.resourcesPath, 'icon.ico');
-      }
-      return path.join(__dirname, '..', '..', 'build', 'icon.ico');
-    },
+    getIconPath: () =>
+      resolveTrayIconPath(process.platform, resolveTrayResourcesRoot()),
+    isAppQuitting,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Tray icon resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the absolute path to the tray icon asset for the given
+ * platform and packaged-resources root.
+ *
+ * Branch table:
+ *
+ * - `platform === 'darwin'`
+ *     → `<resourcesRoot>/tray-iconTemplate.png` (monochrome template
+ *       PNG that AppKit recolours to match the menu-bar foreground).
+ * - everything else (`win32`, `linux`, anything unrecognised)
+ *     → `<resourcesRoot>/tray-icon.png` (full-colour PNG).
+ *
+ * Pure: derives its result solely from the arguments. Total: never
+ * throws, even when `platform` is `''` or an unrecognised string
+ * (falls through to the colour-icon branch — Requirement 12.6).
+ *
+ * Exported so the Property 6 PBT test can exercise every supported
+ * platform branch without monkey-patching `process.platform` or
+ * `process.resourcesPath`. See Requirements 5.4 / 5.5 / 5.6 / 12.6 /
+ * 13.4 and design.md §`src/main/app.ts#getIconPath`.
+ *
+ * The caller is responsible for choosing `resourcesRoot`:
+ *
+ * - In a packaged app, the `extraResources` mappings declared in
+ *   `electron-builder.yml` land under `process.resourcesPath`, so
+ *   the caller passes that.
+ * - In dev, `npm run icons` writes the assets into `<projectRoot>/build`,
+ *   so the caller passes the project's `build/` folder.
+ *
+ * See {@link resolveTrayResourcesRoot} for the production policy
+ * that picks between those two roots based on `app.isPackaged`.
+ */
+export function resolveTrayIconPath(
+  platform: string,
+  resourcesRoot: string,
+): string {
+  if (platform === 'darwin') {
+    return path.join(resourcesRoot, 'tray-iconTemplate.png');
+  }
+  // win32 + linux + any unrecognised platform string fall back to
+  // the colour icon. Requirement 5.5 / 12.6: linux behaves like
+  // win32 here so the property test gets its third platform branch
+  // without conditional skipping.
+  return path.join(resourcesRoot, 'tray-icon.png');
+}
+
+/**
+ * Pick the on-disk root that holds the tray icon assets for the
+ * current process — `process.resourcesPath` in a packaged dmg /
+ * NSIS installer, or `<projectRoot>/build` when running `npm run dev`.
+ *
+ * Kept separate from {@link resolveTrayIconPath} so the per-platform
+ * branch stays purely a string-mapping function and the
+ * environment-touching branch lives in a single, untested-but-trivial
+ * helper.
+ */
+function resolveTrayResourcesRoot(): string {
+  if (app.isPackaged) {
+    return process.resourcesPath;
+  }
+  return path.join(__dirname, '..', '..', 'build');
 }
 
 // ---------------------------------------------------------------------------
@@ -985,6 +1125,18 @@ async function boot(): Promise<void> {
 /**
  * Open the expanded window, or focus it if it already exists and
  * hasn't been destroyed. Ensures only one expanded window is alive.
+ *
+ * Per Requirement 8.7 the existing-window path calls `show()`,
+ * `focus()`, AND `moveTop()` so the window comes to the foreground
+ * on the active Space and acquires keyboard focus on every supported
+ * platform — `moveTop()` raises Z-order above non-`alwaysOnTop`
+ * windows on the same Space (necessary on macOS where a hidden-
+ * behind-Safari expanded window would otherwise stay buried), and
+ * `focus()` shifts keyboard focus so the user can immediately type.
+ * On the create branch, `createExpandedWindow` defers the first show
+ * to the renderer's `ready-to-show` event and the new window is
+ * always raised + focused at first paint, so the same posture is
+ * achieved without a redundant explicit `focus()` here.
  *
  * If `tab` is provided, the renderer is notified to switch to that
  * tab via a webContents message.
@@ -997,6 +1149,13 @@ function openOrFocusExpanded(
   if (_expandedWindow !== null && !_expandedWindow.isDestroyed()) {
     _expandedWindow.show();
     _expandedWindow.focus();
+    // Requirement 8.7: raise Z-order above other non-always-on-top
+    // windows on the active Space. On macOS this is the difference
+    // between the user seeing the dashboard immediately and the
+    // dashboard staying buried behind Safari/Finder. Idempotent on
+    // win32 / linux where `focus()` already implies a Z-order raise
+    // on most window managers.
+    _expandedWindow.moveTop();
     if (tab) {
       _expandedWindow.webContents.send('navigate-tab', tab);
     }
@@ -1022,6 +1181,20 @@ function openOrFocusExpanded(
   if (_dashboardService !== null) {
     _dashboardService.attachPushChannel(expandedWindow.webContents);
   }
+
+  // Requirement 8.7: when a brand-new expanded window is created via
+  // the tray menu (and the `ready-to-show` first paint has fired),
+  // ensure it acquires keyboard focus and is raised above other
+  // windows on the active Space. `createExpandedWindow` already
+  // calls `show()` on `ready-to-show`; we chain `focus()` +
+  // `moveTop()` so the same posture as the existing-window branch
+  // applies on first creation too.
+  expandedWindow.once('ready-to-show', () => {
+    if (!expandedWindow.isDestroyed()) {
+      expandedWindow.focus();
+      expandedWindow.moveTop();
+    }
+  });
 
   expandedWindow.on('closed', () => {
     _expandedWindow = null;
@@ -1133,32 +1306,66 @@ function applyCompactPhysicalSize(): void {
 }
 
 /**
- * Read the current compact zoom factor, clamped to the supported
- * `[1, COMPACT_MAX_ZOOM]` range. Falls back to `1` when settings
- * have not been loaded yet (extremely early boot).
+ * Coerce an arbitrary persisted `compactZoom` value to a finite
+ * number in `[0.1, COMPACT_MAX_ZOOM]`. Pure, total, exported so the
+ * Property 8 PBT test can drive it directly without touching the
+ * module-level `_settings` handle.
+ *
+ * Spec mapping (Requirements 7.5a, 7.5b):
+ *   - `raw` that is not a finite `number` (`undefined`, `null`,
+ *     `NaN`, `±Infinity`, strings, objects, …) collapses to the
+ *     designed default `1.0` BEFORE the clamp is applied.
+ *   - Any finite `number` (positive, negative, or zero) is clamped
+ *     into `[0.1, COMPACT_MAX_ZOOM]` via `min(MAX, max(0.1, raw))`.
+ *
+ * The lower bound is `0.1` (widened from `1`) so a future Settings
+ * UI can offer sub-100% zoom for users with high-DPI displays
+ * without rejecting otherwise-valid persisted rows. The upper
+ * bound is the existing `COMPACT_MAX_ZOOM = 2`.
  */
-function currentCompactZoom(): number {
-  const raw = _settings?.appearance?.compactZoom;
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
-    return 1;
-  }
-  return Math.min(COMPACT_MAX_ZOOM, Math.max(1, raw));
+export function clampCompactZoom(raw: unknown): number {
+  const base =
+    typeof raw === 'number' && Number.isFinite(raw) ? raw : 1;
+  return Math.min(COMPACT_MAX_ZOOM, Math.max(0.1, base));
 }
 
 /**
- * Re-apply the compact window's physical (DIP) size after a zoom
- * change. The renderer owns the rasterisation scale itself via
- * `webFrame.setZoomFactor` (see preload `setCompactZoom`); we
- * deliberately do NOT call `webContents.setZoomFactor` here because
- * Electron's host-zoom-map persists zoom by `(session, host)`, and
- * the compact and expanded windows share the same `file://` host —
- * touching it would leak the compact zoom into the expanded window.
+ * Read the current compact zoom factor, clamped to the supported
+ * `[0.1, COMPACT_MAX_ZOOM]` range. Falls back to `1` when settings
+ * have not been loaded yet (extremely early boot) or when the
+ * persisted value fails the finite-number predicate. Delegates to
+ * the pure {@link clampCompactZoom} helper.
+ */
+function currentCompactZoom(): number {
+  return clampCompactZoom(_settings?.appearance?.compactZoom);
+}
+
+/**
+ * Re-apply the compact window's zoom factor and physical (DIP)
+ * size after a zoom change.
+ *
+ * Per Requirement 7.5 the main process invokes
+ * `webContents.setZoomFactor(currentCompactZoom())` on every
+ * `did-finish-load` AND on every change to `appearance.compactZoom`,
+ * so the renderer's rasterisation scale is always observably equal
+ * to the resolved zoom value (a finite number in
+ * `[0.1, COMPACT_MAX_ZOOM]`). The companion
+ * {@link applyCompactPhysicalSize} call grows the BrowserWindow's
+ * device-pixel footprint to match.
  *
  * Idempotent; safe to call repeatedly.
  */
 function applyCompactZoom(): void {
   if (_compactWindow === null || _compactWindow.isDestroyed()) {
     return;
+  }
+  const zoom = currentCompactZoom();
+  // Defensive guard: `setZoomFactor` throws on a destroyed
+  // webContents. The window destruction guard above is not
+  // sufficient because the BrowserWindow's `webContents` can be
+  // disposed independently in some edge cases.
+  if (!_compactWindow.webContents.isDestroyed()) {
+    _compactWindow.webContents.setZoomFactor(zoom);
   }
   applyCompactPhysicalSize();
 }
@@ -1342,14 +1549,34 @@ function reportFatalError(error: unknown): void {
 }
 
 /**
- * Re-create the compact window if all windows have been closed and
- * the user re-activates the app (the standard macOS Dock pattern).
+ * macOS Dock-activate handler (also fires when the app is re-launched
+ * with no windows open via `open -a Monitor`).
+ *
+ * Requirement 8.4 distinguishes two states:
+ *
+ *   - Compact_Window exists and is not destroyed → call `.show()`
+ *     (handles the "hidden via tray menu, user wants it back" case
+ *     without rebuilding the window).
+ *   - Compact_Window does not exist or has been destroyed → recreate
+ *     it (handles the "all windows closed" case the macOS app
+ *     delegate fires `activate` for).
+ *
+ * The recreate branch is gated on `_settings` and `_repositories` so
+ * an `activate` that fires before {@link boot} finishes (rare in
+ * practice — `whenReady().then(boot)` resolves before macOS emits
+ * `activate`) is a no-op rather than a crash.
  *
  * Harmless on Windows / Linux because `activate` is only fired by the
  * macOS app delegate.
  */
 function handleActivate(): void {
-  if (BrowserWindow.getAllWindows().length > 0) return;
+  // Existing-and-alive: show the hidden compact window.
+  if (_compactWindow !== null && !_compactWindow.isDestroyed()) {
+    _compactWindow.show();
+    return;
+  }
+  // Destroyed-or-missing: recreate. Requires the boot sequence to
+  // have published the live settings + repositories.
   if (_settings === null || _repositories === null) return;
   _compactWindow = createCompactWindow({
     controllerUrl: _settings.controllerUrl,
@@ -1363,14 +1590,26 @@ function handleActivate(): void {
 }
 
 /**
- * On Windows and Linux the application normally quits when the last
- * window closes. We override that here because the tray (task 9.6)
- * owns the application's lifecycle: closing the compact window only
- * hides it. macOS already keeps the process alive by convention.
+ * `window-all-closed` handler.
+ *
+ * Per Requirement 8.3 this listener never calls `app.quit()` —
+ * neither on `darwin`, nor on `win32`, nor on `linux`. The compact
+ * window's `close` event is intercepted by the tray (hide-instead-of-
+ * quit) so the OS rarely emits `window-all-closed` in the first
+ * place; when it does (e.g. the expanded window is the last live
+ * BrowserWindow and the user closes it via Cmd-W on macOS), the app
+ * stays alive in the menu bar / system tray and the user reaches the
+ * compact window again via the tray's "显示/隐藏" entry or, on macOS,
+ * via Dock activate ({@link handleActivate} re-creates the compact
+ * window).
+ *
+ * Tray menu's "退出" entry is the single supported quit path: it
+ * calls `app.quit()` directly which fires `before-quit` first
+ * (flipping `_isQuitting`), then lets the window-close cascade
+ * actually terminate the process.
  */
 function handleWindowAllClosed(): void {
-  // Intentionally empty. Tray menu's "退出" entry calls `app.quit()`
-  // explicitly when the user wants to exit (task 9.6).
+  // Intentionally empty across every platform (Requirement 8.3).
 }
 
 /**

@@ -14,6 +14,12 @@ extraResources:
     to: tray-icon.png
   - from: build/icon.ico
     to: icon.ico
+  - from: build/icon.icns
+    to: icon.icns
+  - from: build/tray-iconTemplate.png
+    to: tray-iconTemplate.png
+  - from: build/tray-iconTemplate@2x.png
+    to: tray-iconTemplate@2x.png
 
 npmRebuild: true
 forceCodeSigning: false
@@ -28,3 +34,20 @@ nsis:
   allowToChangeInstallationDirectory: true
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  identity: null
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  extendInfo:
+    LSUIElement: true
+    LSMinimumSystemVersion: "11.0"

@@ -14,7 +14,12 @@ export default defineConfig({
     // performance; renderer specs that need a DOM opt in via the
     // `// @vitest-environment jsdom` file directive at the top of the
     // test file.
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'tests/**/*.test.ts',
+      'scripts/**/*.test.ts',
+    ],
     environment: 'node',
     globals: false,
   },

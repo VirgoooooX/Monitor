@@ -12,18 +12,26 @@
 //     still recognizable; at 256 px the rings fully resolve.
 //   - Single hue (emerald) with opacity steps — no muddy gradients.
 //
-// Outputs:
-//   build/icon.svg       — vector source of truth
-//   build/icon.ico       — multi-size ICO (16/24/32/48/64/128/256)
-//   build/icon.png       — 512x512 marketing PNG
-//   build/tray-icon.png  — 32x32 tray icon (simplified for small size)
+// Outputs (atomic — see `atomicWriteAll`):
+//   build/icon.svg                    — vector source of truth
+//   build/icon.ico                    — multi-size ICO (16/24/32/48/64/128/256)
+//   build/icon.icns                   — multi-size ICNS (10 chunk types, pure-Node)
+//   build/icon.png                    — 512x512 marketing PNG
+//   build/tray-icon.png               — 32x32 colour tray icon (Win/Linux)
+//   build/tray-iconTemplate.png       — 24x24 monochrome black-on-transparent (macOS)
+//   build/tray-iconTemplate@2x.png    — 48x48 monochrome black-on-transparent (macOS)
 //
 // Run:
 //   node scripts/gen-icons.mjs   (or `npm run icons`)
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import {
+  writeFileSync,
+  mkdirSync,
+  unlinkSync,
+  renameSync,
+} from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDeflate } from 'node:zlib';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -505,42 +513,304 @@ function encodeIco(entries) {
 }
 
 // ---------------------------------------------------------------------------
+// ICNS encoder (pure-Node, no `iconutil` / `sips` / `png2icns`)
+// ---------------------------------------------------------------------------
+//
+// File layout:
+//   'icns' (4 bytes)  +  total file length (4 bytes BE)
+//   per chunk:
+//     type code (4 bytes ASCII) + chunk length INCLUDING 8-byte header (4 BE)
+//     payload (a complete PNG file for modern types)
+//
+// The ten chunk types we emit, with the dimensions specified in
+// Requirement 6.1:
+//   ic04  16x16    ic07  128x128   ic09   512x512
+//   ic11  32x32    ic13  256x256   ic10  1024x1024
+//   ic05  32x32    ic08  256x256
+//   ic12  64x64    ic14  512x512
+//
+// macOS treats `ic04`/`ic05` as the legacy 16/32 entries; `ic11`/`ic12`
+// are the @2x companions for the 16/32 base sizes; `ic07`/`ic08`/`ic09`
+// are the 128/256/512 base sizes; `ic13`/`ic14`/`ic10` are their @2x
+// companions (256/512/1024).
+
+const ICNS_CHUNK_SPECS = [
+  { type: 'ic04', size: 16 },
+  { type: 'ic11', size: 32 },
+  { type: 'ic05', size: 32 },
+  { type: 'ic12', size: 64 },
+  { type: 'ic07', size: 128 },
+  { type: 'ic13', size: 256 },
+  { type: 'ic08', size: 256 },
+  { type: 'ic14', size: 512 },
+  { type: 'ic09', size: 512 },
+  { type: 'ic10', size: 1024 },
+];
+
+function encodeIcns(entries) {
+  // Each entry: { type: 'ic04', png: Buffer }
+  const chunks = entries.map(({ type, png }) => {
+    const header = Buffer.alloc(8);
+    header.write(type, 0, 4, 'ascii');
+    header.writeUInt32BE(8 + png.length, 4);
+    return Buffer.concat([header, png]);
+  });
+  const body = Buffer.concat(chunks);
+  const fileHeader = Buffer.alloc(8);
+  fileHeader.write('icns', 0, 4, 'ascii');
+  fileHeader.writeUInt32BE(8 + body.length, 4);
+  return Buffer.concat([fileHeader, body]);
+}
+
+// ---------------------------------------------------------------------------
+// Tray template asset helpers
+// ---------------------------------------------------------------------------
+
+// Convert an RGBA buffer to a strictly black-on-transparent monochrome
+// image. Every pixel becomes either (0,0,0,0) — when the source is fully
+// transparent — or (0,0,0,255) — when the source has any alpha at all.
+//
+// AppKit recolours `setTemplateImage(true)` images by treating the
+// alpha channel as a mask; the RGB channels are ignored, but Apple's
+// own template assets ship as black-on-transparent so we follow suit.
+function toBlackOnTransparent(rgba) {
+  const out = Buffer.alloc(rgba.length);
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = rgba[i + 3];
+    if (a === 0) {
+      out[i + 0] = 0;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+      out[i + 3] = 0;
+    } else {
+      out[i + 0] = 0;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+      out[i + 3] = 255;
+    }
+  }
+  return out;
+}
+
+// Predicate validator: every pixel must be either fully transparent
+// (a === 0) or fully opaque pure black (a === 255 AND r === g === b === 0).
+// On the first violation, exit non-zero with the documented message
+// format so a later integration test can grep for it.
+function assertTrayTemplateMonochrome(rgba, width, height, path) {
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = rgba[i + 0];
+      const g = rgba[i + 1];
+      const b = rgba[i + 2];
+      const a = rgba[i + 3];
+      const ok = a === 0 || (a === 255 && r === 0 && g === 0 && b === 0);
+      if (!ok) {
+        process.stderr.write(
+          `error: tray template asset ${path} contains pixel ` +
+            `(${r},${g},${b},${a}) at (${x},${y}) violating monochrome constraint\n`,
+        );
+        process.exit(1);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Atomic multi-output writer
+// ---------------------------------------------------------------------------
+//
+// Writes every output to `<path>.tmp` first; only after **all** seven
+// staging writes succeed do we rename them onto their final paths.
+// The rename order is deterministic. If a single rename fails, the
+// remaining staging files are removed and the script exits non-zero;
+// the destination paths that were already renamed in this run keep
+// the new bytes (the rename is the commit point) — but on a fresh run
+// that succeeds end-to-end, the seven outputs flip together. The key
+// invariant Property 9 requires is "any artifact whose rename has not
+// yet executed is byte-identical to its pre-run state", which a
+// staging-file scheme satisfies by construction.
+//
+// The fs.rename callable is parameterised so the property test can
+// inject a failing rename at a specific index without touching the
+// real filesystem.
+function atomicWriteAll(outputs, renameImpl = renameSync) {
+  // 1) Stage every output to a temp path.
+  const staged = [];
+  try {
+    for (const { path, data } of outputs) {
+      const tmp = `${path}.tmp`;
+      writeFileSync(tmp, data);
+      staged.push({ tmp, final: path });
+    }
+  } catch (err) {
+    // A staging write failed. Roll back any temp files we already
+    // wrote in this run. Final destinations are untouched.
+    for (const s of staged) {
+      try { unlinkSync(s.tmp); } catch { /* ignore */ }
+    }
+    throw err;
+  }
+
+  // 2) Rename in order. If a rename throws, unlink remaining temps so
+  //    the script exits clean and the untouched destinations remain
+  //    byte-identical to their pre-run state.
+  for (let i = 0; i < staged.length; i++) {
+    const { tmp, final } = staged[i];
+    try {
+      renameImpl(tmp, final);
+    } catch (err) {
+      // Best-effort cleanup of the failed rename's source plus all
+      // remaining unprocessed temp files.
+      try { unlinkSync(tmp); } catch { /* ignore */ }
+      for (let j = i + 1; j < staged.length; j++) {
+        try { unlinkSync(staged[j].tmp); } catch { /* ignore */ }
+      }
+      throw err;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Build & write outputs
 // ---------------------------------------------------------------------------
 
-async function main() {
+// The seven canonical outputs that ship into electron-builder's
+// `extraResources` block (Requirement 6.3 / 6.3a). Order matters for
+// the property test that exercises atomicity by injecting a failure
+// at a chosen rename index.
+const SEVEN_OUTPUTS = [
+  'icon.svg',
+  'icon.ico',
+  'icon.icns',
+  'icon.png',
+  'tray-icon.png',
+  'tray-iconTemplate.png',
+  'tray-iconTemplate@2x.png',
+];
+
+// Rasterise + encode every canonical payload. Pure (no fs writes); the
+// caller is responsible for the atomic-write commit and the preview
+// pipeline. Exported for `gen-icons.pbt.test.ts`.
+export async function buildSevenOutputs() {
   const activeSpec = specForTheme(ACTIVE_THEME);
   const activeTraySpec = { ...SPEC_TRAY, bg: activeSpec.bg };
 
-  // 1) SVG source of truth (active theme).
-  writeFileSync(resolve(buildDir, 'icon.svg'), toSvg(activeSpec));
-  console.log(`OK build/icon.svg              [${ACTIVE_THEME}]`);
+  // 1) SVG source of truth.
+  const svg = Buffer.from(toSvg(activeSpec), 'utf8');
 
-  // 2) High-res PNG (active theme).
-  const png512 = await encodePng(rasterize(activeSpec, 512, 4), 512, 512);
-  writeFileSync(resolve(buildDir, 'icon.png'), png512);
-  console.log(`OK build/icon.png (512x512)    [${ACTIVE_THEME}]`);
-
-  // 3) Multi-size ICO. Sizes ≤32 use the simplified spec.
-  const sizes = [16, 24, 32, 48, 64, 128, 256];
+  // 2) Multi-size ICO (16/24/32/48/64/128/256). Sizes ≤32 use the
+  // simplified tray spec; ≤32 also gets a higher supersampling factor
+  // (8x) so the dot stays clean at small sizes.
+  const icoSizes = [16, 24, 32, 48, 64, 128, 256];
   const icoEntries = [];
-  for (const s of sizes) {
+  for (const s of icoSizes) {
     const spec = s <= 32 ? activeTraySpec : activeSpec;
     const ss = s <= 32 ? 8 : 4;
     const png = await encodePng(rasterize(spec, s, ss), s, s);
     icoEntries.push({ size: s, png });
   }
-  writeFileSync(resolve(buildDir, 'icon.ico'), encodeIco(icoEntries));
-  console.log(`OK build/icon.ico (${sizes.join(', ')})  [${ACTIVE_THEME}]`);
+  const ico = encodeIco(icoEntries);
 
-  // 4) Tray icon (32x32, simplified, active theme).
-  const tray = await encodePng(rasterize(activeTraySpec, 32, 8), 32, 32);
-  writeFileSync(resolve(buildDir, 'tray-icon.png'), tray);
-  console.log(`OK build/tray-icon.png (32x32) [${ACTIVE_THEME}]`);
+  // 3) Multi-size ICNS (the ten chunk types from Requirement 6.1).
+  // Reuses the exact same RGBA bitmaps the ICO encoder consumes at the
+  // 16/32/256 sizes so the byte-identity guarantee in Requirement 6.2
+  // is satisfied by construction.
+  const icoRgbaBySize = new Map();
+  icoRgbaBySize.set(16, rasterize(activeTraySpec, 16, 8));
+  icoRgbaBySize.set(32, rasterize(activeTraySpec, 32, 8));
+  icoRgbaBySize.set(256, rasterize(activeSpec, 256, 4));
 
-  // 5) Theme previews — emit one SVG and one 256-PNG per theme so you
-  // can compare the same way you'll actually see the icon (SVG = true
-  // source; PNG = what ships in the .ico).
+  const icnsEntries = [];
+  for (const { type, size } of ICNS_CHUNK_SPECS) {
+    let rgba;
+    if (icoRgbaBySize.has(size)) {
+      // Reuse the shared bitmap to guarantee byte-identical pixels.
+      rgba = icoRgbaBySize.get(size);
+    } else {
+      const spec = size <= 32 ? activeTraySpec : activeSpec;
+      const ss = size <= 32 ? 8 : 4;
+      rgba = rasterize(spec, size, ss);
+    }
+    const png = await encodePng(rgba, size, size);
+    icnsEntries.push({ type, png });
+  }
+  const icns = encodeIcns(icnsEntries);
+
+  // 4) High-res 512 PNG (marketing).
+  const png512 = await encodePng(rasterize(activeSpec, 512, 4), 512, 512);
+
+  // 5) Coloured tray icon (Win/Linux).
+  const trayRgba = rasterize(activeTraySpec, 32, 8);
+  const trayPng = await encodePng(trayRgba, 32, 32);
+
+  // 6) macOS tray template at 24x24 (1x).
+  const tplRgba1x = toBlackOnTransparent(rasterize(activeTraySpec, 24, 8));
+  const trayTemplatePng = await encodePng(tplRgba1x, 24, 24);
+
+  // 7) macOS tray template at 48x48 (@2x).
+  const tplRgba2x = toBlackOnTransparent(rasterize(activeTraySpec, 48, 8));
+  const trayTemplate2xPng = await encodePng(tplRgba2x, 48, 48);
+
+  return {
+    bytes: {
+      'icon.svg': svg,
+      'icon.ico': ico,
+      'icon.icns': icns,
+      'icon.png': png512,
+      'tray-icon.png': trayPng,
+      'tray-iconTemplate.png': trayTemplatePng,
+      'tray-iconTemplate@2x.png': trayTemplate2xPng,
+    },
+    // Decoded RGBA buffers for the validator pass + property tests.
+    templateRgba1x: tplRgba1x,
+    templateRgba2x: tplRgba2x,
+  };
+}
+
+// Public: the seven canonical filenames the script commits atomically.
+// Exported so the property test can iterate the seven outputs without
+// re-deriving the list.
+export const SEVEN_OUTPUT_FILENAMES = SEVEN_OUTPUTS;
+// Public re-exports for the property test harness.
+export { atomicWriteAll, encodeIcns };
+
+async function main() {
+  const built = await buildSevenOutputs();
+
+  // Validate the template assets BEFORE we commit the rename, so a
+  // pixel violation never leaves a partially-updated build/. The
+  // validator exits non-zero on the first violation (Requirement 5.8).
+  assertTrayTemplateMonochrome(
+    built.templateRgba1x,
+    24,
+    24,
+    resolve(buildDir, 'tray-iconTemplate.png'),
+  );
+  assertTrayTemplateMonochrome(
+    built.templateRgba2x,
+    48,
+    48,
+    resolve(buildDir, 'tray-iconTemplate@2x.png'),
+  );
+
+  // Atomic commit: write every output to `<name>.tmp`, then rename
+  // them onto their final paths. A failure mid-rename leaves the
+  // remaining destinations byte-identical to their pre-run state.
+  const outputs = SEVEN_OUTPUTS.map((name) => ({
+    path: resolve(buildDir, name),
+    data: built.bytes[name],
+  }));
+  atomicWriteAll(outputs);
+
+  for (const name of SEVEN_OUTPUTS) {
+    console.log(`OK build/${name}              [${ACTIVE_THEME}]`);
+  }
+
+  // ----------------------------------------------------------------
+  // Preview pipeline (unchanged) — non-canonical, non-atomic.
+  // ----------------------------------------------------------------
+
   const previewDir = resolve(buildDir, 'icons-preview');
   mkdirSync(previewDir, { recursive: true });
 
@@ -610,7 +880,14 @@ async function main() {
   console.log('OK build/icons-preview/README.md');
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run main() only when the script is the process entry point — not
+// when imported by a test (so the property test can pull in
+// `buildSevenOutputs` / `atomicWriteAll` without spawning the build).
+const _isEntry =
+  import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+if (_isEntry) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

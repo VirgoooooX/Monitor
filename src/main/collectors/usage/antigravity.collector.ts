@@ -4,8 +4,14 @@
 //   - design.md §Property 17
 //   - PLAN.md §AI Usage Collectors §Antigravity
 //
-// Scans `~/.gemini/antigravity` and `%AppData%\Antigravity\logs` for
-// log files containing token usage information.
+// Scans `~/.gemini/antigravity` and the platform-specific
+// application-data directory (`%APPDATA%\Antigravity\logs` on
+// Windows, `~/Library/Application Support/Antigravity/logs` on
+// macOS, `${XDG_DATA_HOME ?? ~/.local/share}/Antigravity/logs`
+// elsewhere) for log files containing token usage information.
+// The Gemini-side path is platform-independent (Requirement 3.1)
+// and stays inline; the application-data path is delegated to
+// `resolveAntigravityAppDataPath` (Requirements 3.2 / 3.3 / 3.4).
 //
 // Privacy:
 //   - NEVER stores prompts, responses, cookies, or authorization headers.
@@ -19,6 +25,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { CapabilityResult } from '../../types';
+import {
+  resolveAntigravityAppDataPath,
+  type ResolverEnv,
+} from '../../platform/paths';
 import type { UsageCollector, UsageCollectorContext } from './Collector';
 
 // ---------------------------------------------------------------------------
@@ -40,8 +50,33 @@ const CACHE_TOKEN_FIELDS = ['cache_tokens', 'cacheTokens', 'cached_tokens'] as c
 export interface AntigravityCollectorDeps {
   /** Override home-based path for testing. Defaults to `~/.gemini/antigravity`. */
   geminiPath?: string;
-  /** Override AppData-based path for testing. Defaults to `%AppData%\Antigravity\logs`. */
+  /**
+   * Override the platform-specific application-data path for testing.
+   * When provided, the per-platform resolver is bypassed entirely
+   * (Requirement 3.9): the value is used verbatim.
+   */
   appDataPath?: string;
+  /**
+   * Test-only: overrides `process.platform` for the path resolver
+   * (Requirement 3.10). Ignored when `appDataPath` is also supplied.
+   */
+  platform?: string;
+  /**
+   * Test-only: overrides `process.env` for the path resolver. Ignored
+   * when `appDataPath` is also supplied.
+   */
+  env?: ResolverEnv;
+  /**
+   * Test-only: overrides `os.homedir()` for the path resolver. Ignored
+   * when `appDataPath` is also supplied.
+   */
+  homedir?: string;
+  /**
+   * Test-only: stub `directoryExists` so property tests can drive the
+   * `capabilityCheck` branches deterministically without writing to
+   * the host filesystem. Defaults to a real `fs.promises.stat` probe.
+   */
+  directoryExists?: (dirPath: string) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,12 +87,21 @@ function getDefaultGeminiPath(): string {
   return path.join(os.homedir(), '.gemini', 'antigravity');
 }
 
-function getDefaultAppDataPath(): string {
-  const appData = process.env['APPDATA'] ?? path.join(os.homedir(), 'AppData', 'Roaming');
-  return path.join(appData, 'Antigravity', 'logs');
+/**
+ * Resolve the default application-data log directory by delegating to
+ * the per-platform `resolveAntigravityAppDataPath` helper. Tests may
+ * override the `platform` / `env` / `homedir` arguments through the
+ * `AntigravityCollectorDeps` interface to fix the resolved path
+ * without monkey-patching globals (Requirement 3.10).
+ */
+function getDefaultAppDataPath(deps?: AntigravityCollectorDeps): string {
+  const platform = deps?.platform ?? process.platform;
+  const env = deps?.env ?? (process.env as ResolverEnv);
+  const homedir = deps?.homedir ?? os.homedir();
+  return resolveAntigravityAppDataPath(platform, env, homedir);
 }
 
-async function directoryExists(dirPath: string): Promise<boolean> {
+async function defaultDirectoryExists(dirPath: string): Promise<boolean> {
   try {
     const stat = await fs.promises.stat(dirPath);
     return stat.isDirectory();
@@ -163,9 +207,15 @@ function extractEventId(record: Record<string, unknown>): string | null {
  * Create the Antigravity usage collector.
  *
  * Capability check:
- *   1. Look for `~/.gemini/antigravity` dir AND `%AppData%\Antigravity\logs` dir
+ *   1. Probe `~/.gemini/antigravity` AND the platform-specific
+ *      application-data directory.
  *   2. If neither exists → `unavailable` with reason
- *   3. If found, scan for log files with token info; if no token fields → `degraded`
+ *      `目录 ${geminiPath} 和 ${appDataPath} 均不存在`
+ *      (Requirement 3.5 / 3.6 / 3.7).
+ *   3. If found, scan for log files with token info; if no token
+ *      fields → `degraded`.
+ *   4. When the result is `ok`, the `reason` field is omitted
+ *      (Requirement 3.8).
  *
  * Tick:
  *   - Scan log files (JSONL or text), extract tokens using watermark-based
@@ -173,7 +223,8 @@ function extractEventId(record: Record<string, unknown>): string | null {
  */
 export function createAntigravityCollector(deps?: AntigravityCollectorDeps): UsageCollector {
   const geminiPath = deps?.geminiPath ?? getDefaultGeminiPath();
-  const appDataPath = deps?.appDataPath ?? getDefaultAppDataPath();
+  const appDataPath = deps?.appDataPath ?? getDefaultAppDataPath(deps);
+  const directoryExists = deps?.directoryExists ?? defaultDirectoryExists;
 
   return {
     id: ANTIGRAVITY_COLLECTOR_ID,
@@ -183,10 +234,11 @@ export function createAntigravityCollector(deps?: AntigravityCollectorDeps): Usa
       const geminiExists = await directoryExists(geminiPath);
       const appDataExists = await directoryExists(appDataPath);
 
+      // Requirement 3.5: emit `unavailable` only when BOTH probes miss.
       if (!geminiExists && !appDataExists) {
         return {
           status: 'unavailable',
-          reason: `Antigravity 目录未找到: ${geminiPath} 和 ${appDataPath} 均不存在`,
+          reason: `目录 ${geminiPath} 和 ${appDataPath} 均不存在`,
         };
       }
 
@@ -232,6 +284,7 @@ export function createAntigravityCollector(deps?: AntigravityCollectorDeps): Usa
         };
       }
 
+      // Requirement 3.8: omit `reason` when capability is `ok`.
       return { status: 'ok' };
     },
 

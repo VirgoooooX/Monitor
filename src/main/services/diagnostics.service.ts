@@ -295,7 +295,17 @@ export function createDiagnosticsService(
       const providerAuthAccounts: ProviderAuthDiagnosticsEntry[] =
         providerAuth?.list().map(diagnosticsRow) ?? [];
 
-      // 6. Build the report.
+      // 6. Build the report. `platform` and `arch` are snapshotted
+      //    once here (macos-platform-support Requirement 11.1) so
+      //    the closed-set values land on the output object before
+      //    the redaction sieve runs. They are never matched by
+      //    SENSITIVE_KEY_RE (no `secret|token|key|cookie|authorization`
+      //    substring) and are never equal to a stored secret value,
+      //    so the deep-walk leaves them intact.
+      const platformSnapshot =
+        process.platform as DiagnosticsReport['platform'];
+      const archSnapshot = process.arch as DiagnosticsReport['arch'];
+
       const report: DiagnosticsReport = {
         generatedAt: Date.now(),
         collectors,
@@ -304,6 +314,8 @@ export function createDiagnosticsService(
         recentConfigSwitches,
         managementInterface,
         providerAuthAccounts,
+        platform: platformSnapshot,
+        arch: archSnapshot,
         schemaVersion: 1,
       };
 

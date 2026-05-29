@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { resolveOpencodePath, type ResolverEnv } from '../../platform/paths';
 import type { CapabilityResult } from '../../types';
 import type { UsageCollector, UsageCollectorContext } from './Collector';
 
@@ -37,17 +38,45 @@ const CACHE_TOKEN_FIELDS = ['cache_tokens', 'cacheTokens', 'cached_tokens'] as c
 // ---------------------------------------------------------------------------
 
 export interface OpenCodeCollectorDeps {
-  /** Override the opencode directory for testing. Defaults to `%AppData%\opencode`. */
+  /**
+   * Override the opencode directory for testing. When provided as a
+   * non-empty string, the per-platform resolver is bypassed entirely
+   * and this value is used verbatim as the resolved log directory
+   * (Requirement 4.6).
+   *
+   * Defaults to the value computed by `resolveOpencodePath` for the
+   * current `process.platform` / `process.env` / `os.homedir()`.
+   */
   opencodePath?: string;
+  /**
+   * Test-only override for `process.platform`. Lets tests fix the
+   * resolver branch without monkey-patching the global
+   * `process.platform`. Ignored when `opencodePath` is supplied.
+   */
+  platform?: string;
+  /**
+   * Test-only override for `process.env`. The resolver only reads
+   * `APPDATA` and `XDG_DATA_HOME` from this slice. Ignored when
+   * `opencodePath` is supplied.
+   */
+  env?: ResolverEnv;
+  /**
+   * Test-only override for `os.homedir()`. Ignored when
+   * `opencodePath` is supplied.
+   */
+  homedir?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getDefaultOpencodePath(): string {
-  const appData = process.env['APPDATA'] ?? path.join(os.homedir(), 'AppData', 'Roaming');
-  return path.join(appData, 'opencode');
+function getDefaultOpencodePath(
+  platform: string,
+  env: ResolverEnv,
+  homedir: string,
+): string {
+  return resolveOpencodePath(platform, env, homedir);
 }
 
 async function directoryExists(dirPath: string): Promise<boolean> {
@@ -182,7 +211,27 @@ function extractEventId(record: Record<string, unknown>): string | null {
  *   - Scan structured logs if available, using watermark-based incremental reads.
  */
 export function createOpenCodeCollector(deps?: OpenCodeCollectorDeps): UsageCollector {
-  const opencodePath = deps?.opencodePath ?? getDefaultOpencodePath();
+  // Resolve the path exactly once at collector construction. The
+  // resulting absolute string is closed over by `capabilityCheck`
+  // and `tick`, so the per-platform branch is never re-evaluated
+  // per cycle (Requirement 4.1).
+  //
+  // The override semantics are: a non-empty `deps.opencodePath`
+  // bypasses the platform resolver entirely (Requirement 4.6); any
+  // other case (omitted, undefined, empty string) falls through to
+  // `resolveOpencodePath` with either the test-injected
+  // platform/env/homedir slice or the live globals.
+  const override =
+    typeof deps?.opencodePath === 'string' && deps.opencodePath.length > 0
+      ? deps.opencodePath
+      : undefined;
+  const opencodePath =
+    override ??
+    getDefaultOpencodePath(
+      deps?.platform ?? process.platform,
+      deps?.env ?? (process.env as ResolverEnv),
+      deps?.homedir ?? os.homedir(),
+    );
 
   return {
     id: OPENCODE_COLLECTOR_ID,
