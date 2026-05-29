@@ -333,87 +333,107 @@
   height: auto;
 }
 
-/* ── Toggle buttons — minimalist, reveal on hover ──────────────
+/* ── Toggle: arc-mark nested in the corner ───────────────────
  *
- * The top-right "go-mini" toggle disappears into the chrome when
- * nobody is interacting. Hovering the widget (or focusing it via
- * keyboard) fades it up to a quiet 50 % opacity; hovering / focusing
- * the button itself takes it to full accent with a soft accent-tinted
- * pill.
+ * The "go-mini" affordance lives in the top-right corner. Visually
+ * it is a quarter-arc whose curvature matches the widget's own
+ * rounded shell — like a concentric inner echo of the corner. There
+ * is no button container at all; the arc sits in space, drawn with
+ * `currentColor` so each theme's voice carries through.
  *
- * Visual design (identical across every theme):
- *   • Shape: 18×18 mini, 4 px radius.
- *   • Resting: invisible (opacity 0) — no chrome at all.
- *   • Frame hover / focus-within: ghost glyph at ~50 % opacity using
- *     each theme's `--compact-muted` token.
- *   • Direct hover / focus-visible: full opacity, glyph in
- *     `--compact-accent`, pill background derived from the same accent
- *     via `color-mix` (14 % tint) and a 22 %-tinted hairline ring.
+ * Resting: ~42 % opacity using `--compact-muted` — quiet but
+ *   discoverable, no hover-and-hunt.
+ * Frame hover / focus-within: lifts to ~72 %.
+ * Direct hover / focus-visible: snaps to `--compact-accent`. The
+ *   arc translates inward by ~1.5 px (down + left), reading as a
+ *   gentle tuck — the same motion the click performs to the whole
+ *   widget.
  *
- * Because the colors come from `color-mix(in srgb, currentColor …)`
- * and `--compact-accent`, every theme inherits the same visual
- * grammar without any theme-specific overrides — only the hue shifts
- * (mint, OLED green, paper ink, MD3 primary, …) so the buttons feel
- * native to each look.
+ * Position is offset from the very corner so the arc has air around
+ * it; without breathing room the curve gets crushed by the window's
+ * own rounded edge.
  */
 .compact-mini-toggle-btn {
   position: absolute;
+  top: 3px;
+  right: 4px;
   z-index: 10;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--compact-muted);
   cursor: pointer;
   outline: none;
-  opacity: 0;
+  opacity: 0.42;
   transition:
-    opacity 0.18s ease,
-    color 0.18s ease,
-    background 0.18s ease,
-    box-shadow 0.18s ease;
+    opacity 0.22s ease,
+    color 0.22s ease;
   -webkit-app-region: no-drag;
 }
 
-.compact-mini-toggle-btn {
-  top: 3px;
-  right: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-}
-
-/* Reveal buttons when the widget is hovered or focused (keyboard). */
+/* The mark stays visible at rest so users discover it without
+   hover-hunting; widget hover lifts it slightly. */
 .compact-frame:hover .compact-mini-toggle-btn,
 .compact-frame:focus-within .compact-mini-toggle-btn {
-  opacity: 0.5;
+  opacity: 0.72;
 }
 
-/* Full strength on direct interaction. The pill colour and ring are
-   derived from the theme's accent so the look is consistent (same
-   grammar) while still feeling native to each theme (same hue). */
+/* Direct interaction: snap to accent. No background — the arc
+   is the affordance, not a container around it. */
 .compact-mini-toggle-btn:hover,
 .compact-mini-toggle-btn:focus-visible {
   opacity: 1;
   color: var(--compact-accent);
-  background: color-mix(in srgb, var(--compact-accent) 14%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--compact-accent) 22%, transparent);
+  background: transparent;
+}
+
+/* ── The arc itself ──────────────────────────────────────────
+ *
+ * A single SVG path tracing a quarter-circle from upper-left to
+ * lower-right of the glyph box. The arc's radius (11 px in a 16 px
+ * box) is intentionally larger than its container — only the curved
+ * portion shows, and the curvature feels concentric with the frame
+ * radius (which lives in the 16–26 px range across themes).
+ */
+.compact-mini-toggle-glyph {
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+}
+
+.compact-mini-toggle-arc {
+  transform-origin: 100% 0;
+  transform-box: fill-box;
+  transition:
+    transform 0.28s cubic-bezier(0.32, 0.7, 0.25, 1),
+    stroke-width 0.22s ease;
+}
+
+/* Hover: pull the arc inward — translate diagonally toward the
+   widget's centre and add a touch of stroke weight so it reads as
+   "snap to focus". */
+.compact-mini-toggle-btn:hover .compact-mini-toggle-arc,
+.compact-mini-toggle-btn:focus-visible .compact-mini-toggle-arc {
+  transform: translate(-1.5px, 1.5px);
+  stroke-width: 1.8;
 }
 
 /* Calm motion: respect reduced-motion users. */
 @media (prefers-reduced-motion: reduce) {
-  .compact-mini-toggle-btn {
+  .compact-mini-toggle-btn,
+  .compact-mini-toggle-arc {
     transition: none;
   }
-}
-
-/* Shrink lucide-react SVG glyphs so they read as light hints rather
-   than chunky controls. */
-.compact-mini-toggle-btn > svg {
-  width: 12px;
-  height: 12px;
+  .compact-mini-toggle-btn:hover .compact-mini-toggle-arc,
+  .compact-mini-toggle-btn:focus-visible .compact-mini-toggle-arc {
+    transform: none;
+  }
 }
 
 .compact-frame--mini {

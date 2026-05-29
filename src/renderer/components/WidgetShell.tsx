@@ -40,7 +40,6 @@ import { StatusHero } from './StatusHero';
 import { Sparkline } from './Sparkline';
 import { QuotaStrip } from './QuotaStrip';
 import { CompactMiniRail } from './CompactMiniRail';
-import { ArrowUpRight } from 'lucide-react';
 
 interface WidgetShellProps {
   readonly state: DashboardState;
@@ -114,7 +113,33 @@ export function WidgetShell({
           title="切换到极简模式"
           aria-label="切换到极简模式"
         >
-          <ArrowUpRight size={14} />
+          {/* Bare corner-mark — two perpendicular hairlines meeting
+              at the top-right. No container, no fill, no border. The
+              strokes pull inward on hover, telegraphing the tuck-away
+              that the click performs. */}
+          {/* Curved corner-mark — a quarter-arc that nests inside
+              the widget's own rounded corner. Curvature direction
+              matches the frame radius so the mark reads as a
+              concentric inner echo of the corner itself, not a
+              foreign UI overlay. On hover it pulls inward slightly,
+              telegraphing the tuck-away the click performs. */}
+          <svg
+            className="compact-mini-toggle-glyph"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            {/* Move to (3, 1) → arc of radius 11 to (15, 13).
+                 Same curvature as a 12 px corner, mirrors the
+                 widget's rounded shell. */}
+            <path
+              className="compact-mini-toggle-arc"
+              d="M 3 1.6 A 11 11 0 0 1 14.4 13"
+            />
+          </svg>
         </button>
       )}
 

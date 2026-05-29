@@ -23,7 +23,15 @@ forceCodeSigning: false
 win:
   target: nsis
   icon: build/icon.ico
-  signAndEditExecutable: false
+  # Keep rcedit-driven exe metadata edits (icon, version info) ON,
+  # but force `forceCodeSigning: false` to ensure unsigned builds
+  # still succeed. The taskbar icon comes from the exe's embedded
+  # icon resource — without rcedit running, Windows falls back to
+  # Electron's default atom icon. electron-builder bundles its own
+  # rcedit copy and pulls the winCodeSign cache automatically when
+  # this flag is true, so CI runners no longer need a pre-populated
+  # cache.
+  signAndEditExecutable: true
   # Windows needs icon.ico at process.resourcesPath for
   # `resolveWindowIconPath()` (see src/main/windows.ts). macOS uses
   # the auto-placed icon.icns from `mac.icon` and never reads icon.ico,

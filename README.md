@@ -16,24 +16,21 @@
 
 ## Gallery
 
-<table>
-  <tr>
-    <td colspan="2" align="center">
-      <img src="assets/expend%20Windows.png" alt="Expanded dashboard" width="100%" />
-      <sub><b>Expanded dashboard</b> — connectivity history, AI quota, per-collector diagnostics</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/compact%20windows.png" alt="Compact widget" width="100%" />
-      <sub><b>Compact widget</b> — always-on-top, transparent, draggable</sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/mini%20Windows.png" alt="Mini widget" width="100%" />
-      <sub><b>Mini rail</b> — collapses to a single edge strip</sub>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="assets/expend%20Windows.png" alt="Expanded dashboard" width="780" />
+  <br/>
+  <sub><b>Expanded dashboard</b> — connectivity history, AI quota, per-collector diagnostics</sub>
+</div>
+
+<br/>
+
+<div align="center">
+  <img src="assets/compact%20windows.png" alt="Compact widget" height="480" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/mini%20Windows.png" alt="Mini rail" height="480" />
+  <br/>
+  <sub><b>Compact widget</b> (left) — always-on-top, transparent, draggable &nbsp;·&nbsp; <b>Mini rail</b> (right) — collapses to a single edge strip</sub>
+</div>
 
 ## Features
 
@@ -49,7 +46,7 @@
 ### Network panel
 
 <div align="center">
-  <img src="assets/network.png" alt="Network panel" width="80%" />
+  <img src="assets/network.png" alt="Network panel" width="780" />
   <br/>
   <sub>Per-node connectivity history with latency sparklines and consecutive-failure tracking</sub>
 </div>
@@ -57,7 +54,7 @@
 ### Monthly usage
 
 <div align="center">
-  <img src="assets/monthly.png" alt="Monthly usage" width="80%" />
+  <img src="assets/monthly.png" alt="Monthly usage" width="780" />
   <br/>
   <sub>Token-budget rollups across every imported AI provider</sub>
 </div>
@@ -66,18 +63,13 @@
 
 The compact widget ships with a curated theme system — switch the look from the expanded settings panel without restarting.
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="assets/themes.png" alt="Theme picker" width="100%" />
-      <sub><b>Theme picker</b></sub>
-    </td>
-    <td align="center" width="50%">
-      <img src="assets/more%20themes.png" alt="More themes" width="100%" />
-      <sub><b>More themes</b> — eleven presets across glassy, neumorph, paper, and OLED families</sub>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="assets/themes.png" alt="Theme picker" height="420" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/more%20themes.png" alt="More themes" height="420" />
+  <br/>
+  <sub><b>Theme picker</b> (left) &nbsp;·&nbsp; <b>More themes</b> (right) — eleven presets across glassy, neumorph, paper, and OLED families</sub>
+</div>
 
 Available presets: `liquid-glass`, `material-you`, `soft-neumorph`, `paper-dashboard`, `mint-monitor` (default), `device-oled`, `obsidian-glass`, `aurora-ring`, `holo-grid`, `liquid-metal`, `signal-pulse`.
 
