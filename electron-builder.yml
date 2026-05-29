@@ -12,10 +12,6 @@ files:
 extraResources:
   - from: build/tray-icon.png
     to: tray-icon.png
-  - from: build/icon.ico
-    to: icon.ico
-  - from: build/icon.icns
-    to: icon.icns
   - from: build/tray-iconTemplate.png
     to: tray-iconTemplate.png
   - from: build/tray-iconTemplate@2x.png
@@ -28,6 +24,14 @@ win:
   target: nsis
   icon: build/icon.ico
   signAndEditExecutable: false
+  # Windows needs icon.ico at process.resourcesPath for
+  # `resolveWindowIconPath()` (see src/main/windows.ts). macOS uses
+  # the auto-placed icon.icns from `mac.icon` and never reads icon.ico,
+  # so we keep this win-scoped to avoid duplicate-write EEXIST on the
+  # macOS afterPack hook.
+  extraResources:
+    - from: build/icon.ico
+      to: icon.ico
 
 nsis:
   oneClick: false

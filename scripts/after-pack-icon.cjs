@@ -12,10 +12,14 @@ function findRcedit() {
 
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) {
-    throw new Error('LOCALAPPDATA is not set; cannot locate electron-builder rcedit.');
+    return null;
   }
 
   const cacheRoot = path.join(localAppData, 'electron-builder', 'Cache', 'winCodeSign');
+  if (!fs.existsSync(cacheRoot)) {
+    return null;
+  }
+
   const entries = fs
     .readdirSync(cacheRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -32,7 +36,7 @@ function findRcedit() {
     }
   }
 
-  throw new Error(`Cannot find rcedit-x64.exe under ${cacheRoot}.`);
+  return null;
 }
 
 module.exports = async function afterPackIcon(context) {
@@ -40,10 +44,24 @@ module.exports = async function afterPackIcon(context) {
     return;
   }
 
+  const rceditPath = findRcedit();
+  if (!rceditPath) {
+    // electron-builder only populates the winCodeSign cache when it
+    // actually needs to sign / edit the executable. On hosted CI
+    // runners with `signAndEditExecutable: false` the cache is never
+    // pulled, so rcedit isn't available. The NSIS installer's icon
+    // is already wired via `win.icon` in electron-builder.yml; the
+    // explicit rcedit pass here is a belt-and-braces for local dev
+    // builds. Skipping it on CI is safe.
+    console.log(
+      '[after-pack-icon] rcedit not found; skipping post-pack icon embed (electron-builder.yml#win.icon already covers it).',
+    );
+    return;
+  }
+
   const productFilename = context.packager.appInfo.productFilename;
   const exePath = path.join(context.appOutDir, `${productFilename}.exe`);
   const iconPath = path.join(context.packager.projectDir, 'build', 'icon.ico');
-  const rceditPath = findRcedit();
 
   await execFileAsync(rceditPath, [exePath, '--set-icon', iconPath], {
     windowsHide: true,
