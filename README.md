@@ -8,13 +8,32 @@
 
 <sub>Cross-platform · Electron 33 · Better-SQLite3 · React 18 · Property-tested</sub>
 
-[Features](#features) · [Screenshots](#screenshots) · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Development](#development) · [Packaging](#packaging) · [Architecture](#architecture)
-
-[中文 README](README.zh-CN.md)
+[Features](#features) · [Gallery](#gallery) · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Themes](#themes) · [Development](#development) · [Packaging](#packaging) · [Architecture](#architecture)
 
 </div>
 
 ---
+
+## Gallery
+
+<table>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="assets/expend%20Windows.png" alt="Expanded dashboard" width="100%" />
+      <sub><b>Expanded dashboard</b> — connectivity history, AI quota, per-collector diagnostics</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/compact%20windows.png" alt="Compact widget" width="100%" />
+      <sub><b>Compact widget</b> — always-on-top, transparent, draggable</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/mini%20Windows.png" alt="Mini widget" width="100%" />
+      <sub><b>Mini rail</b> — collapses to a single edge strip</sub>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
@@ -27,51 +46,40 @@
 | 🔐 **Secrets stay local** | All secret values flow through `safeStorage`. The diagnostics export is value-redacted and runs through a property-based "no-leak" sieve covering 100+ generated cases per platform. |
 | 🧪 **Spec-driven, property-tested** | 514 tests pass on every commit, including ~13 fast-check property suites that exercise per-platform path resolution, atomic build artefacts, and lifecycle invariants. |
 
-## Screenshots
-
-### Window modes
-
-<p align="center">
-  <img src="assets/mini%20Windows.png" alt="Mini widget" height="360" />
-  &nbsp;&nbsp;
-  <img src="assets/compact%20windows.png" alt="Compact widget" height="360" />
-  &nbsp;&nbsp;
-  <img src="assets/expend%20Windows.png" alt="Expanded dashboard" height="360" />
-</p>
-
-<p align="center">
-  <sub><b>Mini</b> · status rail at screen edge</sub> &nbsp;·&nbsp;
-  <sub><b>Compact</b> · node + AI quota glance</sub> &nbsp;·&nbsp;
-  <sub><b>Expanded</b> · full dashboard</sub>
-</p>
-
 ### Network panel
 
-<p align="center">
+<div align="center">
   <img src="assets/network.png" alt="Network panel" width="80%" />
-</p>
+  <br/>
+  <sub>Per-node connectivity history with latency sparklines and consecutive-failure tracking</sub>
+</div>
 
-<p align="center"><sub>OpenClash live status, node-group health, latency sparklines, quick actions, full node table</sub></p>
+### Monthly usage
 
-### Monthly AI usage
-
-<p align="center">
+<div align="center">
   <img src="assets/monthly.png" alt="Monthly usage" width="80%" />
-</p>
+  <br/>
+  <sub>Token-budget rollups across every imported AI provider</sub>
+</div>
 
-<p align="center"><sub>Per-account AI quota strip and token breakdown across providers</sub></p>
+## Themes
 
-### Theming
+The compact widget ships with a curated theme system — switch the look from the expanded settings panel without restarting.
 
-<p align="center">
-  <img src="assets/themes.png" alt="Theme picker" height="320" />
-  &nbsp;&nbsp;
-  <img src="assets/more%20themes.png" alt="Additional themes" height="320" />
-</p>
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/themes.png" alt="Theme picker" width="100%" />
+      <sub><b>Theme picker</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/more%20themes.png" alt="More themes" width="100%" />
+      <sub><b>More themes</b> — eleven presets across glassy, neumorph, paper, and OLED families</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <sub>11 built-in compact-widget themes spanning two design languages</sub>
-</p>
+Available presets: `liquid-glass`, `material-you`, `soft-neumorph`, `paper-dashboard`, `mint-monitor` (default), `device-oled`, `obsidian-glass`, `aurora-ring`, `holo-grid`, `liquid-metal`, `signal-pulse`.
 
 ## Supported Platforms
 
@@ -218,7 +226,7 @@ Every feature in this repo lands as a spec triple under `.kiro/specs/<feature-na
 ├── compact-theme-system/
 ├── cpa-quota-import/
 ├── desktop-monitor-widget/
-├── macos-platform-support/        ← this feature's home
+├── macos-platform-support/        ← latest landed feature
 │   ├── requirements.md            # EARS-formatted acceptance criteria
 │   ├── design.md                  # implementation plan + correctness properties
 │   └── tasks.md                   # 71 actionable tasks, dependency-graphed

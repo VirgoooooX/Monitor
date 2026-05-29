@@ -274,6 +274,22 @@ RUN_PACKAGING_INTEGRATION=1 npx vitest run tests/integration/package-mac.integra
 
 普通 `npm test` 不会跑它们，保持测试套件快速。
 
+### 发布新版本
+
+发布走 [GitHub Actions 工作流](.github/workflows/release.yml)，两种触发方式：
+
+- **打 tag**（`v*.*.*`）：在托管 runner 上并行构建 Windows + macOS，构建完成后自动创建 GitHub Release 并附上 dmg / exe / blockmap / `latest*.yml`。
+- **手动**（`workflow_dispatch`）：双平台 smoke build，仅上传到 run 工件区，不创建 Release。适合依赖升级后的回归验证。
+
+发布 `v0.2.0` 示例：
+
+```bash
+npm version 0.2.0 -m "Release v%s"
+git push origin main --follow-tags
+```
+
+macOS 任务跑在 `macos-14`（Apple Silicon）上，一次产出 `arm64` 与 `x64` 两个 dmg；Windows 任务跑在 `windows-latest` 上，输出 NSIS 安装包。
+
 ## 架构
 
 ```mermaid

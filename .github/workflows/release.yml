@@ -1,0 +1,134 @@
+name: Release
+
+# Builds Monitor for macOS (universal: arm64 + x64) and Windows (x64),
+# then attaches the artefacts to a GitHub Release.
+#
+# Triggers:
+#   • Pushing a tag that matches `v*.*.*` (e.g. v0.1.0)        → real release
+#   • Manual `workflow_dispatch` from the Actions tab          → smoke build,
+#     uploads artefacts to the run but does NOT create a Release.
+#
+# Concurrency: in-flight runs for the same ref are cancelled so a hot
+# re-tag doesn't double-publish.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # needed to create the Release and upload assets
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_glob: |
+              release/Monitor Setup *.exe
+              release/Monitor Setup *.exe.blockmap
+              release/latest.yml
+            package_script: package
+          - os: macos-14
+            artifact_glob: |
+              release/Monitor-*-arm64.dmg
+              release/Monitor-*-arm64.dmg.blockmap
+              release/Monitor-*-x64.dmg
+              release/Monitor-*-x64.dmg.blockmap
+              release/latest-mac.yml
+            package_script: package:mac
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # macOS-only: prepackage:mac probes for Xcode CLT + python3.
+      # macos-14 ships both, but we surface a clear error if anything
+      # changes upstream.
+      - name: Verify macOS prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          xcode-select -p
+          python3 --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate icons
+        run: npm run icons
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Package
+        env:
+          # electron-builder uses GH_TOKEN to publish; we publish in a
+          # separate job so disable auto-publish here.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run ${{ matrix.package_script }}
+
+      - name: Upload build artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-${{ runner.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+
+      - name: List artefacts
+        run: |
+          echo "::group::Resolved artefact tree"
+          find dist-artifacts -type f -print
+          echo "::endgroup::"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            dist-artifacts/**/*.exe
+            dist-artifacts/**/*.exe.blockmap
+            dist-artifacts/**/*.dmg
+            dist-artifacts/**/*.dmg.blockmap
+            dist-artifacts/**/latest.yml
+            dist-artifacts/**/latest-mac.yml
