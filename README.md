@@ -10,6 +10,8 @@
 
 [Features](#features) · [Screenshots](#screenshots) · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Development](#development) · [Packaging](#packaging) · [Architecture](#architecture)
 
+[中文 README](README.zh-CN.md)
+
 </div>
 
 ---
@@ -27,15 +29,51 @@
 
 ## Screenshots
 
+### Window modes
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/mini%20Windows.png" alt="Mini widget" width="100%" />
+      <sub><b>Mini</b> — tiny status rail, sits flush at the screen edge</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/compact%20windows.png" alt="Compact widget" width="100%" />
+      <sub><b>Compact</b> — node + AI quota at a glance, always on top</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/expend%20Windows.png" alt="Expanded dashboard" width="100%" />
+      <sub><b>Expanded</b> — full dashboard with history + diagnostics</sub>
+    </td>
+  </tr>
+</table>
+
+### Dashboard views
+
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="assets/PixPin_2026-05-28_01-16-12.png" alt="Compact widget" width="100%" />
-      <sub><b>Compact widget</b> — sits at the screen edge, always on top</sub>
+      <img src="assets/network.png" alt="Network panel" width="100%" />
+      <sub><b>Network</b> — OpenClash live status, node-group health, latency sparklines</sub>
     </td>
     <td align="center" width="50%">
-      <img src="assets/PixPin_2026-05-28_01-16-22.png" alt="Expanded dashboard" width="100%" />
-      <sub><b>Expanded dashboard</b> — connectivity history + AI quota</sub>
+      <img src="assets/monthly.png" alt="Monthly usage" width="100%" />
+      <sub><b>Monthly usage</b> — per-account AI quota and token aggregation</sub>
+    </td>
+  </tr>
+</table>
+
+### Theming
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/themes.png" alt="Theme picker" width="100%" />
+      <sub><b>Themes</b> — built-in palette presets for the compact widget</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/more%20themes.png" alt="Additional themes" width="100%" />
+      <sub><b>More themes</b> — extended palette gallery</sub>
     </td>
   </tr>
 </table>
