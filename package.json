@@ -10,9 +10,9 @@
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && tsc -p tsconfig.main.json && node scripts/bundle-preload.mjs && vite build",
     "test": "vitest run",
-    "package": "npm run build && electron-builder --win",
+    "package": "npm run build && electron-builder --win --publish never",
     "prepackage:mac": "node scripts/prepackage-mac.mjs",
-    "package:mac": "npm run prepackage:mac && npm run build && electron-builder --mac --x64 --arm64",
+    "package:mac": "npm run prepackage:mac && npm run build && electron-builder --mac --x64 --arm64 --publish never",
     "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
