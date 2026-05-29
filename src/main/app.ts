@@ -1147,6 +1147,8 @@ function openOrFocusExpanded(
   tab?: 'network' | 'usage' | 'settings',
 ): void {
   if (_expandedWindow !== null && !_expandedWindow.isDestroyed()) {
+    // The window may be hidden (close → hide guard). `show()` is a
+    // no-op on an already-visible window and reveals a hidden one.
     _expandedWindow.show();
     _expandedWindow.focus();
     // Requirement 8.7: raise Z-order above other non-always-on-top
@@ -1193,6 +1195,21 @@ function openOrFocusExpanded(
     if (!expandedWindow.isDestroyed()) {
       expandedWindow.focus();
       expandedWindow.moveTop();
+    }
+  });
+
+  // Close → hide-to-tray. Same posture as the compact window (see
+  // tray.ts): a user-initiated close (X button, Alt+F4, Cmd+W) just
+  // hides the window so the tray remains the single source of
+  // truth for the app's "running" state. The window is only
+  // actually destroyed when the user picks "退出" from the tray
+  // menu, which calls `app.quit()` → `before-quit` flips
+  // `_isQuitting` → `isAppQuitting()` returns `true` here and we
+  // let the close cascade through to `closed`.
+  expandedWindow.on('close', (event) => {
+    if (!isAppQuitting() && !expandedWindow.isDestroyed()) {
+      event.preventDefault();
+      expandedWindow.hide();
     }
   });
 

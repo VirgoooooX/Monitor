@@ -633,6 +633,25 @@ export function createCompactWindow(deps: CreateWindowDeps): BrowserWindow {
      */
     hasShadow: false,
     alwaysOnTop: true,
+    /*
+     * Hide the compact widget from the OS taskbar / window list.
+     *
+     * The compact window is a "floating widget" — it lives on top
+     * of every other window and is reachable through the system
+     * tray. Letting it occupy a taskbar slot on Windows (the
+     * default for an Electron BrowserWindow) clutters the taskbar
+     * and tempts the user to close the slot, which then triggers
+     * our hide-instead-of-quit guard and hides the widget anyway.
+     *
+     * Setting `skipTaskbar: true` removes the widget from the
+     * Windows taskbar, the Linux task list, and the macOS Cmd+Tab
+     * application switcher entry. The expanded dashboard window
+     * (`createExpandedWindow` below) intentionally leaves this
+     * flag at its default `false` so it keeps its taskbar entry —
+     * it's the "real" window the user can mini-/restore via the
+     * taskbar like any other app.
+     */
+    skipTaskbar: true,
     autoHideMenuBar: true,
     resizable: false,
     maximizable: false,
