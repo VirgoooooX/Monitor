@@ -43,6 +43,8 @@
 import { useCallback, useState } from 'react';
 
 import { formatManagementError } from '../lib/format';
+import { useT } from '../lib/i18n';
+import type { Translator } from '../../i18n';
 import type {
   ManagementErrorCode,
   NetworkQuickActions,
@@ -87,23 +89,24 @@ function isManagementErrorCode(code: string): code is ManagementErrorCode {
 }
 
 /**
- * Translate any IPC-side error into a user-facing zh-CN string. The
- * management codes go through the i18n map (single source of truth);
- * anything else (the legacy `SwitchNodeResult` codes such as
- * `'verify_mismatch'` or `'switch_in_progress'`) falls back to the
- * orchestrator-supplied message.
+ * Translate any IPC-side error into a user-facing string for the
+ * active locale. Management codes go through the i18n map (single
+ * source of truth); anything else (the legacy `SwitchNodeResult`
+ * codes such as `'verify_mismatch'` or `'switch_in_progress'`) falls
+ * back to the orchestrator-supplied message, then to a localised
+ * generic "switch failed" copy.
  */
-function describeSwitchError(error: {
-  readonly code: string;
-  readonly message: string;
-}): string {
+function describeSwitchError(
+  t: Translator,
+  error: { readonly code: string; readonly message: string },
+): string {
   if (error.code === 'switch_in_progress') {
-    return formatManagementError('switch_in_progress');
+    return formatManagementError(t, 'switch_in_progress');
   }
   if (isManagementErrorCode(error.code)) {
-    return formatManagementError(error.code);
+    return formatManagementError(t, error.code);
   }
-  return error.message || '切换失败';
+  return error.message || t('node.action.failed');
 }
 
 function formatLatency(ms: number | null): string {
@@ -127,9 +130,10 @@ export function QuickNodeCard({
   onSwitchStart,
   onSwitchComplete,
 }: QuickNodeCardProps): JSX.Element {
+  const t = useT();
   // Node currently being switched to from this card. Drives the
-  // optimistic "切换中…" label on the firing button and disables every
-  // sibling candidate button (Requirement 3.7).
+  // optimistic in-flight label on the firing button and disables
+  // every sibling candidate button (Requirement 3.7).
   const [localSwitching, setLocalSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -158,7 +162,7 @@ export function QuickNodeCard({
 
       const desktop = window.desktop;
       if (!desktop) {
-        setError('desktop bridge 不可用');
+        setError(t('node.bridge.missing'));
         return;
       }
 
@@ -169,22 +173,24 @@ export function QuickNodeCard({
       try {
         const result = await desktop.switchNode({ groupName, nodeName });
         if (!result.ok) {
-          setError(describeSwitchError(result.error));
+          setError(describeSwitchError(t, result.error));
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : '切换发生未知错误';
+        const message =
+          err instanceof Error ? err.message : t('node.action.unknownError');
         setError(message);
       } finally {
         setLocalSwitching(null);
         onSwitchComplete?.();
       }
     },
-    [cardLocked, groupName, localSwitching, onSwitchStart, onSwitchComplete],
+    [cardLocked, groupName, localSwitching, onSwitchStart, onSwitchComplete, t],
   );
 
   // ─── Header ───────────────────────────────────────────────────────────
-  const groupLabel = groupName ?? '未识别主组';
-  const currentNodeLabel = primaryGroup.currentNode ?? '未选择节点';
+  const groupLabel = groupName ?? t('quickNode.unknownGroup');
+  const currentNodeLabel =
+    primaryGroup.currentNode ?? t('quickNode.unselectedNode');
 
   // ─── Body ─────────────────────────────────────────────────────────────
   const hasCandidates = candidates.length > 0;
@@ -194,7 +200,7 @@ export function QuickNodeCard({
       className="quick-node-card"
       data-testid="quick-node-card"
       data-locked={cardLocked ? 'true' : 'false'}
-      aria-label="快速节点切换"
+      aria-label={t('quickNode.aria')}
     >
       <header className="quick-node-card__head">
         <span className="quick-node-card__eyebrow">primary group</span>
@@ -204,7 +210,9 @@ export function QuickNodeCard({
       </header>
 
       <div className="quick-node-card__current">
-        <span className="quick-node-card__current-label">当前节点</span>
+        <span className="quick-node-card__current-label">
+          {t('quickNode.currentLabel')}
+        </span>
         <span
           className="quick-node-card__current-name"
           title={primaryGroup.currentNode ?? ''}
@@ -255,7 +263,9 @@ export function QuickNodeCard({
                     ·
                   </span>
                   <span className="quick-node-card__btn-latency">
-                    {isFiring ? '切换中…' : formatLatency(candidate.avgLatencyMs)}
+                    {isFiring
+                      ? t('node.action.switching')
+                      : formatLatency(candidate.avgLatencyMs)}
                   </span>
                 </button>
               </li>
@@ -267,7 +277,7 @@ export function QuickNodeCard({
           className="quick-node-card__empty"
           data-testid="quick-node-card-empty"
         >
-          暂无可推荐节点
+          {t('quickNode.empty')}
         </div>
       )}
     </article>

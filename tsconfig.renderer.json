@@ -17,10 +17,16 @@
   // for shared shapes); `import type` plus `isolatedModules: true` ensure
   // these imports are erased at build time, so the sandbox boundary
   // remains intact (no runtime dependency on main).
+  //
+  // `src/i18n/**` is the single shared-runtime package that both the main
+  // and renderer bundles are permitted to import at runtime (see
+  // i18n-multilingual-support design.md). It is the only documented
+  // exception to the renderer ↔ main isolation rule.
   "include": [
     "src/renderer/**/*.ts",
     "src/renderer/**/*.tsx",
-    "src/main/types.ts"
+    "src/main/types.ts",
+    "src/i18n/**/*.ts"
   ],
   "exclude": ["**/*.test.ts", "**/*.spec.ts", "node_modules"]
 }

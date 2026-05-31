@@ -1,5 +1,21 @@
 // Quota window display helpers.
 //
+// Two flavours of display:
+//   • `quotaWindowDisplayName` returns a stable zh-CN identifier
+//     (`5 小时限额`, `滚动用量`, …) or a verbatim brand string
+//     (`Claude`, `Gemini Pro`). The identifier is used as a grouping
+//     key, sort discriminator, and stable comparison value across
+//     the renderer (`groupQuotaWindowsByDisplay`,
+//     `quotaWindowPriority`, the AND-coupled fallbacks in
+//     `CompactMiniRail`). It is intentionally locale-agnostic — the
+//     downstream code reads it like an enum tag, never as user copy.
+//   • `translateQuotaWindowDisplayName(t, name, provider)` adapts
+//     that identifier into Active_Locale UI copy by mapping the
+//     known zh-CN tags onto `quota.window.*` Translation_Keys via
+//     `t(...)`. Brand names (`Claude`, `Gemini Pro`, `Gemini Flash`,
+//     `Claude/GPT`, …) and upstream-sourced credit-breakdown
+//     strings fall through verbatim per Requirement 4.5.
+//
 // Antigravity model display rules (per user request):
 //   Show only two model groups, filter everything else:
 //     1. Claude   — Anthropic / Claude variants
@@ -21,6 +37,8 @@
 //   Within each row the merge averages percentLeft (consistent with
 //   Antigravity), so the bar reflects the group as a whole.
 
+import type { Translator } from '../../i18n';
+
 const ANTIGRAVITY_ORDER: readonly string[] = [
   'Claude',
   'Gemini',
@@ -30,6 +48,42 @@ const GEMINI_CLI_ORDER: readonly string[] = [
   'Gemini Pro',
   'Gemini Flash',
 ];
+
+/**
+ * Map a zh-CN display-name identifier produced by
+ * `quotaWindowDisplayName` onto the matching `quota.window.*`
+ * Translation_Key. Returns `null` for identifiers that aren't part
+ * of the closed enumeration (brand names like `Claude`, model-pool
+ * labels like `Gemini Pro`, the `Code Review · …` prefix wrap, or
+ * raw provider-specific strings produced when no rule matched) —
+ * those values are passed through verbatim per Requirement 4.5.
+ */
+function quotaWindowDisplayKey(
+  zhDisplayName: string,
+):
+  | 'quota.window.fiveH'
+  | 'quota.window.daily'
+  | 'quota.window.weekly'
+  | 'quota.window.monthly'
+  | 'quota.window.rollingUsage'
+  | 'quota.window.weeklyUsage'
+  | 'quota.window.monthlyUsage'
+  | 'quota.window.monthlyAllowance'
+  | 'quota.window.creditsFallback'
+  | null {
+  switch (zhDisplayName) {
+    case '5 小时限额': return 'quota.window.fiveH';
+    case '日限额':     return 'quota.window.daily';
+    case '周限额':     return 'quota.window.weekly';
+    case '月限额':     return 'quota.window.monthly';
+    case '滚动用量':   return 'quota.window.rollingUsage';
+    case '每周用量':   return 'quota.window.weeklyUsage';
+    case '每月用量':   return 'quota.window.monthlyUsage';
+    case '月度额度':   return 'quota.window.monthlyAllowance';
+    case '额度积分':   return 'quota.window.creditsFallback';
+    default:           return null;
+  }
+}
 
 export function quotaWindowDisplayName(name: string, provider = ''): string | null {
   const normalised = normaliseProviderWindowName(name, provider);
@@ -50,6 +104,51 @@ export function quotaWindowDisplayName(name: string, provider = ''): string | nu
     case 'daily': return '日限额';
     default: return name;
   }
+}
+
+/**
+ * Active_Locale-aware variant of {@link quotaWindowDisplayName}.
+ *
+ * Resolves the well-known quota-window labels (`5 小时限额`,
+ * `滚动用量`, `月度额度`, …) through the Translation_Function so the
+ * UI tracks Active_Locale, while leaving brand strings (`Claude`,
+ * `Gemini Pro`, `Gemini Flash`), Code-Review wrappers, and raw
+ * upstream credits-breakdown strings verbatim per Requirement 4.5.
+ *
+ * Returns `null` for windows that the underlying display-name
+ * resolver filters out (placeholder enum tags, image-only models,
+ * unknown OpenCode tokens). Callers that need a fallback to the raw
+ * `name` should mirror the `?? name` pattern used at the existing
+ * call sites in `QuotaStrip` / `UsagePanel`.
+ */
+export function translateQuotaWindowDisplayName(
+  t: Translator,
+  name: string,
+  provider = '',
+): string | null {
+  const zh = quotaWindowDisplayName(name, provider);
+  if (zh === null) return null;
+
+  // Plain `credits:` fallback ("额度积分" — i.e. body was empty or
+  // only whitespace) maps to the i18n key. Anything richer
+  // (`credits:CNY 总额 4.25 / …`) is upstream copy and must render
+  // verbatim per Requirement 4.5.
+  if (name.startsWith('credits:')) {
+    if (zh === '额度积分') return t('quota.window.creditsFallback');
+    return zh;
+  }
+
+  // `Code Review · <inner>` wrap. Inner string is recursively
+  // translated; the prefix word is brand chrome and stays as-is.
+  if (zh.startsWith('Code Review · ')) {
+    const inner = zh.slice('Code Review · '.length);
+    const innerKey = quotaWindowDisplayKey(inner);
+    const innerLabel = innerKey === null ? inner : t(innerKey);
+    return `Code Review · ${innerLabel}`;
+  }
+
+  const key = quotaWindowDisplayKey(zh);
+  return key === null ? zh : t(key);
 }
 
 export function quotaWindowCompactLabel(name: string, provider = ''): string | null {

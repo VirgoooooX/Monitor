@@ -41,11 +41,31 @@
 // are either model-pool replacements (OR-coupled) or single-window
 // credits, so the AND-coupled distortion does not apply.
 
-import type { DashboardState, QuotaSnapshot, QuotaWindow } from '../lib/types';
+import type { DashboardState, HealthStatus, QuotaSnapshot, QuotaWindow } from '../lib/types';
 import type { CSSProperties } from 'react';
+import type { TranslationKey, Translator } from '../../i18n';
 import { quotaWindowDisplayName } from '../lib/quota-display';
+import { useT } from '../lib/i18n';
 import { ProviderIcon } from './ProviderIcon';
 import { useQuotaStatus } from './QuotaStrip';
+
+// Closed Health_Status enum used to guard the runtime cast into the
+// `dashboard.health.*` Translation_Key namespace. Mirrors the set in
+// `StatusHero.tsx` (task 13.1) — both surfaces derive the visible
+// status label from `t('dashboard.health.' + status)` so a future
+// schema relaxation, replay artefact, or stale IPC payload that
+// surfaces an unknown `status` token cannot construct an
+// out-of-catalog key. Out-of-set values fall back to `'healthy'`
+// per Requirement 6.8 so the tooltip / aria-label still resolves to
+// a real catalog string instead of leaking the raw enum tag.
+const SUPPORTED_HEALTH_STATUSES = new Set<HealthStatus>([
+  'healthy',
+  'node_slow',
+  'node_down',
+  'openclash_unreachable',
+  'home_down',
+  'partial_outage',
+]);
 
 interface ProviderQuotaBadge {
   readonly provider: string;
@@ -54,9 +74,7 @@ interface ProviderQuotaBadge {
   readonly effective: number | null;
   /** Tooltip / aria text — exposes the raw windows when applicable. */
   readonly title: string;
-}
-
-/**
+}/**
  * Fraction of the weekly cap that one full 5h window consumes for
  * each AND-coupled provider. Sourced from public data points (rate
  * cards, community telemetry, vendor announcements). Numbers are
@@ -216,7 +234,7 @@ function providerDisplayName(provider: string, snapshots: QuotaSnapshot[]): stri
     case 'deepseek': return 'DeepSeek';
     case 'xiaomi':
     case 'xiaomi-cloud':
-    case 'xiaomi-mimo': return '小米';
+    case 'xiaomi-mimo': return 'Xiaomi';
     default: return provider;
   }
 }
@@ -228,29 +246,37 @@ function providerDisplayName(provider: string, snapshots: QuotaSnapshot[]): stri
  * single percentage.
  */
 function buildBadgeTitle(
+  t: Translator,
   label: string,
   result: SnapshotResult,
 ): string {
   if (result.andCoupled) {
     if (result.fiveH === null && result.weekly === null) {
-      return `${label} · 额度未知`;
+      return t('compactMiniRail.quotaUnknown', { label });
     }
     const segs: string[] = [];
-    if (result.fiveH !== null) segs.push(`5h ${Math.round(result.fiveH)}%`);
-    if (result.weekly !== null) segs.push(`周 ${Math.round(result.weekly)}%`);
+    if (result.fiveH !== null) {
+      segs.push(t('compactMiniRail.quotaPair.fiveH', { pct: Math.round(result.fiveH) }));
+    }
+    if (result.weekly !== null) {
+      segs.push(t('compactMiniRail.quotaPair.weekly', { pct: Math.round(result.weekly) }));
+    }
     if (result.effective !== null) {
       // Surface the effective number too so users know what the ring
-      // is reflecting; otherwise "5h 100% · 周 1%" with a 3% red ring
-      // looks like a UI bug.
-      segs.push(`实际 ${result.effective}%`);
+      // is reflecting; otherwise "5h 100% / weekly 1%" with a 3% red
+      // ring looks like a UI bug.
+      segs.push(t('compactMiniRail.quotaPair.effective', { pct: result.effective }));
     }
     return `${label} · ${segs.join(' · ')}`;
   }
-  if (result.effective === null) return `${label} · 额度未知`;
-  return `${label} · ${result.effective}%`;
+  if (result.effective === null) return t('compactMiniRail.quotaUnknown', { label });
+  return t('compactMiniRail.quotaSingle', { label, pct: result.effective });
 }
 
-function buildProviderBadges(snapshots: QuotaSnapshot[]): ProviderQuotaBadge[] {
+function buildProviderBadges(
+  t: Translator,
+  snapshots: QuotaSnapshot[],
+): ProviderQuotaBadge[] {
   const byProvider = new Map<string, QuotaSnapshot[]>();
   for (const snapshot of snapshots) {
     const existing = byProvider.get(snapshot.provider);
@@ -287,7 +313,7 @@ function buildProviderBadges(snapshots: QuotaSnapshot[]): ProviderQuotaBadge[] {
         provider,
         label,
         effective: merged.effective,
-        title: buildBadgeTitle(label, merged),
+        title: buildBadgeTitle(t, label, merged),
       } satisfies ProviderQuotaBadge;
     })
     .filter((badge) => badge.effective !== null)
@@ -324,19 +350,32 @@ export function CompactMiniRail({
 }: {
   readonly state: DashboardState;
 }): JSX.Element {
+  const t = useT();
   const quotaStatus = useQuotaStatus();
-  const badges = quotaStatus ? buildProviderBadges(quotaStatus.snapshots) : [];
+  const badges = quotaStatus ? buildProviderBadges(t, quotaStatus.snapshots) : [];
   const latencyText = state.currentNode.avgLatencyMs === null
     ? ''
     : ` · ${Math.round(state.currentNode.avgLatencyMs)}ms`;
+
+  // Pivot: derive the visible status label from the i18n catalog
+  // instead of `state.statusLabel`, which is soft-deprecated and
+  // ignored renderer-side (Requirements 6.2, 6.3). Guard the
+  // narrowing so any out-of-set token coming over IPC collapses to
+  // `'healthy'` before we build the Translation_Key (Requirement 6.8).
+  const safeStatus: HealthStatus =
+    typeof state.status === 'string' &&
+    SUPPORTED_HEALTH_STATUSES.has(state.status as HealthStatus)
+      ? (state.status as HealthStatus)
+      : 'healthy';
+  const statusLabel = t(('dashboard.health.' + safeStatus) as TranslationKey);
 
   return (
     <div className="compact-mini-rail" data-testid="compact-mini-rail">
       <span
         className="compact-mini-rail__network"
         data-tone={networkTone(state.status)}
-        title={`${state.statusLabel}${latencyText}`}
-        aria-label={`${state.statusLabel}${latencyText}`}
+        title={`${statusLabel}${latencyText}`}
+        aria-label={`${statusLabel}${latencyText}`}
       />
 
       <span className="compact-mini-rail__divider" aria-hidden="true" />

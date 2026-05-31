@@ -21,9 +21,11 @@ import {
   groupQuotaWindowsByDisplay,
   parseCreditsWindow,
   type ParsedCreditsWindow,
-  quotaWindowDisplayName,
   quotaWindowPriority,
+  translateQuotaWindowDisplayName,
 } from '../lib/quota-display';
+import { useT } from '../lib/i18n';
+import type { Translator } from '../../i18n';
 import { ProviderIcon } from './ProviderIcon';
 
 // ---------------------------------------------------------------------------
@@ -385,6 +387,7 @@ export function useQuotaStatus(): QuotaStatus | null {
 // ---------------------------------------------------------------------------
 
 export function QuotaStrip(): JSX.Element | null {
+  const t = useT();
   const quotaStatus = useQuotaStatus();
   const groups = quotaStatus ? buildCompactGroups(quotaStatus.snapshots) : [];
 
@@ -407,6 +410,7 @@ export function QuotaStrip(): JSX.Element | null {
                 window={w}
                 provider={group.provider}
                 dailyUsage={group.dailyUsage ?? null}
+                t={t}
               />
             ))}
           </div>
@@ -424,10 +428,12 @@ function QuotaRowItem({
   window: w,
   provider,
   dailyUsage,
+  t,
 }: {
   window: QuotaWindow;
   provider: string;
   dailyUsage: ReadonlyArray<DailyUsagePoint> | null;
+  t: Translator;
 }): JSX.Element {
   // Credits-style rows (DeepSeek balance, etc.) carry a synthetic name
   // like `credits:CNY 总额 4.25 / 赠金 0.00 / 充值 4.25`. Render those as
@@ -436,7 +442,7 @@ function QuotaRowItem({
   // misleading for an account that has no resetting allowance.
   const credits = parseCreditsWindow(w.name);
   if (credits !== null) {
-    return <CreditsRowItem credits={credits} dailyUsage={dailyUsage} />;
+    return <CreditsRowItem credits={credits} dailyUsage={dailyUsage} t={t} />;
   }
 
   // Treat unknown quota (`percentLeft === null`) as 0 — both the text,
@@ -448,7 +454,7 @@ function QuotaRowItem({
   const fillPercent = Math.max(0, Math.min(remaining, 100));
   const isWarn = remaining < 50;
   const isCritical = remaining < 20;
-  const label = quotaWindowDisplayName(w.name, provider) ?? w.name;
+  const label = translateQuotaWindowDisplayName(t, w.name, provider) ?? w.name;
 
   let barColorClass = 'quota-strip__fill--ok';
   if (isCritical) barColorClass = 'quota-strip__fill--critical';
@@ -495,20 +501,29 @@ function QuotaRowItem({
 function CreditsRowItem({
   credits,
   dailyUsage,
+  t,
 }: {
   credits: ParsedCreditsWindow;
   dailyUsage: ReadonlyArray<DailyUsagePoint> | null;
+  t: Translator;
 }): JSX.Element {
   const symbol = currencySymbol(credits.currency);
   const amount = credits.total ?? credits.toppedUp ?? credits.granted ?? '—';
   const display = symbol === '' ? `${amount} ${credits.currency}` : `${symbol}${amount}`;
   const numeric = parseFloat(amount);
   const isLow = Number.isFinite(numeric) && numeric < 1;
-  const fullName = `${credits.currency} ${[
-    credits.total === null ? null : `总额 ${credits.total}`,
-    credits.granted === null ? null : `赠金 ${credits.granted}`,
-    credits.toppedUp === null ? null : `充值 ${credits.toppedUp}`,
-  ].filter(Boolean).join(' / ')}`;
+  // Composite hover string — currency code is upstream-sourced and
+  // renders verbatim per Requirement 4.5; the `总额` / `赠金` /
+  // `充值` segment prefixes route through `quota.credits.*` so the
+  // tooltip flips locale with the rest of the UI.
+  const segments = [
+    credits.total === null ? null : t('quota.credits.totalPrefix', { value: credits.total }),
+    credits.granted === null ? null : t('quota.credits.grantedPrefix', { value: credits.granted }),
+    credits.toppedUp === null ? null : t('quota.credits.toppedUpPrefix', { value: credits.toppedUp }),
+  ].filter((segment): segment is string => segment !== null);
+  const fullName = segments.length === 0
+    ? credits.currency
+    : `${credits.currency} ${segments.join(' / ')}`;
 
   return (
     <div
@@ -525,7 +540,8 @@ function CreditsRowItem({
         />
         <span className="quota-strip__meta">
           <span className="quota-strip__credits-tag">
-            余额{credits.currency.length > 0 ? ` · ${credits.currency}` : ''}
+            {t('quota.credits.balanceLabel')}
+            {credits.currency.length > 0 ? ` · ${credits.currency}` : ''}
           </span>
         </span>
       </div>
@@ -562,6 +578,7 @@ export function UsageSparkline({
   currencySymbol: string;
   currencyCode: string;
 }): JSX.Element {
+  const t = useT();
   const MAX_BARS = 14;
   const RECENT_BARS = 7; // last N days at full opacity
   // Outer SVG layout — kept in sync with the `.quota-strip__sparkline`
@@ -585,7 +602,7 @@ export function UsageSparkline({
     <span
       className="quota-strip__sparkline"
       data-has-data={hasData ? 'true' : 'false'}
-      aria-label="近期 14 天每日用量"
+      aria-label={t('quota.credits.sparklineAria')}
     >
       <svg
         width={VIEW_W}

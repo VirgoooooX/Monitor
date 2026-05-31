@@ -9,7 +9,7 @@
 //   - design.md §Architecture (`app.ts (entry, wiring)`)
 //   - PLAN.md §Main Process Implementation — `app.ts`
 
-import { app, BrowserWindow, dialog, Menu, safeStorage, session, Tray } from 'electron';
+import { app, BrowserWindow, dialog, Menu, safeStorage, session } from 'electron';
 
 import { setAutostart } from './autostart';
 import { registerIpcHandlers, type InflightConfigSwitchRegistry, type IpcRegistry } from './ipc';
@@ -82,7 +82,7 @@ import {
   RETENTION_TASK_ID,
 } from './store/retention';
 import { COMPACT_DEFAULT_SIZE, createCompactWindow, createExpandedWindow } from './windows';
-import { createTray } from './tray';
+import { createTray, type TrayHandle } from './tray';
 // `app.ts` no longer drives per-collector usage ticks (the AI
 // Accounts unification moved that responsibility to
 // `quotaService.refresh` against `provider_auth` rows); the legacy
@@ -91,6 +91,8 @@ import { createTray } from './tray';
 // `./collectors/usage/*` for the Codex local-log fallback inside
 // `quotaService` and for any future per-account adapter code.
 import type { AppSettings, AppearanceSettings } from './types';
+import { SUPPORTED_LOCALE_CODES, t, type Locale_Code } from '../i18n';
+import { setActiveLocale } from '../i18n/active-locale';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -162,7 +164,70 @@ export function buildDefaultAppSettings(): AppSettings {
       enabled: true,
       writeBackAuthFile: true,
     },
+    // First-launch seed value (Requirement 1.1, 13.1). Boot-time
+    // `normalizeAppSettings` overrides this with the OS-derived
+    // mapping when no persisted row is present (Requirement 2);
+    // production code never observes this seed in isolation because
+    // `loadOrSeedAppSettings` runs the row through normalisation
+    // before returning.
+    locale: 'zh-CN',
   };
+}
+
+/**
+ * Map the OS-reported locale onto the closed `Locale_Code` set.
+ *
+ * Invoked by {@link normalizeAppSettings} (task 4.3) when the
+ * persisted settings row carries no valid `locale` field — the first
+ * launch on a system that predates this feature, a row whose
+ * `locale` was hand-edited to `null`, the empty string, or any value
+ * outside `{ 'zh-CN', 'en-US' }`. The seed produced here is the value
+ * `normalizeAppSettings` writes back into the row before
+ * {@link loadOrSeedAppSettings} returns to its caller, so the next
+ * boot hits the fast path.
+ *
+ * Pinned by Requirement 2:
+ *
+ *   - {@link app.getLocale} is consulted **exactly once** per call,
+ *     inside a `try` so a thrown error from a still-uninitialised
+ *     Electron `app` (e.g. in a test harness that imports this
+ *     module before `app.ready` fires) cannot propagate
+ *     (Requirements 2.1, 2.5).
+ *   - A non-string return value (defensive — `getLocale()` is typed
+ *     as `string` but we treat the IPC boundary as untrusted)
+ *     collapses to the Default_Locale `'zh-CN'` (Requirement 2.5).
+ *   - The prefix check runs on the raw value with **no** trim,
+ *     case-fold, or other normalisation prior to the comparison
+ *     (Requirements 2.2, 2.3). A leading-whitespace string such as
+ *     `' en-US'` therefore deliberately falls through to the
+ *     `'zh-CN'` default rather than being interpreted as English.
+ *   - Length-based guard before the `slice(0, 2)` so a
+ *     single-character return value (e.g. `'e'`) does not produce a
+ *     short prefix that accidentally matches `'en'`
+ *     (Requirements 2.2, 2.3).
+ *   - Lower-cased two-character prefix matches against `'zh'` →
+ *     `'zh-CN'` and `'en'` → `'en-US'`; everything else, including
+ *     `'ja-JP'` and the empty string, returns the Default_Locale
+ *     `'zh-CN'` (Requirement 2.4).
+ *
+ * Module-scope private helper: not exported. Tests reach the seed
+ * mapping via `normalizeAppSettings` fixtures (task 4.7) rather than
+ * by import, mirroring the `normalizeAppSettings` testing pattern.
+ */
+function seedLocaleFromOs(): Locale_Code {
+  let raw: unknown;
+  try {
+    raw = app.getLocale();
+  } catch {
+    return 'zh-CN';
+  }
+  if (typeof raw !== 'string') return 'zh-CN';
+  if (raw.length >= 2) {
+    const prefix2 = raw.slice(0, 2).toLowerCase();
+    if (prefix2 === 'zh') return 'zh-CN';
+    if (prefix2 === 'en') return 'en-US';
+  }
+  return 'zh-CN';
 }
 
 /**
@@ -238,6 +303,22 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
     enabled: true,
     writeBackAuthFile: true,
   };
+  // Locale (i18n-multilingual-support task 4.3, Requirements 1.4,
+  // 2.6, 2.7, 13.1, 13.2, 13.3, 13.4). Treat the persisted value as
+  // untrusted: a hand-edited file or a row written by a build that
+  // predates this feature can carry `undefined`, `null`, an empty
+  // string, or a non-`Locale_Code` string. The closed-set membership
+  // test uses `SUPPORTED_LOCALE_CODES` (`['zh-CN', 'en-US']`) so
+  // adding a third locale in the future is a single-source change.
+  // Anything outside the set — including `null` and non-string
+  // shapes — falls through to {@link seedLocaleFromOs}, whose return
+  // value is guaranteed to be a member of `Locale_Code`.
+  const persistedLocale = (raw as { locale?: unknown }).locale;
+  const locale: Locale_Code =
+    typeof persistedLocale === 'string' &&
+    (SUPPORTED_LOCALE_CODES as readonly string[]).includes(persistedLocale)
+      ? (persistedLocale as Locale_Code)
+      : seedLocaleFromOs();
   return {
     ...raw,
     managementInterface,
@@ -245,6 +326,7 @@ function normalizeAppSettings(raw: AppSettings): AppSettings {
     cliproxy,
     appearance,
     kiroTokenRefresh,
+    locale,
   };
 }
 
@@ -266,16 +348,33 @@ function upgradeProviderAuthCapabilities(repositories: Repositories): void {
  *
  * Returns the live settings used by the rest of the boot sequence —
  * window factory, scheduler intervals (task 3.x), CSP allowlist.
+ *
+ * Persistence ordering (i18n-multilingual-support task 4.4,
+ * Requirements 1.4, 13.5): the JSON-stringify diff path below
+ * compares the entire `AppSettings` shape — including the `locale`
+ * field added by {@link normalizeAppSettings} (task 4.3) — and
+ * issues `writeAppSettings` synchronously before returning to the
+ * caller. The boot caller in {@link boot} (step 4) is itself
+ * synchronous up to and through this call; the only
+ * `settings.updated` broadcast site is {@link applyAppSettingsPatch},
+ * reachable only through the IPC `updateSettings` handler that is
+ * registered later in boot. So a normalised `locale` (absent → seed,
+ * hand-edited `null` → seed, out-of-set string → seed) is always
+ * persisted to SQLite before any `settings.updated` push can fire,
+ * with zero structural change to this function required to cover the
+ * new field.
  */
 function loadOrSeedAppSettings(repos: Repositories): AppSettings {
   const existing = readAppSettings(repos.settings);
   if (existing !== undefined) {
     // Forward-compat: older rows may be missing `appearance` (added
-    // by the theme-system feature). The strict zod schema would
-    // reject such rows on read, so we patch them in place and
+    // by the theme-system feature) or `locale` (added by the
+    // i18n-multilingual-support feature). The strict zod schema
+    // would reject such rows on read, so we patch them in place and
     // persist the patched value once. JSON-string equality is fine
-    // here — the settings tree is small and the comparison happens
-    // at most once per boot.
+    // here — the settings tree is small, the diff covers every
+    // field of `AppSettings` (including `locale`), and the
+    // comparison happens at most once per boot.
     const normalized = normalizeAppSettings(existing);
     if (JSON.stringify(normalized) !== JSON.stringify(existing)) {
       writeAppSettings(repos.settings, normalized);
@@ -355,7 +454,7 @@ let _scheduler: Scheduler | null = null;
 let _settings: AppSettings | null = null;
 let _compactWindow: BrowserWindow | null = null;
 let _expandedWindow: BrowserWindow | null = null;
-let _tray: Tray | null = null;
+let _tray: TrayHandle | null = null;
 let _openClashClient: OpenClashClient | null = null;
 let _openClashManagementClient: OpenClashManagementClient | null = null;
 let _dashboardService: DashboardService | null = null;
@@ -490,6 +589,15 @@ async function boot(): Promise<void> {
   //    factory and the scheduler can read live values.
   const settings = loadOrSeedAppSettings(repositories);
   _settings = settings;
+
+  // 4a. Seed the main-side Active_Locale singleton from the
+  //     normalised settings row (i18n-multilingual-support task 6.1,
+  //     Requirements 5.1, 5.3). Done immediately after the settings
+  //     row resolves — before `createTray` (step 8) so the first
+  //     tray context-menu build sees the correct locale, and before
+  //     any `settings.updated` push could fire from a downstream
+  //     handler.
+  setActiveLocale(settings.locale);
 
   // 5. Build the scheduler. Concrete collectors are NOT registered
   //    here yet — tasks 5.4 / 5.5 / 5.6 (network, openclash, usage)
@@ -724,8 +832,18 @@ async function boot(): Promise<void> {
   // Dialog options match design.md §Provider_Auth_Service:
   //   properties: ['openFile']
   //   filters:
-  //     - { name: 'CPA Auth', extensions: ['json', 'txt'] }
-  //     - { name: 'All',      extensions: ['*']         }
+  //     - { name: t('dialog.openAuthFile.filter.cpaAuth'), extensions: ['json', 'txt'] }
+  //     - { name: t('dialog.openAuthFile.filter.all'),     extensions: ['*']         }
+  //
+  // The filter `name` strings are sourced from the main-side ambient
+  // `t()` so they reflect the Active_Locale at the moment the user
+  // triggers the dialog (Requirement 5.4). The `t()` lookup runs
+  // inside the `showOpenDialog` factory closure, so each invocation
+  // re-reads `getActiveLocale()` and a locale flip via
+  // `settings.updated` between two dialog opens is honoured without
+  // rebuilding the service. The fallback chain is the main-side
+  // `active → 'en-US' → literal key` documented in src/i18n/index.ts
+  // (Requirement 5.5).
   //
   // The owning window is the compact window (the always-on-top boot
   // window); on macOS this anchors the dialog to that window so the
@@ -743,8 +861,8 @@ async function boot(): Promise<void> {
       dialog.showOpenDialog(compactWindow, {
         properties: ['openFile'],
         filters: [
-          { name: 'CPA Auth', extensions: ['json', 'txt'] },
-          { name: 'All', extensions: ['*'] },
+          { name: t('dialog.openAuthFile.filter.cpaAuth'), extensions: ['json', 'txt'] },
+          { name: t('dialog.openAuthFile.filter.all'), extensions: ['*'] },
         ],
       }),
     readFile: (p) => fs.promises.readFile(p, 'utf-8'),
@@ -1439,6 +1557,29 @@ function applyAppSettingsPatch(
   };
   writeAppSettings(repositories.settings, next);
   _settings = next;
+
+  // Side-effect: refresh the main-side Active_Locale singleton when
+  // the locale field changed (i18n-multilingual-support task 6.2,
+  // Requirements 1.5, 1.6, 5.3, 7.5). Sits between persistence and
+  // the `settings.updated` broadcast so that any main-side `t()` call
+  // observed by a downstream listener resolves against the new
+  // catalog. Invalid `locale` payloads never reach this point — the
+  // IPC handler in `src/main/ipc/index.ts` rejects them via
+  // `appSettingsPatchSchema` before invoking `applyAppSettingsPatch`,
+  // so the persisted row is not mutated (Requirement 1.7).
+  if (current.locale !== next.locale) {
+    setActiveLocale(next.locale);
+    // Rebuild the tray context menu so every Tray_Menu_Items label
+    // is re-resolved against the new Active_Locale catalog
+    // (i18n-multilingual-support task 7.3, Requirement 5.3 — within
+    // 500 ms of `settings.updated`). The factory in `./tray.ts`
+    // returns a `TrayHandle` whose `rebuild()` method is idempotent;
+    // the optional-chain accommodates the boot ordering where the
+    // first `applyAppSettingsPatch` could in theory fire before
+    // `_tray` is assigned (no live IPC handler exists at that
+    // point, but the static type allows `null`).
+    _tray?.rebuild();
+  }
 
   // Broadcast `settings.updated` so every live renderer can react
   // (e.g. the appearance switcher applies a new theme without a

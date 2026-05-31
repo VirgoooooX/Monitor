@@ -1,5 +1,5 @@
 // QuickActionsPanel — top-level container for the expanded window's
-// "快捷动作" surface (network-quick-actions task 15.2).
+// "Quick actions" surface (network-quick-actions task 15.2).
 //
 // Composition (top → bottom, fixed in sibling order per Requirement 2.3):
 //
@@ -58,12 +58,14 @@
 //   • network-quick-actions/design.md §IPC Surface, §Renderer Components
 //   • network-quick-actions/requirements.md §Requirement 2, 10, 14
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, Info } from 'lucide-react';
 
 import { ConfigSwitchCard } from './ConfigSwitchCard';
 import { ConfirmDialog } from './ConfirmDialog';
 import { formatManagementError } from '../lib/format';
+import { useT } from '../lib/i18n';
+import type { Translator } from '../../i18n';
 import type {
   HealthStatus,
   NetworkQuickActions,
@@ -91,12 +93,13 @@ type BannerTone = 'critical' | 'warn' | 'notice';
 
 /**
  * Banner copy is split into a short `headline` (renders inline,
- * always visible, kept to ≤ ~12 CJK glyphs so the banner stays a
- * single compact row even on the narrowest expanded layout) and an
- * optional `detail` (full sentence with the actionable suggestion,
- * surfaced in the native `title` tooltip on hover). The selector
- * helper below builds both halves so the renderer never has to know
- * whether a particular state has a separate detail line.
+ * always visible, kept compact so the banner stays a single row
+ * even on the narrowest expanded layout) and an optional `detail`
+ * (full sentence with the actionable suggestion, surfaced in the
+ * native `title` tooltip on hover). The selector helper below
+ * builds both halves from the active-locale catalog so the
+ * renderer never has to know whether a particular state has a
+ * separate detail line.
  */
 interface BannerSpec {
   readonly tone: BannerTone;
@@ -114,24 +117,29 @@ interface BannerSpec {
  * management interferes with config switch only, auth_error
  * applies to the whole panel, and the generic degraded banner is
  * the catch-all for `node_slow / partial_outage / node_down`.
+ *
+ * Every visible string comes from the active-locale catalog via
+ * the supplied `Translator`, so banners flip live with the rest of
+ * the UI when the user changes language (Requirement 4.1, 7.1).
  */
 function selectBanner(
+  t: Translator,
   health: HealthStatus,
   management: NetworkQuickActions['management'] | null,
 ): BannerSpec | null {
   if (health === 'home_down') {
     return {
       tone: 'critical',
-      headline: '家庭离线',
-      detail: '路由器不可达，所有切换都会失败；请检查家中网络与路由器电源',
+      headline: t('quickActions.banner.homeDown.headline'),
+      detail: t('quickActions.banner.homeDown.detail'),
     };
   }
 
   if (management !== null && management.consecutiveFailures >= 5) {
     return {
       tone: 'warn',
-      headline: '管理接口持续失败',
-      detail: 'OpenClash 管理接口已连续失败 5 次以上，请检查凭据或网络',
+      headline: t('quickActions.banner.managementFailures.headline'),
+      detail: t('quickActions.banner.managementFailures.detail'),
     };
   }
 
@@ -139,22 +147,22 @@ function selectBanner(
     if (management !== null && !management.reachable) {
       return {
         tone: 'warn',
-        headline: '管理接口不可达',
-        detail: 'OpenClash 管理接口暂时无法连接；切换操作将不可用',
+        headline: t('quickActions.banner.managementUnreachable.headline'),
+        detail: t('quickActions.banner.managementUnreachable.detail'),
       };
     }
     return {
       tone: 'notice',
-      headline: '内核暂不可达',
-      detail: 'OpenClash 内核暂时无响应，可尝试切换配置以恢复',
+      headline: t('quickActions.banner.kernelUnreachable.headline'),
+      detail: t('quickActions.banner.kernelUnreachable.detail'),
     };
   }
 
   if (management !== null && management.lastErrorCode === 'auth_error') {
     return {
       tone: 'warn',
-      headline: '凭据错误',
-      detail: formatManagementError('auth_error'),
+      headline: t('quickActions.banner.credsError.headline'),
+      detail: formatManagementError(t, 'auth_error'),
     };
   }
 
@@ -165,8 +173,8 @@ function selectBanner(
   ) {
     return {
       tone: 'notice',
-      headline: '网络降级',
-      detail: '当前节点出现降级，建议切换节点或配置',
+      headline: t('quickActions.banner.networkDegraded.headline'),
+      detail: t('quickActions.banner.networkDegraded.detail'),
     };
   }
 
@@ -193,11 +201,20 @@ const BANNER_ICON: Record<BannerTone, typeof AlertCircle> = {
  * it via `aria-label`. Renders as a single line; the underlying
  * `.quick-actions-panel__banner` style supplies the chip-like chrome.
  */
-function Banner({ spec }: { readonly spec: BannerSpec }): JSX.Element {
+function Banner({
+  spec,
+  t,
+}: {
+  readonly spec: BannerSpec;
+  readonly t: Translator;
+}): JSX.Element {
   const Icon = BANNER_ICON[spec.tone];
   const ariaLabel =
     spec.detail !== undefined && spec.detail.length > 0
-      ? `${spec.headline}：${spec.detail}`
+      ? t('quickActions.banner.ariaTemplate', {
+          headline: spec.headline,
+          detail: spec.detail,
+        })
       : spec.headline;
   return (
     <div
@@ -226,6 +243,7 @@ function Banner({ spec }: { readonly spec: BannerSpec }): JSX.Element {
 export function QuickActionsPanel({
   healthStatus,
 }: QuickActionsPanelProps): JSX.Element {
+  const t = useT();
   const [data, setData] = useState<NetworkQuickActions | null>(null);
   const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -300,7 +318,7 @@ export function QuickActionsPanel({
       const result = await desktop.switchOpenClashConfig({ targetPath });
       if (!cancelledRef.current) {
         if (!result.ok && result.error) {
-          setSwitchError(formatManagementError(result.error.code));
+          setSwitchError(formatManagementError(t, result.error.code));
         } else {
           setSwitchError(null);
         }
@@ -308,7 +326,7 @@ export function QuickActionsPanel({
     } catch (err: unknown) {
       if (!cancelledRef.current) {
         const message =
-          err instanceof Error ? err.message : '切换配置时发生未知错误';
+          err instanceof Error ? err.message : t('quickActions.switchUnknownError');
         setSwitchError(message);
       }
     } finally {
@@ -317,7 +335,7 @@ export function QuickActionsPanel({
       // active path readback).
       void refresh();
     }
-  }, [confirmDialog, closeDialog, refresh]);
+  }, [confirmDialog, closeDialog, refresh, t]);
 
   const handleDialogCancel = useCallback(() => {
     // Cancel writes nothing (Requirement 6.4).
@@ -325,7 +343,10 @@ export function QuickActionsPanel({
   }, [closeDialog]);
 
   // ─── Banner selection ───────────────────────────────────────────────
-  const banner = selectBanner(healthStatus, data?.management ?? null);
+  const banner = useMemo(
+    () => selectBanner(t, healthStatus, data?.management ?? null),
+    [t, healthStatus, data?.management],
+  );
 
   // ─── Render ─────────────────────────────────────────────────────────
   if (bridgeMissing) {
@@ -334,7 +355,7 @@ export function QuickActionsPanel({
         className="quick-actions-panel quick-actions-panel--bridge-missing"
         data-testid="quick-actions-panel"
         data-state="bridge-missing"
-        aria-label="快捷动作"
+        aria-label={t('quickActions.aria')}
       >
         <p className="quick-actions-panel__hint" role="alert">
           preload bridge unavailable
@@ -353,10 +374,10 @@ export function QuickActionsPanel({
         className="quick-actions-panel quick-actions-panel--loading"
         data-testid="quick-actions-panel"
         data-state="loading"
-        aria-label="快捷动作"
+        aria-label={t('quickActions.aria')}
         aria-busy="true"
       >
-        {banner && <Banner spec={banner} />}
+        {banner && <Banner spec={banner} t={t} />}
         <div
           className="quick-actions-panel__skeleton quick-actions-panel__skeleton--config"
           data-testid="quick-actions-panel-skeleton-config"
@@ -382,9 +403,9 @@ export function QuickActionsPanel({
       data-state="ready"
       data-health={healthStatus}
       data-degraded={degraded ? 'true' : 'false'}
-      aria-label="快捷动作"
+      aria-label={t('quickActions.aria')}
     >
-      {banner && <Banner spec={banner} />}
+      {banner && <Banner spec={banner} t={t} />}
 
       {switchError && (
         <div
@@ -426,8 +447,8 @@ export function QuickActionsPanel({
             data-testid="quick-actions-panel-last-switch"
             role="status"
           >
-            上次配置切换：
-            {formatManagementError(data.lastConfigSwitch.resultCode)}
+            {t('quickActions.lastConfigSwitchPrefix')}
+            {formatManagementError(t, data.lastConfigSwitch.resultCode)}
           </p>
         )}
 

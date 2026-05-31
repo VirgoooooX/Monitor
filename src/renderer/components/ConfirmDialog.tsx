@@ -17,8 +17,8 @@
 //   • role="dialog", aria-modal="true"
 //   • aria-labelledby points at the title
 //   • aria-describedby points at the warning text
-//   • opens with focus on "取消" (the safer choice; confirming requires
-//     a second deliberate action)
+//   • opens with focus on the cancel button (the safer choice;
+//     confirming requires a second deliberate action)
 //   • Escape key triggers `onCancel`
 //   • Tab/Shift+Tab cycle between the two buttons (simple focus trap)
 //   • restores focus to the previously focused element on close
@@ -30,6 +30,8 @@ import {
   useRef,
 } from 'react';
 
+import { useT } from '../lib/i18n';
+
 export interface ConfirmDialogProps {
   readonly open: boolean;
   readonly startPath: string | null;
@@ -40,7 +42,6 @@ export interface ConfirmDialogProps {
 
 const TITLE_ID = 'confirm-dialog-title';
 const DESCRIPTION_ID = 'confirm-dialog-warning';
-const WARNING_TEXT = '切换将重启 Clash 内核并断开所有现有连接';
 
 /**
  * Return the trailing filename of an absolute config path.
@@ -68,13 +69,14 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps): JSX.Element | null {
+  const t = useT();
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   // Focus management: when the dialog opens, remember whatever was
   // focused before (so we can restore it on close) and move focus
-  // to the "取消" button (the safer default).
+  // to the cancel button (the safer default).
   useEffect(() => {
     if (!open) return;
     previouslyFocusedRef.current =
@@ -141,7 +143,8 @@ export function ConfirmDialog({
     event.stopPropagation();
   };
 
-  const startLabel = startPath && startPath.length > 0 ? startPath : '未知';
+  const startLabel =
+    startPath && startPath.length > 0 ? startPath : t('confirmDialog.unknown');
   const targetLabel = basename(targetPath);
 
   return (
@@ -162,16 +165,20 @@ export function ConfirmDialog({
         onClick={stopPropagation}
       >
         <h2 id={TITLE_ID} className="confirm-dialog__title">
-          确认切换 OpenClash 配置文件
+          {t('confirmDialog.title')}
         </h2>
 
         <dl className="confirm-dialog__paths">
           <div className="confirm-dialog__path-row">
-            <dt className="confirm-dialog__path-label">当前配置：</dt>
+            <dt className="confirm-dialog__path-label">
+              {t('confirmDialog.startLabel')}
+            </dt>
             <dd className="confirm-dialog__path-value">{startLabel}</dd>
           </div>
           <div className="confirm-dialog__path-row">
-            <dt className="confirm-dialog__path-label">目标配置：</dt>
+            <dt className="confirm-dialog__path-label">
+              {t('confirmDialog.targetLabel')}
+            </dt>
             <dd className="confirm-dialog__path-value">{targetLabel}</dd>
           </div>
         </dl>
@@ -181,7 +188,7 @@ export function ConfirmDialog({
           className="confirm-dialog__warning"
           role="alert"
         >
-          {WARNING_TEXT}
+          {t('confirmDialog.warning')}
         </p>
 
         <div className="confirm-dialog__actions">
@@ -192,7 +199,7 @@ export function ConfirmDialog({
             onClick={onCancel}
             data-testid="confirm-dialog-cancel"
           >
-            取消
+            {t('confirmDialog.cancel')}
           </button>
           <button
             ref={confirmRef}
@@ -201,7 +208,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             data-testid="confirm-dialog-confirm"
           >
-            确认切换
+            {t('confirmDialog.confirm')}
           </button>
         </div>
       </div>

@@ -29,7 +29,9 @@
 import { useMemo, useId, useState, useEffect } from 'react';
 import type { CSSProperties } from 'react';
 import type { UsageTimeseriesBucket } from '../lib/types';
+import type { TranslationKey } from '../../i18n';
 import { formatTokens } from '../lib/format';
+import { useT } from '../lib/i18n';
 
 // ---------------------------------------------------------------------------
 // Provider color palette
@@ -53,10 +55,10 @@ type TokenKind = 'output' | 'input' | 'cache';
 
 const KIND_ORDER: ReadonlyArray<TokenKind> = ['output', 'input', 'cache'];
 
-const KIND_LABEL: Record<TokenKind, string> = {
-  output: '输出',
-  input: '输入',
-  cache: '缓存',
+const KIND_LABEL_KEY: Record<TokenKind, TranslationKey> = {
+  output: 'usage.kind.output',
+  input: 'usage.kind.input',
+  cache: 'usage.kind.cache',
 };
 
 /**
@@ -178,6 +180,7 @@ export function UsageBarChart({
   granularity,
   providerLabel,
 }: UsageBarChartProps): JSX.Element {
+  const t = useT();
   const uid = useId().replace(/:/g, '');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -435,7 +438,7 @@ export function UsageBarChart({
           {!emptyData && layout.providersInOrder.length > 0 && (
             <span
               className="usage-chart__kind-key"
-              aria-label="柱体内深浅色对应：输出 / 输入 / 缓存"
+              aria-label={t('usage.kind.legendAria')}
             >
               {KIND_ORDER.map((kind) => (
                 <span key={kind} className="usage-chart__kind-key-item">
@@ -444,7 +447,7 @@ export function UsageBarChart({
                     data-kind={kind}
                   />
                   <span className="usage-chart__kind-key-label">
-                    {KIND_LABEL[kind]}
+                    {t(KIND_LABEL_KEY[kind])}
                   </span>
                 </span>
               ))}
@@ -718,11 +721,17 @@ export function UsageBarChart({
           {emptyData && (
             <div className="usage-chart__empty" role="status">
               <span className="usage-chart__empty-glyph" aria-hidden />
+              {/* `usage-chart__empty-title` ("尚未采集到 Token 用量") is
+                  a chart-frame headline outside the task-14.4 scope
+                  (time-range labels, quota window names, snapshot
+                  status badges, source labels, kind labels, empty-
+                  state sentences). It is left for the broader
+                  empty-state pass in task 14.5. */}
               <p className="usage-chart__empty-title">尚未采集到 Token 用量</p>
               <p className="usage-chart__empty-desc">
                 {granularity === 'hour'
-                  ? '今日内若产生使用，会按小时显示在此。'
-                  : '该区间一旦产生使用，会按天显示在此。'}
+                  ? t('usage.empty.todayPlaceholder')
+                  : t('usage.empty.rangePlaceholder')}
               </p>
             </div>
           )}
@@ -769,7 +778,7 @@ export function UsageBarChart({
         <div className="usage-chart__legend" aria-hidden>
           {layout.providersInOrder.length === 0 && (
             <span className="usage-chart__legend-empty">
-              {emptyData ? '\u00a0' : '所有时段无可用数据'}
+              {emptyData ? '\u00a0' : t('usage.empty.allRanges')}
             </span>
           )}
           {layout.providersInOrder.map((provider) => {
@@ -874,7 +883,7 @@ export function UsageBarChart({
                       aria-hidden
                     />
                     <span className="usage-chart__detail-kind-label">
-                      {KIND_LABEL[kind]}
+                      {t(KIND_LABEL_KEY[kind])}
                     </span>
                     <span className="usage-chart__detail-kind-value">
                       {formatTokens(value)}
@@ -901,7 +910,7 @@ export function UsageBarChart({
             </>
           ) : (
             <span className="usage-chart__detail-hint">
-              {emptyData ? '\u00a0' : '悬停或聚焦柱体查看详细数据'}
+              {emptyData ? '\u00a0' : t('usage.empty.hoverHint')}
             </span>
           )}
         </div>

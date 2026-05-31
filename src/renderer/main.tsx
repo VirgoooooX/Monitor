@@ -14,6 +14,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { I18nProvider } from './lib/i18n';
 import './styles/index.css';
 
 const container = document.getElementById('root');
@@ -21,8 +22,17 @@ if (!container) {
   throw new Error("Renderer mount target '#root' is missing from index.html");
 }
 
+// `<I18nProvider>` wraps `<App>` so every component in the tree can
+// call `useT()` / `useLocale()` (i18n-multilingual-support task 10.2,
+// Requirements 10.1, 10.2, 10.3). The provider seeds `DEFAULT_LOCALE`
+// synchronously so first paint matches today's zh-CN copy; the
+// `desktop.getSettings()` resolution and `settings.updated` push then
+// drive Active_Locale changes without unmounting the React root or
+// reloading the BrowserWindow (Requirement 7.4).
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <I18nProvider>
+      <App />
+    </I18nProvider>
   </StrictMode>,
 );

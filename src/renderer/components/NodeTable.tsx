@@ -2,15 +2,22 @@
 //
 // Each card surfaces: a status dot (green/yellow/red), the node name
 // (with active pill / source label), latency, success rate, and a
-// 切换 button. Cards lay out in up to 4 columns at the unified
+// switch button. Cards lay out in up to 4 columns at the unified
 // content width and collapse responsively (see node-table.css).
 //
 // Beyond the original flat list, nodes are now bucketed by region —
-// 香港 / 台湾 / 日本 / 美国 / 其他 — so a 48-node group like the one
+// HK / TW / JP / US / Other — so a 48-node group like the one
 // in the screenshot stops looking like one undifferentiated wall of
 // chips. The bucket is derived heuristically from the node name and
 // `source` label using a single matcher table; nodes that match no
-// rule fall through to "其他".
+// rule fall through to the "other" bucket.
+//
+// Region bucket labels are sourced via Translation_Function (`t()`)
+// against keys `node.region.<key>` so the component renders labels in
+// the Active_Locale (i18n-multilingual-support, Requirement 4.2). The
+// match tokens themselves stay literal — they are matchers against
+// upstream-sourced node names and `source` labels (Requirement 4.4),
+// not user-visible copy.
 //
 // The component name and props are preserved from the previous
 // implementation; only the markup and visual treatment change. IPC
@@ -31,7 +38,9 @@
 
 import { useCallback, useMemo, useState } from 'react';
 
+import type { TranslationKey } from '../../i18n';
 import type { NodeView } from '../lib/types';
+import { useT } from '../lib/i18n';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -114,16 +123,25 @@ function deriveTone(node: NodeView): NodeTone {
 // Buckets nodes into a small fixed set of regions based on substring
 // matches against the node name and source label. The matcher table
 // is intentionally short and exhaustive on the high-level categories
-// the user asked for; everything else falls through to "其他".
+// the user asked for; everything else falls through to the "other"
+// bucket.
 //
 // Each bucket carries a stable display order so the rendered
-// sections always come out HK → TW → JP → US → 其他 regardless of
+// sections always come out HK → TW → JP → US → Other regardless of
 // the upstream node ordering. Within a bucket nodes preserve their
 // original order from the IPC payload.
+//
+// The `key` doubles as the Translation_Key suffix: bucket labels are
+// resolved at render time via `t(('node.region.' + bucket.key) as
+// TranslationKey)` so the visible label tracks Active_Locale. The
+// match `tokens` below are matchers against upstream-sourced node
+// names / source labels (Requirement 4.4) and are NEVER routed
+// through `t()` — they stay literal.
+
+type RegionKey = 'hk' | 'tw' | 'jp' | 'us' | 'other';
 
 interface RegionBucket {
-  readonly key: string;
-  readonly label: string;
+  readonly key: RegionKey;
   /** Lower order = rendered first. */
   readonly order: number;
   /** Substrings (lowercased) that classify a node into this bucket. */
@@ -133,25 +151,21 @@ interface RegionBucket {
 const REGION_BUCKETS: readonly RegionBucket[] = [
   {
     key: 'hk',
-    label: '香港',
     order: 1,
     tokens: ['香港', 'hong kong', 'hongkong', 'hk'],
   },
   {
     key: 'tw',
-    label: '台湾',
     order: 2,
     tokens: ['台湾', '臺灣', 'taiwan', 'tw'],
   },
   {
     key: 'jp',
-    label: '日本',
     order: 3,
     tokens: ['日本', 'japan', 'jp', 'tokyo', 'osaka'],
   },
   {
     key: 'us',
-    label: '美国',
     order: 4,
     tokens: ['美国', '美國', 'america', 'united states', 'usa', 'us', 'um'],
   },
@@ -159,10 +173,18 @@ const REGION_BUCKETS: readonly RegionBucket[] = [
 
 const OTHER_BUCKET: RegionBucket = {
   key: 'other',
-  label: '其他',
   order: 99,
   tokens: [],
 };
+
+/**
+ * Resolve the Translation_Key that names a region bucket. Pure helper
+ * so call sites stay readable and the (compile-time-checked) string
+ * concatenation is centralised.
+ */
+function regionLabelKey(bucket: RegionBucket): TranslationKey {
+  return `node.region.${bucket.key}` as TranslationKey;
+}
 
 /**
  * Classify a node into one of the predefined region buckets.
@@ -203,7 +225,7 @@ interface RegionSection {
 /**
  * Group an array of nodes into ordered region sections. Empty
  * sections are dropped so a deployment without any HK nodes does
- * not render an empty "香港" header.
+ * not render an empty header.
  */
 function groupByRegion(nodes: NodeView[]): RegionSection[] {
   const groups = new Map<string, RegionSection>();
@@ -233,6 +255,8 @@ export function NodeTable({
   groupName,
   switchConfirmEnabled,
 }: NodeTableProps): JSX.Element {
+  const t = useT();
+
   const [rowState, setRowState] = useState<RowState>({
     switchingNode: null,
     toast: null,
@@ -262,7 +286,7 @@ export function NodeTable({
         // Using native confirm for simplicity; matches design §切换前确认.
         // eslint-disable-next-line no-alert
         const confirmed = window.confirm(
-          `确认切换到节点「${nodeName}」？`,
+          t('node.confirmSwitchPrompt', { name: nodeName }),
         );
         if (!confirmed) return;
       }
@@ -273,7 +297,7 @@ export function NodeTable({
 
       const desktop = window.desktop;
       if (!desktop) {
-        setRowState({ switchingNode: null, toast: 'desktop bridge 不可用' });
+        setRowState({ switchingNode: null, toast: t('node.bridge.missing') });
         setOptimisticCurrent(null);
         return;
       }
@@ -286,20 +310,24 @@ export function NodeTable({
           setRowState({ switchingNode: null, toast: null });
           setOptimisticCurrent(result.newCurrent);
         } else {
-          // Failure — roll back.
-          const msg =
-            result.error?.message ?? '切换失败';
+          // Failure — roll back. Upstream error messages render
+          // verbatim per Requirement 4.4 / 4.6; only the fallback
+          // when the upstream omits a message is translated.
+          const msg = result.error?.message ?? t('node.action.failed');
           setRowState({ switchingNode: null, toast: msg });
           setOptimisticCurrent(result.actualCurrent);
         }
       } catch (err: unknown) {
+        // Caught error.message is upstream-sourced (Requirement 4.6 —
+        // diagnostic strings stay locale-neutral); only the fallback
+        // is routed through t().
         const msg =
-          err instanceof Error ? err.message : '切换发生未知错误';
+          err instanceof Error ? err.message : t('node.action.unknownError');
         setRowState({ switchingNode: null, toast: msg });
         setOptimisticCurrent(null);
       }
     },
-    [groupName, switchConfirmEnabled],
+    [groupName, switchConfirmEnabled, t],
   );
 
   const renderCard = (node: NodeView): JSX.Element => {
@@ -324,8 +352,8 @@ export function NodeTable({
         <div className="node-table__card-head">
           <span
             className={`node-table__card-status node-table__card-status--${tone}`}
-            aria-label={`状态 ${tone}`}
-            title={`状态：${tone}`}
+            aria-label={t('node.statusAria', { tone })}
+            title={t('node.statusTitle', { tone })}
           />
           {node.source && (
             <span className="node-table__card-source">
@@ -336,14 +364,16 @@ export function NodeTable({
             {node.name}
           </span>
           {isActive && (
-            <span className="node-table__card-active-pill">当前</span>
+            <span className="node-table__card-active-pill">
+              {t('node.activePill')}
+            </span>
           )}
         </div>
 
         <div className="node-table__card-foot">
           <span
             className="node-table__card-metric"
-            title={`延迟 ${formatDelay(node.lastDelayMs)}`}
+            title={t('node.latencyTitle', { value: formatDelay(node.lastDelayMs) })}
           >
             {formatDelay(node.lastDelayMs)}
           </span>
@@ -355,7 +385,7 @@ export function NodeTable({
           </span>
           <span
             className="node-table__card-metric"
-            title={`成功率 ${formatRate(node.successRate)}`}
+            title={t('node.successRateTitle', { value: formatRate(node.successRate) })}
           >
             {formatRate(node.successRate)}
           </span>
@@ -365,7 +395,7 @@ export function NodeTable({
             onClick={() => handleSwitch(node.name)}
             type="button"
           >
-            {isSwitching ? '切换中…' : '切换'}
+            {isSwitching ? t('node.action.switching') : t('node.action.switch')}
           </button>
         </div>
       </article>
@@ -387,7 +417,7 @@ export function NodeTable({
       )}
 
       {nodes.length === 0 ? (
-        <div className="node-table__empty">暂无节点数据</div>
+        <div className="node-table__empty">{t('node.empty')}</div>
       ) : (
         <div className="node-table__sections">
           {sections.map((section) => (
@@ -399,7 +429,7 @@ export function NodeTable({
             >
               <header className="node-table__section-head">
                 <h3 className="node-table__section-title">
-                  {section.bucket.label}
+                  {t(regionLabelKey(section.bucket))}
                 </h3>
                 <span className="node-table__section-count">
                   {section.nodes.length}

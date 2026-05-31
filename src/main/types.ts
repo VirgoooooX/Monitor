@@ -3,6 +3,12 @@
 //
 // References: design.md §Data Models, §IPC Handler Registry,
 // §`openclash.service.ts`, §Validation rules; PLAN.md §IPC Interface.
+//
+// `src/i18n/**` is the only directory that both processes are allowed
+// to share at runtime (i18n-multilingual-support/design.md
+// §Architecture); a type-only import from there is therefore safe and
+// keeps the renderer mirror in `src/renderer/lib/types.ts` erasable.
+import type { Locale_Code } from '../i18n';
 
 // ---------------------------------------------------------------------------
 // Health priority ladder
@@ -147,7 +153,17 @@ export type CapabilityResult =
 
 export interface DashboardState {
   status: HealthStatus;
-  /** User-facing zh-CN label, see PLAN.md §UI 状态文字. */
+  /**
+   * @deprecated Renderer-side derivation via
+   * `t('dashboard.health.' + status)` is now authoritative
+   * (i18n-multilingual-support task 13.x, Requirement 6.1, 6.3).
+   * The field is retained on the wire one release for IPC backward
+   * compatibility — main still populates it from the legacy
+   * `HEALTH_STATUS_LABELS` map in `dashboard.service.ts`, but the
+   * renderer ignores it for the StatusHero label and the
+   * CompactMiniRail tooltip / aria-label. Removal is a follow-up
+   * spec.
+   */
   statusLabel: string;
   generatedAt: number;
   router: { ok: boolean; lastChange: number };
@@ -971,6 +987,19 @@ export interface AppSettings {
    * older settings rows that predate this field.
    */
   appearance: AppearanceSettings;
+  /**
+   * Active language preference. Top-level (not nested under
+   * `appearance`) because language is orthogonal to visual
+   * presentation and travels on its own validation /
+   * `settings.updated` path (i18n-multilingual-support/design.md
+   * §Data Models, requirements.md Requirement 1.1).
+   *
+   * Closed enum `'zh-CN' | 'en-US'`. The boot sequence seeds /
+   * normalises older settings rows that predate this field via
+   * `normalizeAppSettings` + `seedLocaleFromOs`
+   * (Requirements 1.4, 2.1–2.7).
+   */
+  locale: Locale_Code;
   /**
    * Kiro IDE token auto-refresh policy. When `enabled` is true and
    * the access token in `~/.aws/sso/cache/kiro-auth-token.json` is

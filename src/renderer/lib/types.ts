@@ -8,6 +8,14 @@
 //
 // Source of truth for these shapes lives in `src/main/types.ts`
 // (design.md §Data Models, §IPC Handler Registry).
+//
+// `Locale_Code` is the lone exception: its source of truth lives in
+// `src/i18n/index.ts` (the only directory both processes are allowed
+// to share at runtime, per i18n-multilingual-support/design.md
+// §Architecture). The type-only re-export below keeps renderer
+// imports of the locale union pointing at `lib/types` so call sites
+// stay unchanged across the i18n rollout.
+export type { Locale_Code } from '../../i18n';
 
 export type {
   // Health

@@ -76,6 +76,7 @@ function validBase(): AppSettings {
       enabled: true,
       writeBackAuthFile: true,
     },
+    locale: 'zh-CN',
   };
 }
 

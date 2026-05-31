@@ -102,6 +102,7 @@ function buildAppSettings(): AppSettings {
       enabled: true,
       writeBackAuthFile: true,
     },
+    locale: 'zh-CN',
   };
 }
 

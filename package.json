@@ -6,9 +6,11 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "i18n:validate": "node scripts/validate-i18n-catalogs.mjs",
+    "i18n:validate:bundle": "node scripts/validate-i18n-catalogs.mjs --check-bundle",
+    "typecheck": "npm run i18n:validate && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && tsc -p tsconfig.main.json && node scripts/bundle-preload.mjs && vite build",
+    "build": "npm run clean && npm run i18n:validate && tsc -p tsconfig.main.json && node scripts/bundle-preload.mjs && vite build && npm run i18n:validate:bundle",
     "test": "vitest run",
     "package": "npm run build && electron-builder --win --publish never",
     "prepackage:mac": "node scripts/prepackage-mac.mjs",
@@ -36,6 +38,7 @@
     "esbuild": "^0.28.0",
     "fast-check": "3.23.1",
     "jsdom": "^29.1.1",
+    "tsx": "^4.22.4",
     "typescript": "5.6.3",
     "vite": "5.4.11",
     "vitest": "2.1.8"

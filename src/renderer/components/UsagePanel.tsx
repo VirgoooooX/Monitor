@@ -14,15 +14,17 @@ import { useEffect, useState } from 'react';
 
 import {
   groupQuotaWindowsByDisplay,
-  quotaWindowDisplayName,
   quotaWindowPriority,
   parseCreditsWindow,
   currencySymbol,
+  translateQuotaWindowDisplayName,
 } from '../lib/quota-display';
 import { UsageSparkline } from './QuotaStrip';
 import { ProviderIcon } from './ProviderIcon';
 import { PROVIDER_LABELS, providerIconKey, maskedEmailLabel } from './ProviderAuthList';
 import { UsageBarChart } from './UsageBarChart';
+import { useT } from '../lib/i18n';
+import type { Translator, TranslationKey } from '../../i18n';
 import type {
   QuotaSnapshot,
   QuotaStatus,
@@ -37,10 +39,10 @@ import type {
 // Range selector
 // ---------------------------------------------------------------------------
 
-const RANGE_OPTIONS: { value: UsageRange; label: string }[] = [
-  { value: 'today', label: '今日' },
-  { value: 'week', label: '本周' },
-  { value: 'month', label: '本月' },
+const RANGE_OPTIONS: { value: UsageRange; labelKey: TranslationKey }[] = [
+  { value: 'today', labelKey: 'usage.range.today' },
+  { value: 'week', labelKey: 'usage.range.week' },
+  { value: 'month', labelKey: 'usage.range.month' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -91,12 +93,12 @@ function providerTone(provider: string): string {
   return provider.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
 }
 
-function sourceDisplayName(source: QuotaSnapshot['source']): string {
+function sourceDisplayName(source: QuotaSnapshot['source'], t: Translator): string {
   switch (source) {
-    case 'imported_auth': return 'auth 认证';
-    case 'remote_api': return '官方 API';
-    case 'local_log': return '本地日志';
-    case 'health_check': return '健康检查';
+    case 'imported_auth': return t('quota.source.importedAuth');
+    case 'remote_api': return t('quota.source.remoteApi');
+    case 'local_log': return t('quota.source.localLog');
+    case 'health_check': return t('quota.source.healthCheck');
   }
 }
 
@@ -181,27 +183,35 @@ function compactIdentifier(value: string | null): string | null {
   return `${value.slice(0, 12)}...${value.slice(-8)}`;
 }
 
-function snapshotMeta(snapshot: QuotaSnapshot): string {
+function snapshotMeta(snapshot: QuotaSnapshot, t: Translator): string {
   const title = snapshotTitle(snapshot);
   const parts: string[] = [];
   if (snapshot.projectId && snapshot.projectId !== title) {
-    parts.push(`项目 ${compactIdentifier(snapshot.projectId) ?? snapshot.projectId}`);
+    parts.push(
+      t('usage.identityPrefix.project', {
+        value: compactIdentifier(snapshot.projectId) ?? snapshot.projectId,
+      }),
+    );
   }
   if (snapshot.accountId && snapshot.accountId !== title) {
-    parts.push(`账号 ${compactIdentifier(snapshot.accountId) ?? snapshot.accountId}`);
+    parts.push(
+      t('usage.identityPrefix.account', {
+        value: compactIdentifier(snapshot.accountId) ?? snapshot.accountId,
+      }),
+    );
   }
-  parts.push(sourceDisplayName(snapshot.source));
+  parts.push(sourceDisplayName(snapshot.source, t));
   return parts.join(' · ');
 }
 
-function snapshotStatusLabel(snapshot: QuotaSnapshot): string {
-  if (snapshot.lastErrorCode === 'auth_expired') return '凭据过期';
-  if (snapshot.lastErrorCode === 'upstream_unauthorized') return '上游拒绝';
-  if (snapshot.lastErrorCode === 'rate_limited') return '请求过快';
-  if (snapshot.status === 'stale') return '使用上次结果';
-  if (snapshot.status === 'unavailable') return '不可用';
-  if (snapshot.status === 'unsupported') return '暂不支持';
-  return '正常';
+function snapshotStatusLabel(snapshot: QuotaSnapshot, t: Translator): string {
+  if (snapshot.lastErrorCode === 'auth_expired') return t('quota.snapshot.authExpired');
+  if (snapshot.lastErrorCode === 'upstream_unauthorized') return t('quota.snapshot.upstreamRefused');
+  if (snapshot.lastErrorCode === 'rate_limited') return t('quota.snapshot.rateLimited');
+  if (snapshot.status === 'stale') return t('quota.snapshot.useLastResult');
+  if (snapshot.status === 'unavailable') return t('quota.snapshot.unavailable');
+  if (snapshot.status === 'unsupported') return t('quota.snapshot.unsupported');
+  return t('quota.snapshot.normal');
 }
 
 function snapshotStatusTone(snapshot: QuotaSnapshot): 'ok' | 'warn' | 'bad' | 'neutral' {
@@ -211,8 +221,10 @@ function snapshotStatusTone(snapshot: QuotaSnapshot): 'ok' | 'warn' | 'bad' | 'n
   return 'bad';
 }
 
-function planLabelPrefix(provider: string): string {
-  return provider === 'gemini-cli' || provider === 'antigravity' ? '层级' : '套餐';
+function planLabelPrefix(provider: string, t: Translator): string {
+  return provider === 'gemini-cli' || provider === 'antigravity'
+    ? t('usage.plan.tier')
+    : t('usage.plan.package');
 }
 
 function providerPriority(provider: string): number {
@@ -234,6 +246,7 @@ function providerPriority(provider: string): number {
 // ---------------------------------------------------------------------------
 
 export function UsagePanel(): JSX.Element {
+  const t = useT();
   const [range, setRange] = useState<UsageRange>('today');
   const [usageData, setUsageData] = useState<UsageSummary | null>(null);
   const [quotaData, setQuotaData] = useState<QuotaStatus | null>(null);
@@ -371,7 +384,7 @@ export function UsagePanel(): JSX.Element {
   }, []);
 
   return (
-    <section className="usage-panel-v2" data-testid="usage-panel" aria-label="AI 用量面板">
+    <section className="usage-panel-v2" data-testid="usage-panel" aria-label={t('usage.panel.aria')}>
       {error && (
         <div className="usage-panel-v2__error" role="alert">{error}</div>
       )}
@@ -383,8 +396,8 @@ export function UsagePanel(): JSX.Element {
 
       {/* Range tabs + summary */}
       <div className="usage-panel-v2__header">
-        <h2 className="usage-panel-v2__title">Token 消耗</h2>
-        <div className="usage-panel-v2__tabs" role="tablist" aria-label="时间范围">
+        <h2 className="usage-panel-v2__title">{t('usage.panel.title')}</h2>
+        <div className="usage-panel-v2__tabs" role="tablist" aria-label={t('usage.panel.rangeAria')}>
           {RANGE_OPTIONS.map((opt) => (
             <button
               key={opt.value}
@@ -394,7 +407,7 @@ export function UsagePanel(): JSX.Element {
               onClick={() => setRange(opt.value)}
               type="button"
             >
-              {opt.label}
+              {t(opt.labelKey)}
             </button>
           ))}
         </div>
@@ -417,7 +430,7 @@ export function UsagePanel(): JSX.Element {
 
       {/* Loading state */}
       {loading && !usageData && (
-        <p className="usage-panel-v2__loading" aria-live="polite">加载中…</p>
+        <p className="usage-panel-v2__loading" aria-live="polite">{t('usage.panel.loading')}</p>
       )}
     </section>
   );
@@ -434,6 +447,7 @@ function QuotaOverview({
   snapshots: QuotaSnapshot[];
   providerAuths: ProviderAuthMetadata[];
 }): JSX.Element {
+  const t = useT();
   const orderedSnapshots = [...snapshots].sort((a, b) => {
     const toneA = snapshotStatusTone(a);
     const toneB = snapshotStatusTone(b);
@@ -456,10 +470,12 @@ function QuotaOverview({
     <div className="quota-overview">
       <div className="quota-overview__header">
         <h2 className="quota-overview__title">
-          配额状态
+          {t('usage.overview.title')}
           <span className="quota-overview__count">{snapshots.length}</span>
         </h2>
-        <span className="quota-overview__mode">{snapshots.length} 个账号</span>
+        <span className="quota-overview__mode">
+          {t('usage.overview.accountSuffix', { count: snapshots.length })}
+        </span>
       </div>
       <div className="quota-overview__grid">
         {orderedSnapshots.map((snapshot, i) => (
@@ -485,6 +501,7 @@ function QuotaAccountCard({
   snapshot: QuotaSnapshot;
   providerAuths: ProviderAuthMetadata[];
 }): JSX.Element {
+  const t = useT();
   const windows = groupQuotaWindowsByDisplay(snapshot.windows, snapshot.provider);
   const tone = snapshotStatusTone(snapshot);
   const providerLabel = PROVIDER_LABELS[snapshot.provider as ProviderId] ?? providerDisplayName(snapshot.provider);
@@ -494,10 +511,12 @@ function QuotaAccountCard({
   if (snapshot.providerAuthId) {
     const matched = providerAuths.find((p) => p.id === snapshot.providerAuthId);
     if (matched) {
-      typeLabel = matched.source === 'cpa-auth-file' ? 'auth 认证' : '手动 API Key';
+      typeLabel = matched.source === 'cpa-auth-file'
+        ? t('usage.account.typeAuth')
+        : t('usage.account.typeApiKey');
     }
   }
-  const typeText = typeLabel || sourceDisplayName(snapshot.source);
+  const typeText = typeLabel || sourceDisplayName(snapshot.source, t);
 
   // Determine unique identifier to display in the second line.
   //
@@ -578,9 +597,9 @@ function QuotaAccountCard({
     uniqueId === null
       ? ''
       : uniqueId.kind === 'project'
-        ? `项目 ${uniqueId.text}`
+        ? t('usage.identityPrefix.project', { value: uniqueId.text })
         : uniqueId.kind === 'account'
-          ? `账号 ${uniqueId.text}`
+          ? t('usage.identityPrefix.account', { value: uniqueId.text })
           : uniqueId.text;
 
   return (
@@ -588,6 +607,11 @@ function QuotaAccountCard({
       className="quota-account-card"
       data-provider={providerTone(snapshot.provider)}
       data-status={tone}
+      // Note: trailing `配额` is deferred to task 14.5 (aria-label /
+      // title attribute coverage) — task 14.4's scope is the
+      // time-range labels, quota window names, snapshot status
+      // badges, source labels, kind labels, and empty-state
+      // sentences. The visible catalog already covers all of those.
       aria-label={`${providerLabel} ${uniqueIdAriaText} 配额`}
     >
       {/* 1. 顶部身份区 */}
@@ -613,7 +637,14 @@ function QuotaAccountCard({
                   {' · '}
                   {(uniqueId.kind === 'project' || uniqueId.kind === 'account') && (
                     <span className="quota-account-card__id-hint">
-                      {uniqueId.kind === 'project' ? '项目' : '账号'}{' '}
+                      {/* The Translation_Key template is `<word> {value}` so
+                          substituting an empty value yields exactly the
+                          prefix word + trailing space we want as a hint —
+                          the actual identifier renders verbatim in the
+                          sibling `__unique-id` span next to it. */}
+                      {uniqueId.kind === 'project'
+                        ? t('usage.identityPrefix.project', { value: '' })
+                        : t('usage.identityPrefix.account', { value: '' })}
                     </span>
                   )}
                   <span
@@ -629,7 +660,7 @@ function QuotaAccountCard({
           </div>
         </div>
         <span className="quota-account-card__status" data-tone={tone}>
-          {snapshotStatusLabel(snapshot)}
+          {snapshotStatusLabel(snapshot, t)}
         </span>
       </header>
 
@@ -637,11 +668,11 @@ function QuotaAccountCard({
       <div className="quota-account-card__content">
         {snapshot.kind === 'quota' && windows.length > 0 ? (
           <div className="quota-account-card__windows">
-            {windows.map(({ window, displayName }, i) => (
+            {windows.map(({ window }, i) => (
               <QuotaWindowRow
                 key={`${window.name}-${i}`}
                 window={window}
-                displayName={displayName}
+                provider={snapshot.provider}
               />
             ))}
           </div>
@@ -653,16 +684,26 @@ function QuotaAccountCard({
               const symbol = currencySymbol(credits.currency);
               const amount = credits.total ?? credits.toppedUp ?? credits.granted ?? '—';
               const displayAmount = symbol === '' ? `${amount} ${credits.currency}` : `${symbol}${amount}`;
-              const fullName = `${credits.currency} ${[
-                credits.total === null ? null : `总额 ${credits.total}`,
-                credits.granted === null ? null : `赠金 ${credits.granted}`,
-                credits.toppedUp === null ? null : `充值 ${credits.toppedUp}`,
-              ].filter(Boolean).join(' / ')}`;
+              // Currency code (e.g. `CNY`, `USD`) is upstream-sourced
+              // and renders verbatim per Requirement 4.5; the
+              // 总额 / 赠金 / 充值 segment prefixes route through
+              // `quota.credits.*` so the tooltip flips locale with
+              // the rest of the UI.
+              const creditsSegments = [
+                credits.total === null ? null : t('quota.credits.totalPrefix', { value: credits.total }),
+                credits.granted === null ? null : t('quota.credits.grantedPrefix', { value: credits.granted }),
+                credits.toppedUp === null ? null : t('quota.credits.toppedUpPrefix', { value: credits.toppedUp }),
+              ].filter((segment): segment is string => segment !== null);
+              const fullName = creditsSegments.length === 0
+                ? credits.currency
+                : `${credits.currency} ${creditsSegments.join(' / ')}`;
               return (
                 <div key={i} className="quota-account-card__credits-row" title={fullName}>
                   <div className="quota-account-card__credits-main">
                     <span className="quota-account-card__credits-value">{displayAmount}</span>
-                    <span className="quota-account-card__credits-label">余额</span>
+                    <span className="quota-account-card__credits-label">
+                      {t('quota.credits.balanceLabel')}
+                    </span>
                   </div>
                   {/* Always render the sparkline slot — the component
                       itself draws a placeholder baseline when no
@@ -681,6 +722,12 @@ function QuotaAccountCard({
           </div>
         ) : (
           <div className="quota-account-card__health-only">
+            {/* Note: `暂无额度数据` is deferred to task 14.5 (empty-state /
+                aria-label coverage) — it is not in the task 14.4 scope
+                of "time-range labels, quota window names, snapshot
+                status badges, source labels, kind labels, empty-state
+                sentences" and the catalog does not yet expose a key
+                for it. */}
             <span className="quota-account-card__health-text">暂无额度数据</span>
           </div>
         )}
@@ -698,13 +745,19 @@ function QuotaAccountCard({
 
 function QuotaWindowRow({
   window: w,
-  displayName,
+  provider,
 }: {
   window: QuotaWindow;
-  displayName: string;
+  provider: string;
 }): JSX.Element {
+  const t = useT();
   const remaining = w.percentLeft;
   const rowClass = quotaWindowToneClass(remaining);
+  // Resolve the display label through the locale-aware helper so the
+  // visible row tracks Active_Locale; brand strings like `Claude` /
+  // `Gemini Pro` (and any window the resolver couldn't map) fall
+  // through verbatim per Requirement 4.5.
+  const displayName = translateQuotaWindowDisplayName(t, w.name, provider) ?? w.name;
 
   return (
     <div className={`quota-window-row ${rowClass}`} aria-label={`${displayName} 剩余 ${formatPercent(remaining)}`}>

@@ -35,7 +35,9 @@
 //
 
 import type { AppearanceSettings, DashboardState } from '../lib/types';
+import type { Translator } from '../../i18n';
 import { formatTokens } from '../lib/format';
+import { useT } from '../lib/i18n';
 import { StatusHero } from './StatusHero';
 import { Sparkline } from './Sparkline';
 import { QuotaStrip } from './QuotaStrip';
@@ -48,7 +50,10 @@ interface WidgetShellProps {
   readonly onDisplayModeChange?: (mode: 'expanded' | 'mini') => void;
 }
 
-function nodeLine(state: DashboardState): {
+function nodeLine(
+  t: Translator,
+  state: DashboardState,
+): {
   primary: string;
   secondary: string | null;
   tooltip: string;
@@ -61,12 +66,16 @@ function nodeLine(state: DashboardState): {
   if (node) return { primary: node, secondary: null, tooltip: node };
   if (group) {
     return {
-      primary: '未选择真实节点',
+      primary: t('compact.unselectedReal.primary'),
       secondary: group,
-      tooltip: `${group} 当前选择为 DIRECT/GLOBAL/REJECT`,
+      tooltip: t('compact.unselectedReal.tooltip', { group }),
     };
   }
-  return { primary: '等待节点数据', secondary: null, tooltip: '当前节点暂无数据' };
+  return {
+    primary: t('compact.waitingNode.primary'),
+    secondary: null,
+    tooltip: t('compact.waitingNode.tooltip'),
+  };
 }
 
 export function WidgetShell({
@@ -75,7 +84,8 @@ export function WidgetShell({
   displayMode = 'expanded',
   onDisplayModeChange,
 }: WidgetShellProps): JSX.Element {
-  const line = nodeLine(state);
+  const t = useT();
+  const line = nodeLine(t, state);
   const usage = state.usageToday;
   const isMini = displayMode === 'mini';
 
@@ -110,8 +120,8 @@ export function WidgetShell({
             e.stopPropagation();
             onDisplayModeChange?.('mini');
           }}
-          title="切换到极简模式"
-          aria-label="切换到极简模式"
+          title={t('compact.shrink.title')}
+          aria-label={t('compact.shrink.aria')}
         >
           {/* Bare corner-mark — two perpendicular hairlines meeting
               at the top-right. No container, no fill, no border. The
@@ -146,7 +156,7 @@ export function WidgetShell({
       <div className="compact-frame__content">
         {/* ── Network slot: status + node copy on the left, sparkline
               mini-window on the right ──────────────────────────── */}
-        <section className="compact-network-slot" aria-label="网络状态">
+        <section className="compact-network-slot" aria-label={t('compact.network.aria')}>
           <div className="compact-network-slot__copy">
             <StatusHero state={state} />
 
@@ -166,7 +176,7 @@ export function WidgetShell({
         </section>
 
         {/* ── Usage slot: quota rows + token summary ──────────── */}
-        <section className="compact-usage-slot" aria-label="AI 用量">
+        <section className="compact-usage-slot" aria-label={t('compact.usage.aria')}>
           <div className="compact-usage-slot__scroll-wrap">
             <div className="compact-usage-slot__scroll">
               <QuotaStrip />

@@ -42,6 +42,8 @@ import { useMemo } from 'react';
 import { RefreshCw, Trash2, AlertCircle, KeyRound, Clock } from 'lucide-react';
 
 import { ProviderIcon } from './ProviderIcon';
+import { useT } from '../lib/i18n';
+import type { Translator, TranslationKey } from '../../i18n';
 import type {
   KiroTokenRefreshSettings,
   ProviderAuthErrorCode,
@@ -75,45 +77,64 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 };
 
 /**
- * Map from `QuotaCapability` to the chip copy that summarizes what
+ * Map from `QuotaCapability` to the catalog key that summarises what
  * this account can produce. The phrasing here is mirrored by the
  * inline hint that replaces the percentage display for non-`official`
- * accounts (Requirement 5.4). Keep them in sync if either changes.
+ * accounts (Requirement 5.4 of cpa-quota-import). Keep them in sync
+ * if either changes.
  */
-const CAPABILITY_LABELS: Record<QuotaCapability, string> = {
-  official: '官方 Quota',
-  health_only: '可用性检查',
-  usage_only: '本地用量',
-  unsupported: '未支持',
+const CAPABILITY_LABEL_KEYS: Record<QuotaCapability, TranslationKey> = {
+  official: 'providerAuth.capability.official',
+  health_only: 'providerAuth.capability.healthOnly',
+  usage_only: 'providerAuth.capability.usageOnly',
+  unsupported: 'providerAuth.capability.unsupported',
 };
 
 /**
- * zh-CN labels for every `ProviderAuthErrorCode` the IPC layer can
+ * Catalog keys for every `ProviderAuthErrorCode` the IPC layer can
  * surface (cpa-quota-import requirements §10). The map is total over
  * the closed union, so adding a new code in `types.ts` is a
  * compile-time error here.
  *
  * Phrasing intentionally stays short and natural (no trailing
- * punctuation, no "错误：" prefix) so it slots into both inline
+ * punctuation, no "error:" prefix) so it slots into both inline
  * status badges and tooltip text without further reformatting.
+ *
+ * The two non-resolvable codes (`cancelled`, `validation`) are
+ * deliberately out of the catalog because they never reach the user
+ * as a status badge — they are surfaced only as transient toast copy
+ * sourced from the envelope `message`. The renderer falls back to
+ * that message for any code not present in this map.
  */
-export const PROVIDER_AUTH_ERROR_LABELS: Record<
+export const PROVIDER_AUTH_ERROR_LABEL_KEYS: Partial<Record<
   ProviderAuthErrorCode,
-  string
-> = {
-  auth_missing: '凭据缺失',
-  auth_expired: '凭据已过期',
-  project_missing: '缺少项目 ID',
-  upstream_unauthorized: '上游拒绝授权',
-  rate_limited: '上游限流',
-  upstream_changed: '上游接口已变更',
-  network_error: '网络异常',
-  unsupported: '暂未实现 (v1.1 上线)',
-  parse_error: '认证文件解析失败',
-  unsupported_file: '不支持的文件类型',
-  cancelled: '已取消',
-  validation: '参数校验失败',
+  TranslationKey
+>> = {
+  auth_missing: 'providerAuth.error.authMissing',
+  auth_expired: 'providerAuth.error.authExpired',
+  project_missing: 'providerAuth.error.projectMissing',
+  upstream_unauthorized: 'providerAuth.error.upstreamUnauthorized',
+  rate_limited: 'providerAuth.error.rateLimited',
+  upstream_changed: 'providerAuth.error.upstreamChanged',
+  network_error: 'providerAuth.error.networkError',
+  unsupported: 'providerAuth.error.unsupported',
+  parse_error: 'providerAuth.error.parseError',
+  unsupported_file: 'providerAuth.error.unsupportedFile',
 };
+
+/**
+ * Resolve a Provider_Auth error code to its localised label, using
+ * the supplied translator. Returns `null` for codes outside the
+ * closed status-badge set (`cancelled`, `validation`) so callers
+ * can fall back to the envelope `message`.
+ */
+export function resolveProviderAuthErrorLabel(
+  t: Translator,
+  code: string,
+): string | null {
+  const key = (PROVIDER_AUTH_ERROR_LABEL_KEYS as Record<string, TranslationKey | undefined>)[code];
+  return key === undefined ? null : t(key);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -806,13 +827,15 @@ function CapabilityChip({
 }: {
   readonly capability: QuotaCapability;
 }): JSX.Element {
+  const t = useT();
+  const label = t(CAPABILITY_LABEL_KEYS[capability]);
   return (
     <span
       className="provider-auth-list__capability"
       data-capability={capability}
-      title={CAPABILITY_LABELS[capability]}
+      title={label}
     >
-      {CAPABILITY_LABELS[capability]}
+      {label}
     </span>
   );
 }
@@ -824,6 +847,7 @@ function StatusBadge({
   readonly errorCode: ProviderAuthErrorCode | null;
   readonly disabled: boolean;
 }): JSX.Element {
+  const t = useT();
   if (disabled) {
     // Disabled rows take precedence over error codes — the user
     // explicitly paused the account, so there is no need to nag
@@ -858,6 +882,12 @@ function StatusBadge({
     errorCode === 'upstream_unauthorized' ||
     errorCode === 'parse_error';
 
+  // Codes outside the closed status-badge set (`cancelled`,
+  // `validation`) fall back to the raw enum tag — those codes never
+  // surface here today (status badges are only rendered for the codes
+  // that block interaction), but the fallback keeps the type total.
+  const label = resolveProviderAuthErrorLabel(t, errorCode) ?? errorCode;
+
   return (
     <span
       className={
@@ -868,7 +898,7 @@ function StatusBadge({
       data-status={isHardError ? 'error' : 'warn'}
       data-error-code={errorCode}
     >
-      {PROVIDER_AUTH_ERROR_LABELS[errorCode]}
+      {label}
     </span>
   );
 }

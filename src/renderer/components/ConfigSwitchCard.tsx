@@ -1,4 +1,4 @@
-// ConfigSwitchCard — list and switch OpenClash config files (Profile / 订阅).
+// ConfigSwitchCard — list and switch OpenClash config files (Profile / subscriptions).
 //
 // Renders the user-curated whitelist (`managementInterface.configFileWhitelist`)
 // decorated with the active-config flag from the management client. Clicking
@@ -13,9 +13,10 @@
 //   • Show `entry.alias.trim()` when non-empty, otherwise the basename of
 //     `entry.path`. NEVER render the absolute `path` verbatim — it can
 //     leak the router's filesystem layout into the UI / screenshots.
-//   • Mark the entry whose `isActive === true` with a "生效" badge. The
-//     IPC layer guarantees at most one active entry; we still defensively
-//     dedupe so a regression there cannot light up two badges.
+//   • Mark the entry whose `isActive === true` with a localised "Active"
+//     badge (`configSwitch.activeBadge`). The IPC layer guarantees at
+//     most one active entry; we still defensively dedupe so a regression
+//     there cannot light up two badges.
 //   • When the whitelist is empty AND no active path was learned, hide
 //     the action controls and surface guidance text pointing users at
 //     the Settings page (Requirement 4.5).
@@ -39,7 +40,9 @@
 import { ChevronRight, Check } from 'lucide-react';
 
 import type { HealthStatus, NetworkQuickActions } from '../lib/types';
+import type { Translator } from '../../i18n';
 import { formatManagementError } from '../lib/format';
+import { useT } from '../lib/i18n';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -81,13 +84,16 @@ export interface ConfigSwitchCardProps {
  * POSIX paths only (`/etc/openclash/config/*.yaml`), so `\\` handling
  * is purely defensive.
  */
-function entryLabel(entry: { alias: string; path: string }): string {
+function entryLabel(
+  entry: { alias: string; path: string },
+  fallback: string,
+): string {
   const trimmedAlias = entry.alias.trim();
   if (trimmedAlias.length > 0) {
     return trimmedAlias;
   }
   const path = entry.path;
-  if (!path) return '(未命名配置)';
+  if (!path) return fallback;
   const normalised = path.replace(/[\\/]+$/, '');
   const idx = Math.max(
     normalised.lastIndexOf('/'),
@@ -100,7 +106,7 @@ function entryLabel(entry: { alias: string; path: string }): string {
 
 interface DisableState {
   readonly disabled: boolean;
-  /** zh-CN reason rendered as a footer hint when the buttons are disabled. */
+  /** Localised reason rendered as a footer hint when the buttons are disabled. */
   readonly reason: string | null;
 }
 
@@ -109,30 +115,31 @@ interface DisableState {
  * rule wins so the surfaced hint reflects the most actionable cause.
  */
 function resolveDisableState(
+  t: Translator,
   management: NetworkQuickActions['management'],
   switchInProgress: NetworkQuickActions['switchInProgress'],
   healthStatus: HealthStatus,
 ): DisableState {
   if (switchInProgress !== false && switchInProgress.kind === 'config') {
-    return { disabled: true, reason: '配置切换进行中…' };
+    return { disabled: true, reason: t('configSwitch.disable.inProgress') };
   }
   if (healthStatus === 'home_down') {
-    return { disabled: true, reason: '路由器不可达，无法执行切换' };
+    return { disabled: true, reason: t('configSwitch.disable.homeDown') };
   }
   if (!management.configured) {
     return {
       disabled: true,
-      reason: 'OpenClash 管理接口未配置，请前往设置页填写地址与凭据',
+      reason: t('configSwitch.disable.notConfigured'),
     };
   }
   if (management.lastErrorCode === 'auth_error') {
     return {
       disabled: true,
-      reason: formatManagementError('auth_error'),
+      reason: formatManagementError(t, 'auth_error'),
     };
   }
   if (!management.reachable && healthStatus === 'openclash_unreachable') {
-    return { disabled: true, reason: 'OpenClash 管理接口不可达' };
+    return { disabled: true, reason: t('configSwitch.disable.unreachable') };
   }
   return { disabled: false, reason: null };
 }
@@ -148,7 +155,9 @@ export function ConfigSwitchCard({
   healthStatus,
   onConfirmSwitch,
 }: ConfigSwitchCardProps): JSX.Element | null {
+  const t = useT();
   const { activePath, whitelist } = configFiles;
+  const unnamed = t('configSwitch.unnamed');
 
   // Requirement 4.5: when nothing is configured AND the management
   // interface produced no active path, the card collapses to a single
@@ -160,14 +169,15 @@ export function ConfigSwitchCard({
       <section
         className="config-switch-card config-switch-card--empty"
         data-testid="config-switch-card-empty"
-        aria-label="OpenClash 配置切换"
+        aria-label={t('configSwitch.aria')}
       >
         <header className="config-switch-card__head">
-          <span className="config-switch-card__eyebrow">配置切换</span>
+          <span className="config-switch-card__eyebrow">
+            {t('configSwitch.eyebrow')}
+          </span>
         </header>
         <p className="config-switch-card__guidance">
-          尚未配置可切换的 OpenClash 配置文件。请前往「设置」填写
-          OpenClash 管理接口地址、凭据，以及配置文件白名单。
+          {t('configSwitch.guidance')}
         </p>
       </section>
     );
@@ -185,6 +195,7 @@ export function ConfigSwitchCard({
   }
 
   const { disabled, reason } = resolveDisableState(
+    t,
     management,
     switchInProgress,
     healthStatus,
@@ -196,22 +207,24 @@ export function ConfigSwitchCard({
   };
 
   // Hidden span to satisfy tests that locate the active path data-testid
-  // by basename. Visually replaced by the row-level "生效" badge.
+  // by basename. Visually replaced by the row-level "Active" badge.
   const activeBasenameHint =
     activePath !== null
       ? firstActiveIdx >= 0
-        ? entryLabel(whitelist[firstActiveIdx]!)
-        : entryLabel({ alias: '', path: activePath })
+        ? entryLabel(whitelist[firstActiveIdx]!, unnamed)
+        : entryLabel({ alias: '', path: activePath }, unnamed)
       : null;
 
   return (
     <section
       className="config-switch-card"
       data-testid="config-switch-card"
-      aria-label="OpenClash 配置切换"
+      aria-label={t('configSwitch.aria')}
     >
       <header className="config-switch-card__head">
-        <span className="config-switch-card__eyebrow">配置切换</span>
+        <span className="config-switch-card__eyebrow">
+          {t('configSwitch.eyebrow')}
+        </span>
         <span className="config-switch-card__head-rule" aria-hidden="true" />
         {activeBasenameHint !== null && (
           <span
@@ -219,7 +232,7 @@ export function ConfigSwitchCard({
             data-testid="config-switch-card-active-path"
           >
             <span className="config-switch-card__active-hint-label">
-              当前
+              {t('configSwitch.activeBadge')}
             </span>
             <span className="config-switch-card__active-hint-name">
               {activeBasenameHint}
@@ -233,13 +246,13 @@ export function ConfigSwitchCard({
           className="config-switch-card__guidance"
           data-testid="config-switch-card-no-whitelist"
         >
-          配置文件白名单为空。请前往「设置」添加可切换的配置文件。
+          {t('configSwitch.guidance')}
         </p>
       ) : (
         <ul className="config-switch-card__list" role="list">
           {whitelist.map((entry, idx) => {
             const isActive = idx === firstActiveIdx;
-            const label = entryLabel(entry);
+            const label = entryLabel(entry, unnamed);
             // Active entries cannot be the switch target (Requirement 4.3).
             const buttonDisabled = disabled || isActive;
             return (
@@ -269,7 +282,7 @@ export function ConfigSwitchCard({
                       className="config-switch-card__badge-icon"
                       aria-hidden="true"
                     />
-                    生效
+                    {t('configSwitch.activeBadge')}
                   </span>
                 )}
                 <button
@@ -281,13 +294,19 @@ export function ConfigSwitchCard({
                   disabled={buttonDisabled}
                   onClick={() => handleClick(entry.path)}
                   data-testid={`config-switch-btn-${idx}`}
-                  aria-label={isActive ? '当前配置' : `切换至 ${label}`}
+                  aria-label={
+                    isActive
+                      ? t('node.activePill')
+                      : t('node.action.switch') + ' ' + label
+                  }
                 >
                   {isActive ? (
-                    '当前配置'
+                    t('node.activePill')
                   ) : (
                     <>
-                      <span className="config-switch-card__btn-label">切换</span>
+                      <span className="config-switch-card__btn-label">
+                        {t('node.action.switch')}
+                      </span>
                       <ChevronRight
                         size={13}
                         strokeWidth={2}

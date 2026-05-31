@@ -43,15 +43,18 @@ import type {
   CompactTheme,
   CreateProviderAuthApiKeyInput,
   KiroTokenRefreshSettings,
+  Locale_Code,
   ManagementConfigFileEntry,
   ManualApiKeyProvider,
   ProviderAuthMetadata,
   ProviderId,
   RefreshIntervalSettings,
 } from '../lib/types';
+import { useT } from '../lib/i18n';
+import type { TranslationKey, Translator } from '../../i18n';
 import {
   PROVIDER_LABELS,
-  PROVIDER_AUTH_ERROR_LABELS,
+  resolveProviderAuthErrorLabel,
   ProviderAuthList,
 } from './ProviderAuthList';
 
@@ -99,68 +102,32 @@ const DEFAULT_KIRO_TOKEN_REFRESH: KiroTokenRefreshSettings = {
 
 interface CompactThemeOption {
   readonly id: CompactTheme;
-  readonly label: string;
-  readonly description: string;
+  /** Catalog key suffix under `settings.appearance.theme.<key>.label/.description`. */
+  readonly i18nKey: string;
 }
 
+/**
+ * Compact-window theme presets in display order. Six v2 design-language
+ * presets followed by five v1 legacy presets. The visible label and
+ * description are resolved at render time via
+ * `t('settings.appearance.theme.<i18nKey>.label')` /
+ * `…description` (i18n-multilingual-support, Requirement 4.2). Catalog
+ * keys live in `src/i18n/catalogs/{zh-CN,en-US}.ts`.
+ */
 const COMPACT_THEME_OPTIONS: readonly CompactThemeOption[] = [
   // v2 design-language presets
-  {
-    id: 'liquid-glass',
-    label: '液态玻璃',
-    description: '浅色半透明玻璃，桌面 widget 般通透。',
-  },
-  {
-    id: 'material-you',
-    label: 'Material You',
-    description: '浅色 MD3 双色块，亲和现代。',
-  },
-  {
-    id: 'soft-neumorph',
-    label: '柔和拟态',
-    description: '浅色凸起外壳与内凹槽，安静低噪。',
-  },
-  {
-    id: 'paper-dashboard',
-    label: '纸感仪表',
-    description: '近白纸面 + 细线分隔，办公低干扰。',
-  },
-  {
-    id: 'mint-monitor',
-    label: '薄荷监控',
-    description: '暗色半透明卡片，参考图风格。',
-  },
-  {
-    id: 'device-oled',
-    label: '硬件 OLED',
-    description: '金属外壳 + 黑色 OLED 屏 + LED 段条。',
-  },
+  { id: 'liquid-glass', i18nKey: 'liquidGlass' },
+  { id: 'material-you', i18nKey: 'materialYou' },
+  { id: 'soft-neumorph', i18nKey: 'softNeumorph' },
+  { id: 'paper-dashboard', i18nKey: 'paperDashboard' },
+  { id: 'mint-monitor', i18nKey: 'mintMonitor' },
+  { id: 'device-oled', i18nKey: 'deviceOled' },
   // v1 legacy presets (retained for users who preferred them)
-  {
-    id: 'obsidian-glass',
-    label: '黑曜玻璃',
-    description: '深色磨砂质感，桌面常驻不抢眼。',
-  },
-  {
-    id: 'aurora-ring',
-    label: '极光环',
-    description: '边缘极光缓慢流动，状态色感强。',
-  },
-  {
-    id: 'holo-grid',
-    label: '全息网格',
-    description: 'HUD 风格网格 + 慢扫描线。',
-  },
-  {
-    id: 'liquid-metal',
-    label: '液态金属',
-    description: '石墨与冷光泽，适合深色桌面。',
-  },
-  {
-    id: 'signal-pulse',
-    label: '信号脉冲',
-    description: '随状态色脉动的同心圆。',
-  },
+  { id: 'obsidian-glass', i18nKey: 'obsidianGlass' },
+  { id: 'aurora-ring', i18nKey: 'auroraRing' },
+  { id: 'holo-grid', i18nKey: 'holoGrid' },
+  { id: 'liquid-metal', i18nKey: 'liquidMetal' },
+  { id: 'signal-pulse', i18nKey: 'signalPulse' },
 ];
 
 const HTTP_URL_RE = /^https?:\/\//;
@@ -179,33 +146,43 @@ const CONFIG_PATH_RE = /^\/etc\/openclash\/config\/[A-Za-z0-9._\-]+\.(yaml|yml)$
  * schema rejects it, but the renderer treats an empty URL as the
  * "skip this section" signal so the user can land on Settings on
  * first run without a hard error.
+ *
+ * Error strings are sourced from the active Translation_Catalog so
+ * the validation surface tracks the user's locale
+ * (i18n-multilingual-support, Requirement 4.2).
  */
-function validateManagementUrl(value: string): string | undefined {
+function validateManagementUrl(
+  value: string,
+  t: Translator,
+): string | undefined {
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    return '必须是 http:// 或 https:// 开头的合法 URL';
+    return t('settings.validation.urlInvalid');
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return '必须使用 http:// 或 https://';
+    return t('settings.validation.urlScheme');
   }
   if (parsed.username !== '' || parsed.password !== '') {
-    return 'URL 不应包含用户名或密码';
+    return t('settings.validation.urlNoCreds');
   }
   if (parsed.search !== '' || parsed.hash !== '') {
-    return 'URL 不应包含 query 或 fragment';
+    return t('settings.validation.urlNoQuery');
   }
   return undefined;
 }
 
-function validateSettings(settings: AppSettings): ValidationErrors {
+function validateSettings(
+  settings: AppSettings,
+  t: Translator,
+): ValidationErrors {
   const errors: ValidationErrors = {};
 
   if (!HTTP_URL_RE.test(settings.controllerUrl)) {
-    errors.controllerUrl = '必须是 http:// 或 https:// 开头的 URL';
+    errors.controllerUrl = t('settings.validation.urlInvalid');
   }
 
   if (settings.probeUrls.length === 0) {
@@ -238,7 +215,7 @@ function validateSettings(settings: AppSettings): ValidationErrors {
   }
 
   // Management interface
-  const urlError = validateManagementUrl(settings.managementInterface.url);
+  const urlError = validateManagementUrl(settings.managementInterface.url, t);
   if (urlError !== undefined) {
     errors.managementUrl = urlError;
   }
@@ -287,76 +264,75 @@ function validateSettings(settings: AppSettings): ValidationErrors {
 
 interface SectionDef {
   readonly id: string;
-  readonly label: string;
-  readonly hint: string;
+  /**
+   * Catalog key suffix under `settings.section.<i18nKey>.label/.hint`.
+   * Section labels and hints are resolved at render time via
+   * {@link useT} so the rail tracks the user's locale
+   * (i18n-multilingual-support, Requirement 4.2).
+   */
+  readonly i18nKey: string;
   readonly icon: JSX.Element;
 }
 
 const SECTIONS: readonly SectionDef[] = [
   {
     id: 'appearance',
-    label: '外观',
-    hint: '深浅色与悬浮窗风格',
+    i18nKey: 'appearance',
     icon: <Palette size={14} strokeWidth={1.75} />,
   },
   {
     id: 'controller',
-    label: '控制器',
-    hint: 'OpenClash 主控连接',
+    i18nKey: 'controller',
     icon: <Server size={14} strokeWidth={1.75} />,
   },
   {
     id: 'probes',
-    label: '探测目标',
-    hint: '外网连通性 URL',
+    i18nKey: 'probes',
     icon: <Radar size={14} strokeWidth={1.75} />,
   },
   {
     id: 'groups',
-    label: '主分组',
-    hint: '展示与切换',
+    i18nKey: 'groups',
     icon: <Layers size={14} strokeWidth={1.75} />,
   },
   {
     id: 'router',
-    label: '路由器',
-    hint: '内网健康检测',
+    i18nKey: 'router',
     icon: <Router size={14} strokeWidth={1.75} />,
   },
   {
     id: 'intervals',
-    label: '刷新节奏',
-    hint: '采样频率 (ms)',
+    i18nKey: 'intervals',
     icon: <Timer size={14} strokeWidth={1.75} />,
   },
   {
     id: 'switching',
-    label: '切换',
-    hint: '节点切换行为',
+    i18nKey: 'switching',
     icon: <ArrowLeftRight size={14} strokeWidth={1.75} />,
   },
   {
     id: 'management',
-    label: '管理接口',
-    hint: 'OpenClash LuCI',
+    i18nKey: 'management',
     icon: <Network size={14} strokeWidth={1.75} />,
   },
   {
     id: 'accounts',
-    label: 'AI 账号',
-    hint: '导入认证文件或填写 API key',
+    i18nKey: 'accounts',
     icon: <Sparkles size={14} strokeWidth={1.75} />,
   },
 ];
 
-// Friendly labels + hints for refresh interval keys.
-const INTERVAL_META: Record<keyof RefreshIntervalSettings, { label: string; hint: string }> = {
-  networkMs: { label: '网络', hint: '路由 + 外网探测' },
-  openclashMs: { label: 'OpenClash', hint: 'API / 模式轮询' },
-  currentNodeMs: { label: '当前节点', hint: '延迟与丢包采样' },
-  nodeScanMs: { label: '节点扫描', hint: '全量节点列表' },
-  usageMs: { label: 'AI 用量', hint: 'Token / 配额刷新' },
-  retentionMs: { label: '清理', hint: '历史数据保留' },
+// Refresh-interval field metadata. The visible label and hint for each
+// `RefreshIntervalSettings` key are resolved at render time via
+// `t('settings.intervals.<i18nKey>.label/.hint')`. Catalog keys live in
+// `src/i18n/catalogs/{zh-CN,en-US}.ts`.
+const INTERVAL_META: Record<keyof RefreshIntervalSettings, { i18nKey: string }> = {
+  networkMs: { i18nKey: 'network' },
+  openclashMs: { i18nKey: 'openclash' },
+  currentNodeMs: { i18nKey: 'currentNode' },
+  nodeScanMs: { i18nKey: 'nodeScan' },
+  usageMs: { i18nKey: 'usage' },
+  retentionMs: { i18nKey: 'retention' },
 };
 
 // ---------------------------------------------------------------------------
@@ -412,7 +388,10 @@ const MANUAL_API_KEY_PICKER_ORDER: readonly ManualApiKeyProvider[] = [
  * the message length is already bounded to 80 characters by the
  * IPC schema; we trim defensively anyway.
  */
-function extractIpcError(err: unknown): { code: string; message: string } {
+function extractIpcError(
+  err: unknown,
+  t?: Translator,
+): { code: string; message: string } {
   if (err !== null && typeof err === 'object') {
     const code = (err as { code?: unknown }).code;
     const message = (err as { message?: unknown }).message;
@@ -423,33 +402,46 @@ function extractIpcError(err: unknown): { code: string; message: string } {
       return { code: 'unknown', message: message.slice(0, 200) };
     }
   }
-  return { code: 'unknown', message: '未知错误' };
+  // Fallback for non-string `message`. The `t` argument is optional so
+  // the mount-time `useEffect` (which has `[]` deps to avoid re-listing
+  // accounts on every locale flip) can reuse this helper without
+  // capturing a stale translator closure; in that path the localised
+  // "Unknown error" sentinel comes through `formatProviderAuthError`'s
+  // re-resolution at render time anyway.
+  return {
+    code: 'unknown',
+    message: t ? t('settings.accounts.apiKey.error.unknown') : 'Unknown error',
+  };
 }
 
 /**
  * Render copy for a Provider_Auth IPC error envelope. Maps the
- * closed `ProviderAuthErrorCode` set to the same zh-CN labels
+ * closed `ProviderAuthErrorCode` set to the same localised labels
  * `ProviderAuthList` uses for status badges (single source of
- * truth: `PROVIDER_AUTH_ERROR_LABELS`); falls back to the raw
+ * truth: `PROVIDER_AUTH_ERROR_LABEL_KEYS`); falls back to the raw
  * envelope message for codes outside the closed set (`'protocol'`,
  * `'unknown'`, IPC validation failures from outside the Provider_Auth
  * code list, etc.).
  */
-function formatProviderAuthError(envelope: {
-  code: string;
-  message: string;
-}): string {
-  const known = (PROVIDER_AUTH_ERROR_LABELS as Record<string, string>)[
-    envelope.code
-  ];
-  if (typeof known === 'string') {
+function formatProviderAuthError(
+  t: Translator,
+  envelope: {
+    code: string;
+    message: string;
+  },
+): string {
+  const known = resolveProviderAuthErrorLabel(t, envelope.code);
+  if (known !== null) {
     return envelope.message.length > 0
-      ? `${known}：${envelope.message}`
+      ? t('settings.accounts.apiKey.error.prefix', {
+          label: known,
+          message: envelope.message,
+        })
       : known;
   }
   return envelope.message.length > 0
     ? envelope.message
-    : `导入失败 (${envelope.code})`;
+    : t('settings.accounts.apiKey.error.importFailed', { code: envelope.code });
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +449,7 @@ function formatProviderAuthError(envelope: {
 // ---------------------------------------------------------------------------
 
 export function SettingsView(): JSX.Element {
+  const t = useT();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [pristine, setPristine] = useState<AppSettings | null>(null);
   const [errors, setErrors] = useState<ValidationErrors>({});
@@ -474,6 +467,12 @@ export function SettingsView(): JSX.Element {
   const [showLuciPassword, setShowLuciPassword] = useState(false);
   const [credsCleared, setCredsCleared] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Non-blocking error surface for the eager-commit Locale_Picker.
+  // Lives outside the form's `errors` map and the `saveError` channel
+  // (i18n-multilingual-support, Requirements 8.6, 8.7) so the locale
+  // failure neither sets the global dirty flag nor blocks other
+  // in-flight edits / the Save button. Cleared on a successful flip.
+  const [localeError, setLocaleError] = useState<string | null>(null);
 
   // ── Provider_Auth section local state ─────────────────────────────
   // These mutations DO NOT flow through the existing `setSettings` /
@@ -569,6 +568,10 @@ export function SettingsView(): JSX.Element {
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
         console.error('[SettingsView] listProviderAuths failed:', err);
+        // No translator passed: the mount-time effect runs once with
+        // `[]` deps so we cannot capture a current `t`; the fallback
+        // "Unknown error" string is fine for the rare initial-load
+        // failure path.
         if (!cancelled) setProviderAuthError(extractIpcError(err));
       });
 
@@ -713,12 +716,12 @@ export function SettingsView(): JSX.Element {
         setProviderAuthRows((prev) =>
           prev.map((r) => (r.id === id ? { ...r, enabled: !enabled } : r)),
         );
-        setProviderAuthError(extractIpcError(err));
+        setProviderAuthError(extractIpcError(err, t));
       } finally {
         setProviderAuthBusyId(null);
       }
     },
-    [],
+    [t],
   );
 
   // Probe URL list management
@@ -887,10 +890,77 @@ export function SettingsView(): JSX.Element {
       setCredsCleared(true);
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : '清除凭据时发生未知错误';
+        err instanceof Error ? err.message : t('settings.save.unknownError');
       setSaveError(message);
     }
-  }, []);
+  }, [t]);
+
+  /**
+   * Eager-commit handler for the Locale_Picker
+   * (i18n-multilingual-support, Requirements 8.5, 8.6, 8.7).
+   *
+   * Mirrors {@link handleClearManagementCredentials}: optimistically
+   * mutates local state so the radio reflects the click immediately,
+   * then synchronously dispatches `desktop.updateSettings({ locale })`
+   * inside the same user-event handler — there is no Save round-trip
+   * for this control.
+   *
+   * To keep the locale axis invisible to the form's `dirty` flag (the
+   * task explicitly forbids routing locale through `dirty`), we patch
+   * BOTH `settings.locale` AND `pristine.locale` in tandem. The dirty
+   * calculation is a JSON-string compare of those two objects; mutating
+   * them together leaves any other in-flight edits the user is making
+   * fully visible to `dirty` while the locale flip itself is a no-op
+   * for that calculation.
+   *
+   * On success we deliberately do NOT swap `settings` with the canonical
+   * `updated` row returned by the IPC: that row carries the *previously
+   * persisted* values for every non-locale field, which would clobber
+   * any in-flight edits the user has made elsewhere on the form
+   * (Requirement 8.7).
+   *
+   * On rejection we revert both `settings.locale` and `pristine.locale`
+   * to the previous Locale_Code and surface a non-blocking error via
+   * {@link localeError} without touching the form's `errors` map,
+   * `saveError`, or any other field's value.
+   */
+  const handleLocaleChange = useCallback(
+    async (next: Locale_Code) => {
+      if (!settings || next === settings.locale) return;
+      const previous = settings.locale;
+      // Optimistic local update — the radio reflects the click before
+      // the IPC round-trip resolves (Requirement 8.5). We patch
+      // `pristine` alongside `settings` so the locale flip is invisible
+      // to the dirty calculation (Requirement 8.7).
+      setSettings((prev) => (prev ? { ...prev, locale: next } : prev));
+      setPristine((prev) => (prev ? { ...prev, locale: next } : prev));
+      setLocaleError(null);
+      const desktop = window.desktop;
+      if (!desktop) {
+        setSettings((prev) => (prev ? { ...prev, locale: previous } : prev));
+        setPristine((prev) => (prev ? { ...prev, locale: previous } : prev));
+        setLocaleError(t('settings.locale.errorPersistFailed'));
+        return;
+      }
+      try {
+        await desktop.updateSettings({ locale: next });
+        // Optimistic state already reflects the new locale; the IPC
+        // resolves with the canonical row but we intentionally drop it
+        // to avoid stomping in-flight edits (Requirement 8.7). The
+        // `settings.updated` broadcast is consumed by I18nProvider for
+        // live re-render; SettingsView's locale state is fully owned
+        // by this handler.
+      } catch {
+        // Revert optimistic update on both branches; surface a
+        // non-blocking error. Do NOT route through `saveError` /
+        // `errors` / `dirty` (Requirements 8.6, 8.7).
+        setSettings((prev) => (prev ? { ...prev, locale: previous } : prev));
+        setPristine((prev) => (prev ? { ...prev, locale: previous } : prev));
+        setLocaleError(t('settings.locale.errorPersistFailed'));
+      }
+    },
+    [settings, t],
+  );
 
   // ---------------------------------------------------------------------------
   // Provider_Auth import / refresh / delete handlers
@@ -936,7 +1006,7 @@ export function SettingsView(): JSX.Element {
         return next;
       });
     } catch (err: unknown) {
-      const envelope = extractIpcError(err);
+      const envelope = extractIpcError(err, t);
       // `cancelled` is a normal user gesture (Requirement 8.3) —
       // do not surface it as an error.
       if (envelope.code !== 'cancelled') {
@@ -945,7 +1015,7 @@ export function SettingsView(): JSX.Element {
     } finally {
       setProviderAuthBusyId(null);
     }
-  }, [providerPick]);
+  }, [providerPick, t]);
 
   const handleProviderAuthRefresh = useCallback(async (id: string) => {
     const desktop = window.desktop;
@@ -962,11 +1032,11 @@ export function SettingsView(): JSX.Element {
       const rows = await desktop.listProviderAuths();
       setProviderAuthRows(rows);
     } catch (err: unknown) {
-      setProviderAuthError(extractIpcError(err));
+      setProviderAuthError(extractIpcError(err, t));
     } finally {
       setProviderAuthBusyId(null);
     }
-  }, []);
+  }, [t]);
 
   const handleProviderAuthDelete = useCallback(async (id: string) => {
     const desktop = window.desktop;
@@ -977,11 +1047,11 @@ export function SettingsView(): JSX.Element {
       await desktop.deleteProviderAuth({ id });
       setProviderAuthRows((prev) => prev.filter((r) => r.id !== id));
     } catch (err: unknown) {
-      setProviderAuthError(extractIpcError(err));
+      setProviderAuthError(extractIpcError(err, t));
     } finally {
       setProviderAuthBusyId(null);
     }
-  }, []);
+  }, [t]);
 
   /**
    * Submit the manual API-key form. Mirrors the import handler:
@@ -1004,7 +1074,7 @@ export function SettingsView(): JSX.Element {
       if (trimmedPassToken.length === 0 || trimmedUserId.length === 0) {
         setProviderAuthError({
           code: 'validation',
-          message: '小米 Mimo 必须填写 passToken 和 userId',
+          message: t('settings.accounts.apiKey.validation.xiaomiRequired'),
         });
         return;
       }
@@ -1031,7 +1101,7 @@ export function SettingsView(): JSX.Element {
         setXiaomiPassTokenShow(false);
         setApiKeyFormOpen(false);
       } catch (err: unknown) {
-        setProviderAuthError(extractIpcError(err));
+        setProviderAuthError(extractIpcError(err, t));
       } finally {
         setProviderAuthBusyId(null);
       }
@@ -1047,7 +1117,7 @@ export function SettingsView(): JSX.Element {
       if (trimmedAuth.length === 0 || trimmedUrl.length === 0) {
         setProviderAuthError({
           code: 'validation',
-          message: 'OpenCode Go 必须填写 auth cookie 和 workspace URL',
+          message: t('settings.accounts.apiKey.validation.opencodeRequired'),
         });
         return;
       }
@@ -1074,7 +1144,7 @@ export function SettingsView(): JSX.Element {
         setOpencodeAuthCookieShow(false);
         setApiKeyFormOpen(false);
       } catch (err: unknown) {
-        setProviderAuthError(extractIpcError(err));
+        setProviderAuthError(extractIpcError(err, t));
       } finally {
         setProviderAuthBusyId(null);
       }
@@ -1085,7 +1155,7 @@ export function SettingsView(): JSX.Element {
     if (trimmedKey.length === 0) {
       setProviderAuthError({
         code: 'validation',
-        message: 'API key 不能为空',
+        message: t('settings.accounts.apiKey.validation.empty'),
       });
       return;
     }
@@ -1095,7 +1165,7 @@ export function SettingsView(): JSX.Element {
     ) {
       setProviderAuthError({
         code: 'validation',
-        message: 'OpenAI 兼容账号必须填写 Base URL',
+        message: t('settings.accounts.apiKey.validation.baseUrlRequired'),
       });
       return;
     }
@@ -1133,7 +1203,7 @@ export function SettingsView(): JSX.Element {
       setDeepseekUserTokenShow(false);
       setApiKeyFormOpen(false);
     } catch (err: unknown) {
-      setProviderAuthError(extractIpcError(err));
+      setProviderAuthError(extractIpcError(err, t));
     } finally {
       setProviderAuthBusyId(null);
     }
@@ -1147,6 +1217,7 @@ export function SettingsView(): JSX.Element {
     deepseekUserToken,
     opencodeAuthCookie,
     opencodeWorkspaceUrl,
+    t,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -1158,7 +1229,7 @@ export function SettingsView(): JSX.Element {
     const desktop = window.desktop;
     if (!desktop) return;
 
-    const validationErrors = validateSettings(settings);
+    const validationErrors = validateSettings(settings, t);
     setErrors(validationErrors);
 
     if (Object.keys(validationErrors).length > 0) {
@@ -1209,12 +1280,12 @@ export function SettingsView(): JSX.Element {
       setSaveSuccess(true);
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : 'Unknown error during save';
+        err instanceof Error ? err.message : t('settings.action.unknownError');
       setSaveError(message);
     } finally {
       setSaving(false);
     }
-  }, [settings, secret, luciUsername, luciPassword]);
+  }, [settings, secret, luciUsername, luciPassword, t]);
 
   const handleDiscard = useCallback(() => {
     if (!pristine) return;
@@ -1240,22 +1311,22 @@ export function SettingsView(): JSX.Element {
 
   if (loading) {
     return (
-      <div className="settings-view" role="main" aria-label="设置">
-        <p className="settings-view__loading">加载设置中…</p>
+      <div className="settings-view" role="main" aria-label={t('settings.aria.root')}>
+        <p className="settings-view__loading">{t('boot.loadingSettings')}</p>
       </div>
     );
   }
 
   if (!settings) {
     return (
-      <div className="settings-view" role="main" aria-label="设置">
-        <p className="settings-view__error">无法加载设置</p>
+      <div className="settings-view" role="main" aria-label={t('settings.aria.root')}>
+        <p className="settings-view__error">{t('boot.cannotLoadSettings')}</p>
       </div>
     );
   }
 
   return (
-    <div className="settings-view" role="main" aria-label="设置">
+    <div className="settings-view" role="main" aria-label={t('settings.aria.root')}>
       <header className="settings-view__header">
         <div>
           <span className="settings-view__eyebrow">configuration</span>
@@ -1268,7 +1339,7 @@ export function SettingsView(): JSX.Element {
 
       <div className="settings-view__layout">
         {/* Section rail */}
-        <nav className="settings-view__rail" aria-label="设置导航">
+        <nav className="settings-view__rail" aria-label={t('settings.aria.nav')}>
           <ul className="settings-view__rail-list">
             {SECTIONS.map((s) => (
               <li key={s.id}>
@@ -1281,8 +1352,12 @@ export function SettingsView(): JSX.Element {
                     {s.icon}
                   </span>
                   <span className="settings-view__rail-text">
-                    <span className="settings-view__rail-label">{s.label}</span>
-                    <span className="settings-view__rail-hint">{s.hint}</span>
+                    <span className="settings-view__rail-label">
+                      {t(`settings.section.${s.i18nKey}.label` as TranslationKey)}
+                    </span>
+                    <span className="settings-view__rail-hint">
+                      {t(`settings.section.${s.i18nKey}.hint` as TranslationKey)}
+                    </span>
                   </span>
                 </button>
               </li>
@@ -1301,24 +1376,79 @@ export function SettingsView(): JSX.Element {
         >
           {/* ── Appearance ───────────────────────────────────── */}
           <Section id="appearance" section={SECTIONS[0]!}>
+            {/*
+              Locale picker (i18n-multilingual-support, Requirements 8.1, 8.2,
+              8.3, 8.4).
+
+              Placed at the top of the `appearance` section so it is reachable
+              without horizontal scrolling at the 800 px minimum viewport (the
+              `settings-view__form` grid collapses to a single column at that
+              width).
+
+              The two option labels are written inline as native-script literals
+              and intentionally NOT routed through `t()`: a user accidentally
+              locked into the wrong language must still recognise the option to
+              switch back (Requirement 8.2).
+
+              The `value` prop is wired to `settings.locale` from the
+              `desktop.getSettings()` load above, so the persisted Locale_Setting
+              is reflected on mount within one render after settings resolve
+              (Requirement 8.3 — well under the 500 ms budget). Main-side
+              `normalizeAppSettings` guarantees the persisted value is always a
+              member of the closed Locale_Code set; the narrowing below is a
+              defensive belt for the absent / null / out-of-set case
+              (Requirement 8.4) so a corrupted row falls back to the
+              Default_Locale `'zh-CN'` rather than rendering nothing selected.
+
+              `onChange` is wired to {@link handleLocaleChange}, an
+              eager-commit handler that mirrors `handleClearManagement
+              Credentials`: it optimistically updates local state, then
+              dispatches `desktop.updateSettings({ locale })` synchronously
+              in the user-event handler. No separate Save click is
+              required (Requirement 8.5). Failures are surfaced via the
+              `localeError` state below the picker without touching the
+              form's `dirty` flag (Requirements 8.6, 8.7).
+            */}
             <Field
-              label="色彩模式"
-              hint="仅影响展开窗；悬浮窗使用下方主题。"
+              label={t('settings.locale.label')}
+              hint={t('settings.locale.hint')}
+              error={localeError ?? undefined}
             >
-              <SegmentedControl<ColorMode>
-                value={(settings.appearance ?? DEFAULT_APPEARANCE).colorMode}
+              <SegmentedControl<Locale_Code>
+                value={
+                  settings.locale === 'zh-CN' || settings.locale === 'en-US'
+                    ? settings.locale
+                    : 'zh-CN'
+                }
                 options={[
-                  { value: 'dark', label: '深色' },
-                  { value: 'light', label: '浅色' },
+                  { value: 'zh-CN', label: '中文（简体）' },
+                  { value: 'en-US', label: 'English' },
                 ]}
-                onChange={(v) => updateAppearance({ colorMode: v })}
-                ariaLabel="色彩模式"
+                onChange={(next) => {
+                  void handleLocaleChange(next);
+                }}
+                ariaLabel={t('settings.locale.label')}
               />
             </Field>
 
             <Field
-              label="界面字号"
-              hint="统一调整展开窗的标题、正文、按钮、表格和输入框字号。"
+              label={t('settings.appearance.colorMode.label')}
+              hint={t('settings.appearance.colorMode.hint')}
+            >
+              <SegmentedControl<ColorMode>
+                value={(settings.appearance ?? DEFAULT_APPEARANCE).colorMode}
+                options={[
+                  { value: 'dark', label: t('settings.appearance.colorMode.dark') },
+                  { value: 'light', label: t('settings.appearance.colorMode.light') },
+                ]}
+                onChange={(v) => updateAppearance({ colorMode: v })}
+                ariaLabel={t('settings.appearance.colorMode.aria')}
+              />
+            </Field>
+
+            <Field
+              label={t('settings.appearance.fontScale.label')}
+              hint={t('settings.appearance.fontScale.hint')}
             >
               <div className="settings-view__range-control">
                 <input
@@ -1331,7 +1461,7 @@ export function SettingsView(): JSX.Element {
                   onChange={(e) =>
                     updateAppearance({ fontScale: Number(e.target.value) })
                   }
-                  aria-label="界面字号比例"
+                  aria-label={t('settings.appearance.fontScale.aria')}
                 />
                 <span className="settings-view__range-value">
                   {Math.round(
@@ -1344,8 +1474,8 @@ export function SettingsView(): JSX.Element {
             </Field>
 
             <Field
-              label="悬浮窗缩放"
-              hint="放大悬浮窗物理像素，让 360px 宽的悬浮窗在高分屏上更清晰；同时按比例放大窗口。"
+              label={t('settings.appearance.compactZoom.label')}
+              hint={t('settings.appearance.compactZoom.hint')}
             >
               <div className="settings-view__range-control">
                 <input
@@ -1358,7 +1488,7 @@ export function SettingsView(): JSX.Element {
                   onChange={(e) =>
                     updateAppearance({ compactZoom: Number(e.target.value) })
                   }
-                  aria-label="悬浮窗缩放比例"
+                  aria-label={t('settings.appearance.compactZoom.aria')}
                 />
                 <span className="settings-view__range-value">
                   {Math.round(
@@ -1375,6 +1505,12 @@ export function SettingsView(): JSX.Element {
                 const active =
                   (settings.appearance ?? DEFAULT_APPEARANCE).compactTheme ===
                   opt.id;
+                const themeLabel = t(
+                  `settings.appearance.theme.${opt.i18nKey}.label` as TranslationKey,
+                );
+                const themeDesc = t(
+                  `settings.appearance.theme.${opt.i18nKey}.description` as TranslationKey,
+                );
                 return (
                   <button
                     type="button"
@@ -1384,7 +1520,9 @@ export function SettingsView(): JSX.Element {
                     }`}
                     onClick={() => updateAppearance({ compactTheme: opt.id })}
                     aria-pressed={active}
-                    aria-label={`悬浮窗主题：${opt.label}`}
+                    aria-label={t('settings.appearance.theme.cardAria', {
+                      name: themeLabel,
+                    })}
                   >
                     <span
                       className="settings-view__theme-preview"
@@ -1397,7 +1535,7 @@ export function SettingsView(): JSX.Element {
                     </span>
                     <span className="settings-view__theme-meta">
                       <span className="settings-view__theme-name">
-                        {opt.label}
+                        {themeLabel}
                         {active && (
                           <Check
                             size={12}
@@ -1407,7 +1545,7 @@ export function SettingsView(): JSX.Element {
                         )}
                       </span>
                       <span className="settings-view__theme-desc">
-                        {opt.description}
+                        {themeDesc}
                       </span>
                     </span>
                   </button>
@@ -1423,8 +1561,8 @@ export function SettingsView(): JSX.Element {
           >
             <div className="settings-view__row">
               <Field
-                label="Controller URL"
-                hint="OpenClash 主控制器地址，需以 http(s):// 开头"
+                label={t('settings.controller.url.label')}
+                hint={t('settings.controller.url.hint')}
                 error={errors.controllerUrl}
               >
                 <input
@@ -1433,13 +1571,13 @@ export function SettingsView(): JSX.Element {
                   value={settings.controllerUrl}
                   onChange={(e) => updateField('controllerUrl', e.target.value)}
                   aria-invalid={!!errors.controllerUrl}
-                  placeholder="http://192.168.1.1:9090"
+                  placeholder={t('settings.controller.url.placeholder')}
                 />
               </Field>
 
               <Field
-                label="Secret"
-                hint="仅写入；保存后清空，不显示当前值"
+                label={t('settings.controller.secret.label')}
+                hint={t('settings.controller.secret.hint')}
               >
                 <div className="settings-view__input-affix">
                   <input
@@ -1447,14 +1585,18 @@ export function SettingsView(): JSX.Element {
                     type={showSecret ? 'text' : 'password'}
                     value={secret}
                     onChange={(e) => setSecret(e.target.value)}
-                    placeholder="留空则保留现有 secret"
+                    placeholder={t('settings.controller.secret.placeholder')}
                     autoComplete="off"
                   />
                   <button
                     type="button"
                     className="settings-view__input-action"
                     onClick={() => setShowSecret((v) => !v)}
-                    aria-label={showSecret ? '隐藏 secret' : '显示 secret'}
+                    aria-label={
+                      showSecret
+                        ? t('settings.controller.secret.hideAria')
+                        : t('settings.controller.secret.showAria')
+                    }
                   >
                     {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
@@ -1467,14 +1609,14 @@ export function SettingsView(): JSX.Element {
           <Section id="probes" section={SECTIONS[2]!}>
             <ListField
               items={settings.probeUrls}
-              placeholder="https://example.com"
-              addLabel="添加探测 URL"
+              placeholder={t('settings.probes.placeholder')}
+              addLabel={t('settings.probes.addLabel')}
               type="url"
               variant="single"
               onUpdate={updateProbeUrl}
               onAdd={addProbeUrl}
               onRemove={removeProbeUrl}
-              ariaLabel="Probe URL"
+              ariaLabel={t('settings.probes.itemAria')}
             />
             {errors.probeUrls && (
               <p className="settings-view__error-msg" role="alert">
@@ -1487,20 +1629,23 @@ export function SettingsView(): JSX.Element {
           <Section id="groups" section={SECTIONS[3]!}>
             <ListField
               items={settings.primaryGroups}
-              placeholder="group name"
-              addLabel="添加分组"
+              placeholder={t('settings.groups.placeholder')}
+              addLabel={t('settings.groups.addLabel')}
               type="text"
               onUpdate={updatePrimaryGroup}
               onAdd={addPrimaryGroup}
               onRemove={removePrimaryGroup}
-              ariaLabel="Primary Group"
+              ariaLabel={t('settings.groups.itemAria')}
             />
           </Section>
 
           {/* ── Router Health ────────────────────────────────── */}
           <Section id="router" section={SECTIONS[4]!}>
             <div className="settings-view__row settings-view__row--router">
-              <Field label="Host" hint="路由器内网地址">
+              <Field
+                label={t('settings.router.host.label')}
+                hint={t('settings.router.host.hint')}
+              >
                 <input
                   className="settings-view__input"
                   type="text"
@@ -1511,12 +1656,12 @@ export function SettingsView(): JSX.Element {
                       host: e.target.value,
                     })
                   }
-                  placeholder="192.168.1.1"
+                  placeholder={t('settings.router.host.placeholder')}
                 />
               </Field>
               <Field
-                label="Port"
-                hint="1 - 65535"
+                label={t('settings.router.port.label')}
+                hint={t('settings.router.port.hint')}
                 error={errors.routerHealthPort}
               >
                 <input
@@ -1545,8 +1690,14 @@ export function SettingsView(): JSX.Element {
                 number,
               ][]).map(([key, value]) => {
                 const meta = INTERVAL_META[key];
+                const intervalLabel = t(
+                  `settings.intervals.${meta.i18nKey}.label` as TranslationKey,
+                );
+                const intervalHint = t(
+                  `settings.intervals.${meta.i18nKey}.hint` as TranslationKey,
+                );
                 return (
-                  <Field key={key} label={meta.label} hint={meta.hint}>
+                  <Field key={key} label={intervalLabel} hint={intervalHint}>
                     <div className="settings-view__input-affix settings-view__input-affix--suffix">
                       <input
                         className="settings-view__input settings-view__input--num"
@@ -1573,8 +1724,8 @@ export function SettingsView(): JSX.Element {
           <Section id="switching" section={SECTIONS[6]!}>
             <div className="settings-view__row">
               <Field
-                label="验证延迟"
-                hint="切换后等待节点稳定的时间 (0 - 10000 ms)"
+                label={t('settings.switching.verifyDelay.label')}
+                hint={t('settings.switching.verifyDelay.hint')}
                 error={errors.switchVerifyDelayMs}
               >
                 <div className="settings-view__input-affix settings-view__input-affix--suffix">
@@ -1595,8 +1746,8 @@ export function SettingsView(): JSX.Element {
               </Field>
 
               <ToggleField
-                label="切换前确认"
-                hint="切换到不同节点时弹出二次确认"
+                label={t('settings.switching.confirm.label')}
+                hint={t('settings.switching.confirm.hint')}
                 checked={settings.switchConfirmation}
                 onChange={(v) => updateField('switchConfirmation', v)}
               />
@@ -1607,8 +1758,8 @@ export function SettingsView(): JSX.Element {
           <Section id="management" section={SECTIONS[7]!}>
             <div className="settings-view__row">
               <Field
-                label="LuCI URL"
-                hint="OpenWrt LuCI 面板地址 (http(s)://host[:port])，留空表示未配置"
+                label={t('settings.management.url.label')}
+                hint={t('settings.management.url.hint')}
                 error={errors.managementUrl}
               >
                 <input
@@ -1617,13 +1768,13 @@ export function SettingsView(): JSX.Element {
                   value={settings.managementInterface.url}
                   onChange={(e) => updateManagementUrl(e.target.value)}
                   aria-invalid={!!errors.managementUrl}
-                  placeholder="http://192.168.31.100"
+                  placeholder={t('settings.management.url.placeholder')}
                 />
               </Field>
 
               <Field
-                label="请求超时"
-                hint="管理接口单次请求超时 (1000 - 30000 ms)"
+                label={t('settings.management.requestTimeout.label')}
+                hint={t('settings.management.requestTimeout.hint')}
                 error={errors.managementRequestTimeoutMs}
               >
                 <div className="settings-view__input-affix settings-view__input-affix--suffix">
@@ -1646,8 +1797,8 @@ export function SettingsView(): JSX.Element {
 
             <div className="settings-view__row">
               <Field
-                label="配置切换校验窗口"
-                hint="切换配置后等待 Clash 内核完成重载的时间 (1000 - 30000 ms)"
+                label={t('settings.management.verifyWindow.label')}
+                hint={t('settings.management.verifyWindow.hint')}
                 error={errors.configSwitchVerifyWindowMs}
               >
                 <div className="settings-view__input-affix settings-view__input-affix--suffix">
@@ -1673,8 +1824,8 @@ export function SettingsView(): JSX.Element {
                 stored credential unchanged on save". */}
             <div className="settings-view__row">
               <Field
-                label="LuCI 用户名"
-                hint="留空则保留现有凭据"
+                label={t('settings.management.username.label')}
+                hint={t('settings.management.username.hint')}
               >
                 <input
                   className="settings-view__input"
@@ -1685,14 +1836,14 @@ export function SettingsView(): JSX.Element {
                     setSaveSuccess(false);
                     setCredsCleared(false);
                   }}
-                  placeholder="留空则保留现有用户名"
+                  placeholder={t('settings.management.username.placeholder')}
                   autoComplete="off"
                 />
               </Field>
 
               <Field
-                label="LuCI 密码"
-                hint="仅写入；保存后清空，不显示当前值"
+                label={t('settings.management.password.label')}
+                hint={t('settings.management.password.hint')}
               >
                 <div className="settings-view__input-affix">
                   <input
@@ -1704,14 +1855,18 @@ export function SettingsView(): JSX.Element {
                       setSaveSuccess(false);
                       setCredsCleared(false);
                     }}
-                    placeholder="留空则保留现有密码"
+                    placeholder={t('settings.management.password.placeholder')}
                     autoComplete="off"
                   />
                   <button
                     type="button"
                     className="settings-view__input-action"
                     onClick={() => setShowLuciPassword((v) => !v)}
-                    aria-label={showLuciPassword ? '隐藏密码' : '显示密码'}
+                    aria-label={
+                      showLuciPassword
+                        ? t('settings.management.password.hideAria')
+                        : t('settings.management.password.showAria')
+                    }
                   >
                     {showLuciPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
@@ -1725,7 +1880,7 @@ export function SettingsView(): JSX.Element {
                 className="settings-view__btn-secondary"
                 onClick={() => void handleClearManagementCredentials()}
               >
-                清除管理接口凭据
+                {t('settings.management.clearCredentials')}
               </button>
               {credsCleared && (
                 <span
@@ -1733,7 +1888,7 @@ export function SettingsView(): JSX.Element {
                   role="status"
                 >
                   <Check size={12} strokeWidth={2} />
-                  已清除存储的凭据
+                  {t('settings.management.credentialsCleared')}
                 </span>
               )}
             </div>
@@ -1744,14 +1899,17 @@ export function SettingsView(): JSX.Element {
                 and validated against `CONFIG_PATH_RE`. */}
             <div className="settings-view__whitelist">
               <header className="settings-view__whitelist-head">
-                <span className="settings-view__label">配置文件白名单</span>
+                <span className="settings-view__label">
+                  {t('settings.management.whitelist.label')}
+                </span>
                 <span className="settings-view__hint">
-                  手工维护的可切换 OpenClash 配置文件列表 (路径需形如
-                  /etc/openclash/config/*.yaml)
+                  {t('settings.management.whitelist.hint')}
                 </span>
               </header>
               {settings.managementInterface.configFileWhitelist.length === 0 && (
-                <p className="settings-view__empty">尚未配置任何条目</p>
+                <p className="settings-view__empty">
+                  {t('settings.management.whitelist.empty')}
+                </p>
               )}
               {settings.managementInterface.configFileWhitelist.map(
                 (entry, i) => (
@@ -1766,8 +1924,13 @@ export function SettingsView(): JSX.Element {
                       onChange={(e) =>
                         updateWhitelistEntry(i, { alias: e.target.value })
                       }
-                      placeholder="别名 (例如 备用机场)"
-                      aria-label={`配置文件别名 ${i + 1}`}
+                      placeholder={t(
+                        'settings.management.whitelist.aliasPlaceholder',
+                      )}
+                      aria-label={t(
+                        'settings.management.whitelist.aliasAria',
+                        { n: i + 1 },
+                      )}
                     />
                     <input
                       className="settings-view__input"
@@ -1776,14 +1939,22 @@ export function SettingsView(): JSX.Element {
                       onChange={(e) =>
                         updateWhitelistEntry(i, { path: e.target.value })
                       }
-                      placeholder="/etc/openclash/config/example.yaml"
-                      aria-label={`配置文件路径 ${i + 1}`}
+                      placeholder={t(
+                        'settings.management.whitelist.pathPlaceholder',
+                      )}
+                      aria-label={t(
+                        'settings.management.whitelist.pathAria',
+                        { n: i + 1 },
+                      )}
                     />
                     <button
                       type="button"
                       className="settings-view__btn-icon"
                       onClick={() => removeWhitelistEntry(i)}
-                      aria-label={`删除白名单条目 ${i + 1}`}
+                      aria-label={t(
+                        'settings.management.whitelist.deleteAria',
+                        { n: i + 1 },
+                      )}
                     >
                       <Trash2 size={14} strokeWidth={1.75} />
                     </button>
@@ -1796,7 +1967,7 @@ export function SettingsView(): JSX.Element {
                 onClick={addWhitelistEntry}
               >
                 <Plus size={14} strokeWidth={2} />
-                <span>添加白名单条目</span>
+                <span>{t('settings.management.whitelist.addLabel')}</span>
               </button>
               {errors.configFileWhitelist && (
                 <p className="settings-view__error-msg" role="alert">
@@ -1810,8 +1981,8 @@ export function SettingsView(): JSX.Element {
           <Section id="accounts" section={SECTIONS[8]!}>
             <div className="settings-view__row">
               <Field
-                label="账号类型 (auth 认证)"
-                hint="选择这份 auth 认证文件对应的服务"
+                label={t('settings.accounts.providerType.label')}
+                hint={t('settings.accounts.providerType.hint')}
               >
                 <select
                   className="settings-view__input"
@@ -1819,7 +1990,7 @@ export function SettingsView(): JSX.Element {
                   onChange={(e) =>
                     setProviderPick(e.target.value as ProviderId)
                   }
-                  aria-label="账号类型 (auth 认证)"
+                  aria-label={t('settings.accounts.providerType.aria')}
                   disabled={providerAuthBusyId === '__import__'}
                 >
                   {FILE_IMPORT_PICKER_ORDER.map((id) => (
@@ -1831,8 +2002,8 @@ export function SettingsView(): JSX.Element {
               </Field>
 
               <Field
-                label="操作"
-                hint="主进程打开文件选择器，不向页面暴露 token / API key"
+                label={t('settings.accounts.actions.label')}
+                hint={t('settings.accounts.actions.hint')}
               >
                 <div className="settings-view__row settings-view__row--inline">
                   <button
@@ -1844,8 +2015,8 @@ export function SettingsView(): JSX.Element {
                   >
                     <Plus size={13} strokeWidth={2} aria-hidden="true" />
                     {providerAuthBusyId === '__import__'
-                      ? '导入中…'
-                      : '导入 auth 认证文件'}
+                      ? t('settings.accounts.import.busy')
+                      : t('settings.accounts.import.label')}
                   </button>
                   <button
                     type="button"
@@ -1859,7 +2030,9 @@ export function SettingsView(): JSX.Element {
                     aria-expanded={apiKeyFormOpen}
                   >
                     <KeyRound size={13} strokeWidth={2} aria-hidden="true" />
-                    {apiKeyFormOpen ? '收起 API Key 表单' : '输入 API Key'}
+                    {apiKeyFormOpen
+                      ? t('settings.accounts.apiKey.closeForm')
+                      : t('settings.accounts.apiKey.openForm')}
                   </button>
                 </div>
               </Field>
@@ -1872,8 +2045,8 @@ export function SettingsView(): JSX.Element {
               >
                 <div className="settings-view__row">
                   <Field
-                    label="账号类型"
-                    hint="只支持纯 API key 的服务；OAuth 类账号请使用 auth 认证文件导入"
+                    label={t('settings.accounts.apiKey.providerLabel')}
+                    hint={t('settings.accounts.apiKey.providerHint')}
                   >
                     <select
                       className="settings-view__input"
@@ -1883,7 +2056,7 @@ export function SettingsView(): JSX.Element {
                           e.target.value as ManualApiKeyProvider,
                         )
                       }
-                      aria-label="API key 账号类型"
+                      aria-label={t('settings.accounts.apiKey.providerAria')}
                       disabled={providerAuthBusyId === '__create__'}
                       data-testid="provider-auth-api-key-provider"
                     >
@@ -1896,15 +2069,17 @@ export function SettingsView(): JSX.Element {
                   </Field>
 
                   <Field
-                    label="显示名称"
-                    hint="可选；留空使用默认名称"
+                    label={t('settings.accounts.apiKey.displayName.label')}
+                    hint={t('settings.accounts.apiKey.displayName.hint')}
                   >
                     <input
                       className="settings-view__input"
                       type="text"
                       value={apiKeyLabel}
                       onChange={(e) => setApiKeyLabel(e.target.value)}
-                      placeholder="例如 主账号 / 备用 key"
+                      placeholder={t(
+                        'settings.accounts.apiKey.displayName.placeholder',
+                      )}
                       autoComplete="off"
                       disabled={providerAuthBusyId === '__create__'}
                       data-testid="provider-auth-api-key-label"
@@ -2035,8 +2210,8 @@ export function SettingsView(): JSX.Element {
                   ) : (
                     <>
                       <Field
-                        label="API Key"
-                        hint="保存后即加密落库；保存成功不再回显"
+                        label={t('settings.accounts.apiKey.value.label')}
+                        hint={t('settings.accounts.apiKey.value.hint')}
                       >
                         <div className="settings-view__input-affix">
                           <input
@@ -2044,7 +2219,9 @@ export function SettingsView(): JSX.Element {
                             type={apiKeyShow ? 'text' : 'password'}
                             value={apiKeyValue}
                             onChange={(e) => setApiKeyValue(e.target.value)}
-                            placeholder="sk-..."
+                            placeholder={t(
+                              'settings.accounts.apiKey.value.placeholder',
+                            )}
                             autoComplete="off"
                             disabled={providerAuthBusyId === '__create__'}
                             data-testid="provider-auth-api-key-value"
@@ -2054,7 +2231,9 @@ export function SettingsView(): JSX.Element {
                             className="settings-view__input-action"
                             onClick={() => setApiKeyShow((v) => !v)}
                             aria-label={
-                              apiKeyShow ? '隐藏 API key' : '显示 API key'
+                              apiKeyShow
+                                ? t('settings.accounts.apiKey.value.hideAria')
+                                : t('settings.accounts.apiKey.value.showAria')
                             }
                           >
                             {apiKeyShow ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -2064,15 +2243,17 @@ export function SettingsView(): JSX.Element {
 
                       {apiKeyProvider === 'openai-compatible' && (
                         <Field
-                          label="Base URL"
-                          hint="必填，例如 https://api.example.com/v1"
+                          label={t('settings.accounts.apiKey.baseUrl.label')}
+                          hint={t('settings.accounts.apiKey.baseUrl.hint')}
                         >
                           <input
                             className="settings-view__input"
                             type="url"
                             value={apiKeyBaseUrl}
                             onChange={(e) => setApiKeyBaseUrl(e.target.value)}
-                            placeholder="https://..."
+                            placeholder={t(
+                              'settings.accounts.apiKey.baseUrl.placeholder',
+                            )}
                             autoComplete="off"
                             disabled={providerAuthBusyId === '__create__'}
                             data-testid="provider-auth-api-key-base-url"
@@ -2137,8 +2318,8 @@ export function SettingsView(): JSX.Element {
                   >
                     <Check size={13} strokeWidth={2} aria-hidden="true" />
                     {providerAuthBusyId === '__create__'
-                      ? '保存中…'
-                      : '保存账号'}
+                      ? t('settings.accounts.apiKey.submitting')
+                      : t('settings.accounts.apiKey.submit')}
                   </button>
                   <button
                     type="button"
@@ -2159,7 +2340,7 @@ export function SettingsView(): JSX.Element {
                     }}
                     disabled={providerAuthBusyId === '__create__'}
                   >
-                    取消
+                    {t('confirmDialog.cancel')}
                   </button>
                 </div>
               </div>
@@ -2173,7 +2354,7 @@ export function SettingsView(): JSX.Element {
               >
                 <AlertCircle size={12} strokeWidth={2} aria-hidden="true" />
                 {' '}
-                {formatProviderAuthError(providerAuthError)}
+                {formatProviderAuthError(t, providerAuthError)}
               </p>
             )}
 
@@ -2213,7 +2394,7 @@ export function SettingsView(): JSX.Element {
           ) : saveSuccess ? (
             <span className="settings-view__savebar-ok">
               <Check size={14} strokeWidth={2} />
-              已保存
+              {t('settings.action.saved')}
             </span>
           ) : errorCount > 0 ? (
             <span className="settings-view__savebar-err">
@@ -2231,7 +2412,7 @@ export function SettingsView(): JSX.Element {
             onClick={handleDiscard}
             disabled={!dirty || saving}
           >
-            放弃
+            {t('settings.action.discard')}
           </button>
           <button
             type="button"
@@ -2239,7 +2420,7 @@ export function SettingsView(): JSX.Element {
             onClick={() => void handleSave()}
             disabled={!dirty || saving}
           >
-            {saving ? '保存中…' : '保存'}
+            {saving ? '保存中…' : t('settings.action.save')}
           </button>
         </div>
       </div>
@@ -2268,6 +2449,7 @@ function Section({
   icon,
   children,
 }: SectionProps): JSX.Element {
+  const t = useT();
   // Accept either the short id form (e.g. "collectors") used by the
   // existing eight call sites or the already-prefixed form
   // ("settings-section-provider-auth") used by newer scaffolds. We
@@ -2278,8 +2460,18 @@ function Section({
     : id;
   const sectionId = `settings-section-${shortId}`;
   const headingId = `settings-heading-${shortId}`;
-  const resolvedTitle = title ?? section?.label ?? '';
-  const resolvedHint = hint ?? section?.hint ?? '';
+  // SectionDef carries an `i18nKey` suffix; the visible label and hint
+  // are resolved through `t()` so the rail tracks the user's locale
+  // (i18n-multilingual-support, Requirement 4.2). Explicit `title` /
+  // `hint` props still override (used by the Provider_Auth scaffold).
+  const sectionLabel = section
+    ? t(`settings.section.${section.i18nKey}.label` as TranslationKey)
+    : '';
+  const sectionHint = section
+    ? t(`settings.section.${section.i18nKey}.hint` as TranslationKey)
+    : '';
+  const resolvedTitle = title ?? sectionLabel;
+  const resolvedHint = hint ?? sectionHint;
   const resolvedIcon = icon ?? section?.icon ?? null;
   return (
     <section

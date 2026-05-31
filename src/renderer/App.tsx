@@ -36,6 +36,8 @@ import { QuickActionsPanel } from './components/QuickActionsPanel';
 import { UsagePanel } from './components/UsagePanel';
 import { SettingsView } from './components/SettingsView';
 import { TelemetryWave } from './components/TelemetryWave';
+import { useT } from './lib/i18n';
+import type { TranslationKey } from '../i18n';
 import type {
   AppearanceSettings,
   DashboardState,
@@ -318,6 +320,7 @@ function CompactRoot({
 }: {
   readonly appearance: AppearanceSettings;
 }): JSX.Element | null {
+  const t = useT();
   const [state, setState] = useState<DashboardState | null>(() => (
     isLocalBrowserPreview() ? previewDashboardState() : null
   ));
@@ -539,7 +542,7 @@ function CompactRoot({
         data-compact-theme={appearance.compactTheme}
       >
         <div style={{ padding: '16px', color: '#ccc', fontSize: '13px' }}>
-          加载中…
+          {t('boot.loading')}
         </div>
       </div>
     );
@@ -577,14 +580,14 @@ type ExpandedTab = 'network' | 'usage' | 'settings';
 
 interface TabDef {
   readonly id: ExpandedTab;
-  readonly label: string;
+  readonly labelKey: TranslationKey;
   readonly icon: JSX.Element;
 }
 
 const TABS: readonly TabDef[] = [
-  { id: 'network', label: '网络', icon: <Activity size={15} strokeWidth={1.75} /> },
-  { id: 'usage', label: '用量', icon: <BarChart3 size={15} strokeWidth={1.75} /> },
-  { id: 'settings', label: '设置', icon: <SettingsIcon size={15} strokeWidth={1.75} /> },
+  { id: 'network', labelKey: 'expanded.tab.network', icon: <Activity size={15} strokeWidth={1.75} /> },
+  { id: 'usage', labelKey: 'expanded.tab.usage', icon: <BarChart3 size={15} strokeWidth={1.75} /> },
+  { id: 'settings', labelKey: 'expanded.tab.settings', icon: <SettingsIcon size={15} strokeWidth={1.75} /> },
 ];
 
 function ExpandedRoot({
@@ -592,6 +595,7 @@ function ExpandedRoot({
 }: {
   readonly appearance: AppearanceSettings;
 }): JSX.Element {
+  const t = useT();
   const [tab, setTab] = useState<ExpandedTab>('network');
   const [dashboard, setDashboard] = useState<DashboardState | null>(null);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -710,20 +714,20 @@ function ExpandedRoot({
           <span className="ex__brand-tag">network · ai watch</span>
         </div>
 
-        <nav className="ex__tabs" role="tablist" aria-label="主导航">
-          {TABS.map((t) => {
-            const active = tab === t.id;
+        <nav className="ex__tabs" role="tablist" aria-label={t('expanded.aria.mainNav')}>
+          {TABS.map((tabDef) => {
+            const active = tab === tabDef.id;
             return (
               <button
-                key={t.id}
+                key={tabDef.id}
                 type="button"
                 role="tab"
                 aria-selected={active}
                 className={`ex__tab${active ? ' ex__tab--active' : ''}`}
-                onClick={() => setTab(t.id)}
+                onClick={() => setTab(tabDef.id)}
               >
-                <span className="ex__tab-icon" aria-hidden="true">{t.icon}</span>
-                <span className="ex__tab-label">{t.label}</span>
+                <span className="ex__tab-icon" aria-hidden="true">{tabDef.icon}</span>
+                <span className="ex__tab-label">{t(tabDef.labelKey)}</span>
               </button>
             );
           })}
@@ -733,8 +737,8 @@ function ExpandedRoot({
           type="button"
           className={`ex__refresh${refreshing ? ' ex__refresh--spin' : ''}`}
           onClick={() => void handleRefresh()}
-          aria-label="立即刷新"
-          title="立即刷新"
+          aria-label={t('expanded.aria.refreshNow')}
+          title={t('expanded.refresh.title')}
           disabled={refreshing}
         >
           <RefreshCw size={14} strokeWidth={1.75} />
@@ -742,7 +746,14 @@ function ExpandedRoot({
       </header>
 
       {/* ── Tab content ───────────────────────────────────────── */}
-      <main className="ex__main" role="tabpanel" aria-label={TABS.find((t) => t.id === tab)?.label}>
+      <main
+        className="ex__main"
+        role="tabpanel"
+        aria-label={(() => {
+          const current = TABS.find((tabDef) => tabDef.id === tab);
+          return current ? t(current.labelKey) : undefined;
+        })()}
+      >
         {error && (
           <div className="ex__error" role="alert">
             <span className="ex__error-mark" aria-hidden="true">!</span>
@@ -759,11 +770,11 @@ function ExpandedRoot({
                 sparkline gets the most width because it carries time-
                 series information; the latency number anchors the
                 right edge as the "current value". */}
-            <article className="ex__card ex__card--network" aria-label="网络状态">
+            <article className="ex__card ex__card--network" aria-label={t('dashboard.network.cardAria')}>
               <header className="ex__card-head">
-                <span className="ex__card-eyebrow">network · 连通性</span>
+                <span className="ex__card-eyebrow">{t('dashboard.network.eyebrow')}</span>
                 {dashboard?.currentNode.sparkline.length ? (
-                  <span className="ex__card-range" aria-label="延迟区间">
+                  <span className="ex__card-range" aria-label={t('dashboard.network.latencyRangeAria')}>
                     <span className="ex__card-range-num">
                       {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
                     </span>
@@ -778,8 +789,8 @@ function ExpandedRoot({
                   <span
                     className="ex__card-pulse"
                     data-status={dashboard.status}
-                    aria-label="实时数据"
-                    title="实时数据"
+                    aria-label={t('dashboard.network.liveAria')}
+                    title={t('dashboard.network.liveTitle')}
                   >
                     <span className="ex__card-pulse-dot" aria-hidden="true" />
                     LIVE
@@ -810,7 +821,7 @@ function ExpandedRoot({
                       </span>
                     )}
                     <span className="ex__strip-node-name">
-                      {dashboard.currentNode.node ?? '等待节点数据'}
+                      {dashboard.currentNode.node ?? t('dashboard.network.waitingNodeData')}
                     </span>
                   </div>
 
@@ -825,7 +836,7 @@ function ExpandedRoot({
                   </div>
 
                   {/* Latency cell */}
-                  <div className="ex__strip-metric" aria-label="平均延迟">
+                  <div className="ex__strip-metric" aria-label={t('dashboard.network.avgLatencyAria')}>
                     <span className="ex__strip-metric-num">
                       {formatLatencyNumber(dashboard.currentNode.avgLatencyMs)}
                     </span>
@@ -833,7 +844,7 @@ function ExpandedRoot({
                   </div>
                 </div>
               ) : (
-                <div className="ex__placeholder">等待数据中…</div>
+                <div className="ex__placeholder">{t('dashboard.network.waitingData')}</div>
               )}
             </article>
 
@@ -843,15 +854,15 @@ function ExpandedRoot({
             <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
 
             {/* Node table */}
-            <section className="ex__panel ex__panel--network" aria-label="节点列表">
+            <section className="ex__panel ex__panel--network" aria-label={t('dashboard.network.nodeListAria')}>
               <header className="ex__panel-head">
                 <h2 className="ex__panel-title">
-                  节点
+                  {t('dashboard.network.nodeTitle')}
                   <span className="ex__panel-count">{nodes.length}</span>
                 </h2>
                 {currentGroup && (
                   <span className="ex__panel-meta">
-                    分组 <strong>{currentGroup}</strong>
+                    {t('dashboard.network.groupMeta')} <strong>{currentGroup}</strong>
                   </span>
                 )}
               </header>

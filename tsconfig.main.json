@@ -11,6 +11,10 @@
     "sourceMap": true,
     "declaration": false
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts"],
+  // `src/i18n/**` is the single shared-runtime package that both the main
+  // and renderer bundles are permitted to import at runtime (see
+  // i18n-multilingual-support design.md). The renderer ↔ main isolation
+  // rule otherwise stays unchanged: `src/renderer/**` remains excluded.
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/i18n/**/*.ts"],
   "exclude": ["src/renderer/**", "**/*.test.ts", "**/*.spec.ts", "node_modules"]
 }

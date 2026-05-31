@@ -48,7 +48,7 @@ export function formatLatency(latencyMs: number | null): string {
 // Management / Config_Switch error code i18n
 // ---------------------------------------------------------------------------
 //
-// Single source of truth for the zh-CN label rendered against any
+// Single source of truth for the localised label rendered against any
 // management-client failure or lock-arbitration rejection. Every
 // renderer surface (Quick_Actions_Panel banner, Config_Switch_Card
 // inline error, last-switch hint, etc.) MUST funnel its display
@@ -64,48 +64,57 @@ export function formatLatency(latencyMs: number | null): string {
 // handler when the switch lock is held — see network-quick-actions
 // design.md §Switch Lock and Requirements 9.1..9.3, 16.2.
 //
-// The labels intentionally stay short and natural (no trailing
-// punctuation, no "错误：" prefix) so they slot into both inline
-// banners and toast bodies without further reformatting. Callers
-// that need a "失败原因：${label}" prefix add it themselves.
+// As of i18n-multilingual-support task 14.5 the helper takes a
+// `Translator` produced by `useT()` (i.e. resolved against the
+// active locale) so banners, inline errors, and last-switch hints
+// flip live with the rest of the UI when the user changes language.
 
+import type { Translator, TranslationKey } from '../../i18n';
 import type { ManagementErrorCode } from './types';
 
 /**
- * Closed-set zh-CN labels for every management/config-switch error
- * code surfaced to the renderer.
+ * Closed-set Translation_Key map for every management /
+ * config-switch error code surfaced to the renderer.
  *
- * The `Record<ManagementErrorCode | 'switch_in_progress', string>`
+ * The `Record<ManagementErrorCode | 'switch_in_progress', TranslationKey>`
  * type makes the map provably total: dropping a member or
- * mistyping a key is a TypeScript error, so Property 16's runtime
- * assertion is purely belt-and-braces.
+ * mistyping a key is a TypeScript error at compile time, and the
+ * referenced keys themselves are checked against the closed
+ * `TranslationCatalog` interface.
  */
-export const MANAGEMENT_ERROR_LABELS: Record<
+const MANAGEMENT_ERROR_KEYS: Record<
   ManagementErrorCode | 'switch_in_progress',
-  string
+  TranslationKey
 > = {
-  auth_error: 'OpenClash 凭据未配置或不正确',
-  http_error: 'OpenClash 管理接口返回错误',
-  network_error: 'OpenClash 管理接口无法连接',
-  verify_timeout: '配置切换验证超时',
-  verify_mismatch: '配置切换验证失败',
-  not_supported: '当前部署形态不支持此操作',
-  switch_in_progress: '另一项切换正在进行中',
+  auth_error: 'management.error.auth',
+  http_error: 'management.error.http',
+  network_error: 'management.error.network',
+  verify_timeout: 'management.error.verifyTimeout',
+  verify_mismatch: 'management.error.verifyMismatch',
+  not_supported: 'management.error.notSupported',
+  switch_in_progress: 'management.error.switchInProgress',
 };
 
 /**
  * Translate a `ManagementErrorCode` (or the lock-arbitration
- * `'switch_in_progress'` code) into its canonical zh-CN label.
+ * `'switch_in_progress'` code) into its canonical user-facing label
+ * for the active locale.
  *
  * Always returns a non-empty string — the input type is the closed
- * union the IPC layer guarantees, so there is no fallback branch.
- * Renderer code that receives an unknown string from the wire MUST
- * narrow it to the union (e.g. via the schema in `schemas.ts`)
- * before calling this helper; passing a stringly-typed value would
- * be a TypeScript error.
+ * union the IPC layer guarantees, so there is no fallback branch
+ * that produces an empty value. Renderer code that receives an
+ * unknown string from the wire MUST narrow it to the union before
+ * calling this helper; passing a stringly-typed value would be a
+ * TypeScript error.
+ *
+ * @param t  The translator returned by `useT()` (or any other
+ *           `Translator` bound to a Locale_Code). Required so the
+ *           output flips live with the active locale.
+ * @param code The closed management / lock-arbitration error code.
  */
 export function formatManagementError(
+  t: Translator,
   code: ManagementErrorCode | 'switch_in_progress',
 ): string {
-  return MANAGEMENT_ERROR_LABELS[code];
+  return t(MANAGEMENT_ERROR_KEYS[code]);
 }

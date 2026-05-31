@@ -494,6 +494,26 @@ const appearancePatchSchema = z
   })
   .strict();
 
+// ---------------------------------------------------------------------------
+// Locale (i18n-multilingual-support)
+// ---------------------------------------------------------------------------
+//
+// Closed Locale_Code enum used by `AppSettings.locale` (Requirement
+// 1.1). Adding a new locale requires a follow-up spec — the runtime
+// catalog set is statically pinned to the same two members
+// (Requirement 3.1) and the build-time validator backstops the
+// invariant.
+//
+// `appSettingsSchema.locale` is required (Requirement 1.2/1.3); the
+// patch variant is optional so partial updates that touch only
+// `locale` round-trip cleanly through `updateSettings`. Empty
+// strings, `null`, `42`, `"EN-us"`, `"ja-JP"`, and any other
+// out-of-set value are rejected by the enum (Requirement 1.7,
+// 12.7). Boot-time normalisation in `app.ts#normalizeAppSettings`
+// rewrites legacy / missing rows to a valid Locale_Code before the
+// strict `appSettingsSchema` ever sees them (Requirement 1.4).
+export const localeCodeSchema = z.enum(['zh-CN', 'en-US']);
+
 /**
  * Kiro IDE auto-refresh policy. See
  * `types.ts#KiroTokenRefreshSettings` for the semantics. Both
@@ -541,6 +561,7 @@ export const appSettingsSchema = z
     cliproxy: cliproxySettingsSchema,
     appearance: appearanceSchema,
     kiroTokenRefresh: kiroTokenRefreshSchema,
+    locale: localeCodeSchema,
   })
   .strict();
 
@@ -570,6 +591,7 @@ export const appSettingsPatchSchema = z
     cliproxy: cliproxySettingsSchema.optional(),
     appearance: appearancePatchSchema.optional(),
     kiroTokenRefresh: kiroTokenRefreshPatchSchema.optional(),
+    locale: localeCodeSchema.optional(),
   })
   .strict();
 
