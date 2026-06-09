@@ -530,6 +530,13 @@ export function SettingsView(): JSX.Element {
   const [opencodeWorkspaceUrl, setOpencodeWorkspaceUrl] = useState('');
   const [opencodeAuthCookieShow, setOpencodeAuthCookieShow] = useState(false);
 
+  // Edit mode state — tracks whether we're editing an existing account
+  // vs creating a new one. When `editingProviderAuthId` is non-null,
+  // the API key form enters edit mode (provider fixed, secret fields
+  // show "leave empty to keep current" placeholder).
+  const [editingProviderAuthId, setEditingProviderAuthId] = useState<string | null>(null);
+  const [editingMode, setEditingMode] = useState<'manual' | 'reimport' | null>(null);
+
   // Load initial settings
   useEffect(() => {
     const desktop = window.desktop;
@@ -1219,6 +1226,157 @@ export function SettingsView(): JSX.Element {
     opencodeWorkspaceUrl,
     t,
   ]);
+
+  // ---------------------------------------------------------------------------
+  // Provider_Auth edit handlers
+  // ---------------------------------------------------------------------------
+
+  /** Clear all secret inputs and edit state. Called on cancel or after success. */
+  const clearEditState = useCallback(() => {
+    setEditingProviderAuthId(null);
+    setEditingMode(null);
+    setApiKeyValue('');
+    setApiKeyLabel('');
+    setApiKeyBaseUrl('');
+    setApiKeyShow(false);
+    setXiaomiPassToken('');
+    setXiaomiUserId('');
+    setXiaomiPassTokenShow(false);
+    setDeepseekUserToken('');
+    setDeepseekUserTokenShow(false);
+    setOpencodeAuthCookie('');
+    setOpencodeWorkspaceUrl('');
+    setOpencodeAuthCookieShow(false);
+  }, []);
+
+  /** Open the edit panel for an existing account. */
+  const handleProviderAuthEdit = useCallback(
+    (row: ProviderAuthMetadata) => {
+      clearEditState();
+      setEditingProviderAuthId(row.id);
+      setApiKeyLabel(row.label);
+      // Set the provider selector to the row's provider so the form
+      // shows the correct fields. For manual accounts, the provider
+      // selector will be disabled.
+      if (
+        row.provider === 'gemini-api' ||
+        row.provider === 'deepseek' ||
+        row.provider === 'xiaomi' ||
+        row.provider === 'opencode' ||
+        row.provider === 'openai-compatible'
+      ) {
+        setApiKeyProvider(row.provider as ManualApiKeyProvider);
+      }
+      if (row.source === 'manual-api-key') {
+        setEditingMode('manual');
+        setApiKeyFormOpen(true);
+      } else {
+        setEditingMode('reimport');
+      }
+    },
+    [clearEditState],
+  );
+
+  /** Cancel editing and close the form. */
+  const handleProviderAuthEditCancel = useCallback(() => {
+    clearEditState();
+    setApiKeyFormOpen(false);
+  }, [clearEditState]);
+
+  /** Submit an in-place update for a manual-api-key account. */
+  const handleProviderAuthUpdate = useCallback(async () => {
+    const desktop = window.desktop;
+    if (!desktop || editingProviderAuthId === null) return;
+
+    const input: import('../../main/types').UpdateProviderAuthInput = {
+      id: editingProviderAuthId,
+    };
+    if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
+
+    // Only include non-empty secret fields (empty = keep existing).
+    if (apiKeyProvider === 'xiaomi') {
+      if (xiaomiPassToken.trim().length > 0) input.xiaomiPassToken = xiaomiPassToken.trim();
+      if (xiaomiUserId.trim().length > 0) input.xiaomiUserId = xiaomiUserId.trim();
+    } else if (apiKeyProvider === 'opencode') {
+      if (opencodeAuthCookie.trim().length > 0) input.opencodeAuthCookie = opencodeAuthCookie.trim();
+      if (opencodeWorkspaceUrl.trim().length > 0) input.opencodeWorkspaceUrl = opencodeWorkspaceUrl.trim();
+    } else {
+      if (apiKeyValue.trim().length > 0) input.apiKey = apiKeyValue.trim();
+      if (apiKeyProvider === 'openai-compatible' && apiKeyBaseUrl.trim().length > 0) {
+        input.baseUrl = apiKeyBaseUrl.trim();
+      }
+      if (apiKeyProvider === 'deepseek' && deepseekUserToken.trim().length > 0) {
+        input.deepseekUserToken = deepseekUserToken.trim();
+      }
+    }
+
+    setProviderAuthBusyId(editingProviderAuthId);
+    setProviderAuthError(null);
+    try {
+      const row = await desktop.updateProviderAuth(input);
+      if (row !== null) {
+        setProviderAuthRows((prev) => {
+          const idx = prev.findIndex((r) => r.id === row.id);
+          if (idx === -1) return [...prev, row];
+          const next = prev.slice();
+          next[idx] = row;
+          return next;
+        });
+      }
+      clearEditState();
+      setApiKeyFormOpen(false);
+    } catch (err: unknown) {
+      setProviderAuthError(extractIpcError(err, t));
+    } finally {
+      setProviderAuthBusyId(null);
+    }
+  }, [
+    editingProviderAuthId,
+    apiKeyProvider,
+    apiKeyLabel,
+    apiKeyValue,
+    apiKeyBaseUrl,
+    xiaomiPassToken,
+    xiaomiUserId,
+    deepseekUserToken,
+    opencodeAuthCookie,
+    opencodeWorkspaceUrl,
+    clearEditState,
+    t,
+  ]);
+
+  /** Re-import the CPA auth file for an existing cpa-auth-file account. */
+  const handleProviderAuthReimport = useCallback(
+    async (id: string) => {
+      const desktop = window.desktop;
+      if (!desktop) return;
+      setProviderAuthBusyId(id);
+      setProviderAuthError(null);
+      try {
+        const input: import('../../main/types').ReimportProviderAuthFileInput = { id };
+        if (apiKeyLabel.trim().length > 0) input.label = apiKeyLabel.trim();
+        const row = await desktop.reimportProviderAuthFile(input);
+        if (row !== null) {
+          setProviderAuthRows((prev) => {
+            const idx = prev.findIndex((r) => r.id === row.id);
+            if (idx === -1) return [...prev, row];
+            const next = prev.slice();
+            next[idx] = row;
+            return next;
+          });
+        }
+        clearEditState();
+      } catch (err: unknown) {
+        const envelope = extractIpcError(err, t);
+        if (envelope.code !== 'cancelled') {
+          setProviderAuthError(envelope);
+        }
+      } finally {
+        setProviderAuthBusyId(null);
+      }
+    },
+    [apiKeyLabel, clearEditState, t],
+  );
 
   // ---------------------------------------------------------------------------
   // Save / discard handlers
@@ -2025,7 +2183,7 @@ export function SettingsView(): JSX.Element {
                       setApiKeyFormOpen((v) => !v);
                       setProviderAuthError(null);
                     }}
-                    disabled={providerAuthBusyId === '__create__'}
+                    disabled={providerAuthBusyId !== null}
                     data-testid="provider-auth-open-api-key-form"
                     aria-expanded={apiKeyFormOpen}
                   >
@@ -2038,7 +2196,7 @@ export function SettingsView(): JSX.Element {
               </Field>
             </div>
 
-            {apiKeyFormOpen && (
+            {apiKeyFormOpen && editingProviderAuthId === null && (
               <div
                 className="settings-view__api-key-form"
                 data-testid="provider-auth-api-key-form"
@@ -2057,7 +2215,7 @@ export function SettingsView(): JSX.Element {
                         )
                       }
                       aria-label={t('settings.accounts.apiKey.providerAria')}
-                      disabled={providerAuthBusyId === '__create__'}
+                      disabled={providerAuthBusyId !== null || editingProviderAuthId !== null}
                       data-testid="provider-auth-api-key-provider"
                     >
                       {MANUAL_API_KEY_PICKER_ORDER.map((id) => (
@@ -2081,7 +2239,7 @@ export function SettingsView(): JSX.Element {
                         'settings.accounts.apiKey.displayName.placeholder',
                       )}
                       autoComplete="off"
-                      disabled={providerAuthBusyId === '__create__'}
+                      disabled={providerAuthBusyId !== null}
                       data-testid="provider-auth-api-key-label"
                     />
                   </Field>
@@ -2102,9 +2260,13 @@ export function SettingsView(): JSX.Element {
                             onChange={(e) =>
                               setXiaomiPassToken(e.target.value)
                             }
-                            placeholder="V1:..."
+                            placeholder={
+                              editingMode === 'manual'
+                                ? t('settings.accounts.edit.secretPlaceholder')
+                                : 'V1:...'
+                            }
                             autoComplete="off"
-                            disabled={providerAuthBusyId === '__create__'}
+                            disabled={providerAuthBusyId !== null}
                             data-testid="provider-auth-xiaomi-pass-token"
                           />
                           <button
@@ -2137,10 +2299,14 @@ export function SettingsView(): JSX.Element {
                           type="text"
                           value={xiaomiUserId}
                           onChange={(e) => setXiaomiUserId(e.target.value)}
-                          placeholder="例如 14800000"
+                          placeholder={
+                            editingMode === 'manual'
+                              ? t('settings.accounts.edit.secretPlaceholder')
+                              : '例如 14800000'
+                          }
                           autoComplete="off"
                           inputMode="numeric"
-                          disabled={providerAuthBusyId === '__create__'}
+                          disabled={providerAuthBusyId !== null}
                           data-testid="provider-auth-xiaomi-user-id"
                         />
                       </Field>
@@ -2161,10 +2327,14 @@ export function SettingsView(): JSX.Element {
                             onChange={(e) =>
                               setOpencodeAuthCookie(e.target.value)
                             }
-                            placeholder="Fe26.2**..."
+                            placeholder={
+                              editingMode === 'manual'
+                                ? t('settings.accounts.edit.secretPlaceholder')
+                                : 'Fe26.2**...'
+                            }
                             autoComplete="off"
                             disabled={
-                              providerAuthBusyId === '__create__'
+                              providerAuthBusyId !== null
                             }
                             data-testid="provider-auth-opencode-auth-cookie"
                           />
@@ -2200,9 +2370,13 @@ export function SettingsView(): JSX.Element {
                           onChange={(e) =>
                             setOpencodeWorkspaceUrl(e.target.value)
                           }
-                          placeholder="https://opencode.ai/workspace/.../go"
+                          placeholder={
+                            editingMode === 'manual'
+                              ? t('settings.accounts.edit.secretPlaceholder')
+                              : 'https://opencode.ai/workspace/.../go'
+                          }
                           autoComplete="off"
-                          disabled={providerAuthBusyId === '__create__'}
+                          disabled={providerAuthBusyId !== null}
                           data-testid="provider-auth-opencode-workspace-url"
                         />
                       </Field>
@@ -2219,11 +2393,13 @@ export function SettingsView(): JSX.Element {
                             type={apiKeyShow ? 'text' : 'password'}
                             value={apiKeyValue}
                             onChange={(e) => setApiKeyValue(e.target.value)}
-                            placeholder={t(
-                              'settings.accounts.apiKey.value.placeholder',
-                            )}
+                            placeholder={
+                              editingMode === 'manual'
+                                ? t('settings.accounts.edit.secretPlaceholder')
+                                : t('settings.accounts.apiKey.value.placeholder')
+                            }
                             autoComplete="off"
-                            disabled={providerAuthBusyId === '__create__'}
+                            disabled={providerAuthBusyId !== null}
                             data-testid="provider-auth-api-key-value"
                           />
                           <button
@@ -2251,11 +2427,13 @@ export function SettingsView(): JSX.Element {
                             type="url"
                             value={apiKeyBaseUrl}
                             onChange={(e) => setApiKeyBaseUrl(e.target.value)}
-                            placeholder={t(
-                              'settings.accounts.apiKey.baseUrl.placeholder',
-                            )}
+                            placeholder={
+                              editingMode === 'manual'
+                                ? t('settings.accounts.edit.secretPlaceholder')
+                                : t('settings.accounts.apiKey.baseUrl.placeholder')
+                            }
                             autoComplete="off"
-                            disabled={providerAuthBusyId === '__create__'}
+                            disabled={providerAuthBusyId !== null}
                             data-testid="provider-auth-api-key-base-url"
                           />
                         </Field>
@@ -2276,10 +2454,14 @@ export function SettingsView(): JSX.Element {
                               onChange={(e) =>
                                 setDeepseekUserToken(e.target.value)
                               }
-                              placeholder="留空则只显示余额"
+                              placeholder={
+                                editingMode === 'manual'
+                                  ? t('settings.accounts.edit.secretPlaceholder')
+                                  : '留空则只显示余额'
+                              }
                               autoComplete="off"
                               disabled={
-                                providerAuthBusyId === '__create__'
+                                providerAuthBusyId !== null
                               }
                               data-testid="provider-auth-deepseek-user-token"
                             />
@@ -2312,39 +2494,54 @@ export function SettingsView(): JSX.Element {
                   <button
                     type="button"
                     className="settings-view__btn-secondary"
-                    onClick={() => void handleProviderAuthCreateApiKey()}
-                    disabled={providerAuthBusyId === '__create__'}
+                    onClick={() => {
+                      if (editingMode === 'manual') {
+                        void handleProviderAuthUpdate();
+                      } else {
+                        void handleProviderAuthCreateApiKey();
+                      }
+                    }}
+                    disabled={providerAuthBusyId !== null}
                     data-testid="provider-auth-api-key-submit"
                   >
                     <Check size={13} strokeWidth={2} aria-hidden="true" />
-                    {providerAuthBusyId === '__create__'
+                    {providerAuthBusyId !== null
                       ? t('settings.accounts.apiKey.submitting')
-                      : t('settings.accounts.apiKey.submit')}
+                      : editingMode === 'manual'
+                        ? t('settings.accounts.apiKey.submit')
+                        : t('settings.accounts.apiKey.submit')}
                   </button>
                   <button
                     type="button"
                     className="settings-view__btn-secondary"
                     onClick={() => {
-                      setApiKeyFormOpen(false);
-                      setApiKeyValue('');
-                      setApiKeyShow(false);
-                      setXiaomiPassToken('');
-                      setXiaomiUserId('');
-                      setXiaomiPassTokenShow(false);
-                      setDeepseekUserToken('');
-                      setDeepseekUserTokenShow(false);
-                      setOpencodeAuthCookie('');
-                      setOpencodeWorkspaceUrl('');
-                      setOpencodeAuthCookieShow(false);
-                      setProviderAuthError(null);
+                      if (editingProviderAuthId !== null) {
+                        handleProviderAuthEditCancel();
+                      } else {
+                        setApiKeyFormOpen(false);
+                        setApiKeyValue('');
+                        setApiKeyShow(false);
+                        setXiaomiPassToken('');
+                        setXiaomiUserId('');
+                        setXiaomiPassTokenShow(false);
+                        setDeepseekUserToken('');
+                        setDeepseekUserTokenShow(false);
+                        setOpencodeAuthCookie('');
+                        setOpencodeWorkspaceUrl('');
+                        setOpencodeAuthCookieShow(false);
+                        setProviderAuthError(null);
+                      }
                     }}
-                    disabled={providerAuthBusyId === '__create__'}
+                    disabled={providerAuthBusyId !== null}
                   >
-                    {t('confirmDialog.cancel')}
+                    {editingProviderAuthId !== null
+                      ? t('settings.accounts.edit.cancel')
+                      : t('confirmDialog.cancel')}
                   </button>
                 </div>
               </div>
             )}
+
 
             {providerAuthError !== null && (
               <p
@@ -2362,6 +2559,160 @@ export function SettingsView(): JSX.Element {
               rows={providerAuthRows}
               onRefresh={(id) => void handleProviderAuthRefresh(id)}
               onDelete={(id) => void handleProviderAuthDelete(id)}
+              onEdit={handleProviderAuthEdit}
+              editingRowId={editingProviderAuthId}
+              editPanel={
+                editingProviderAuthId !== null ? (
+                  editingMode === 'reimport' ? (
+                    /* Reimport panel for cpa-auth-file accounts */
+                    <div className="settings-view__edit-inline" data-testid="provider-auth-reimport-panel">
+                      <div className="settings-view__edit-inline-row">
+                        <Field label={t('settings.accounts.apiKey.displayName.label')}>
+                          <input
+                            className="settings-view__input"
+                            type="text"
+                            value={apiKeyLabel}
+                            onChange={(e) => setApiKeyLabel(e.target.value)}
+                            placeholder={t('settings.accounts.apiKey.displayName.placeholder')}
+                            disabled={providerAuthBusyId !== null}
+                            data-testid="provider-auth-reimport-label"
+                          />
+                        </Field>
+                      </div>
+                      <div className="settings-view__edit-inline-actions">
+                        <button
+                          type="button"
+                          className="settings-view__btn-secondary"
+                          onClick={() => void handleProviderAuthReimport(editingProviderAuthId)}
+                          disabled={providerAuthBusyId !== null}
+                          data-testid="provider-auth-reimport-submit"
+                        >
+                          {providerAuthBusyId === editingProviderAuthId
+                            ? t('settings.accounts.import.busy')
+                            : t('settings.accounts.edit.reimport')}
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-view__btn-ghost"
+                          onClick={handleProviderAuthEditCancel}
+                          disabled={providerAuthBusyId !== null}
+                        >
+                          {t('settings.accounts.edit.cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Inline edit form for manual-api-key accounts */
+                    <div className="settings-view__edit-inline" data-testid="provider-auth-edit-panel">
+                      <div className="settings-view__edit-inline-row">
+                        <Field label={t('settings.accounts.apiKey.displayName.label')}>
+                          <input
+                            className="settings-view__input"
+                            type="text"
+                            value={apiKeyLabel}
+                            onChange={(e) => setApiKeyLabel(e.target.value)}
+                            placeholder={t('settings.accounts.apiKey.displayName.placeholder')}
+                            disabled={providerAuthBusyId !== null}
+                          />
+                        </Field>
+                        {apiKeyProvider === 'xiaomi' ? (
+                          <>
+                            <Field label="passToken">
+                              <input
+                                className="settings-view__input"
+                                type="password"
+                                value={xiaomiPassToken}
+                                onChange={(e) => setXiaomiPassToken(e.target.value)}
+                                placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                disabled={providerAuthBusyId !== null}
+                              />
+                            </Field>
+                            <Field label="userId">
+                              <input
+                                className="settings-view__input"
+                                type="text"
+                                value={xiaomiUserId}
+                                onChange={(e) => setXiaomiUserId(e.target.value)}
+                                placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                disabled={providerAuthBusyId !== null}
+                              />
+                            </Field>
+                          </>
+                        ) : apiKeyProvider === 'opencode' ? (
+                          <>
+                            <Field label="Auth Cookie">
+                              <input
+                                className="settings-view__input"
+                                type="password"
+                                value={opencodeAuthCookie}
+                                onChange={(e) => setOpencodeAuthCookie(e.target.value)}
+                                placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                disabled={providerAuthBusyId !== null}
+                              />
+                            </Field>
+                            <Field label="Workspace URL">
+                              <input
+                                className="settings-view__input"
+                                type="url"
+                                value={opencodeWorkspaceUrl}
+                                onChange={(e) => setOpencodeWorkspaceUrl(e.target.value)}
+                                placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                disabled={providerAuthBusyId !== null}
+                              />
+                            </Field>
+                          </>
+                        ) : (
+                          <>
+                            <Field label={t('settings.accounts.apiKey.value.label')}>
+                              <input
+                                className="settings-view__input"
+                                type="password"
+                                value={apiKeyValue}
+                                onChange={(e) => setApiKeyValue(e.target.value)}
+                                placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                disabled={providerAuthBusyId !== null}
+                              />
+                            </Field>
+                            {apiKeyProvider === 'openai-compatible' && (
+                              <Field label={t('settings.accounts.apiKey.baseUrl.label')}>
+                                <input
+                                  className="settings-view__input"
+                                  type="url"
+                                  value={apiKeyBaseUrl}
+                                  onChange={(e) => setApiKeyBaseUrl(e.target.value)}
+                                  placeholder={t('settings.accounts.edit.secretPlaceholder')}
+                                  disabled={providerAuthBusyId !== null}
+                                />
+                              </Field>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <div className="settings-view__edit-inline-actions">
+                        <button
+                          type="button"
+                          className="settings-view__btn-secondary"
+                          onClick={() => void handleProviderAuthUpdate()}
+                          disabled={providerAuthBusyId !== null}
+                          data-testid="provider-auth-edit-submit"
+                        >
+                          {providerAuthBusyId !== null
+                            ? t('settings.accounts.apiKey.submitting')
+                            : t('settings.accounts.apiKey.submit')}
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-view__btn-ghost"
+                          onClick={handleProviderAuthEditCancel}
+                          disabled={providerAuthBusyId !== null}
+                        >
+                          {t('settings.accounts.edit.cancel')}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                ) : undefined
+              }
               onToggleEnabled={(id, enabled) =>
                 void toggleProviderAuthEnabled(id, enabled)
               }

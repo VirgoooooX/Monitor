@@ -73,6 +73,7 @@ export const zhCN: TranslationCatalog = {
   'dashboard.network.nodeListAria': '节点列表',
   'dashboard.network.nodeTitle': '节点',
   'dashboard.network.groupMeta': '分组',
+  'dashboard.network.groupSelectorAria': '选择节点分组',
 
   // ── Renderer boot states ───────────────────────────────────────
   // Source: `src/renderer/App.tsx` boot fallback + SettingsView
@@ -276,6 +277,10 @@ export const zhCN: TranslationCatalog = {
   'settings.accounts.actions.label': '操作',
   'settings.accounts.actions.hint':
     '主进程打开文件选择器，不向页面暴露 token / API key',
+  'settings.accounts.actions.edit': '编辑',
+  'settings.accounts.edit.secretPlaceholder': '留空则保留当前值',
+  'settings.accounts.edit.reimport': '重新选择认证文件',
+  'settings.accounts.edit.cancel': '取消编辑',
   'settings.accounts.import.label': '导入 auth 认证文件',
   'settings.accounts.import.busy': '导入中…',
   'settings.accounts.apiKey.openForm': '输入 API Key',
@@ -351,7 +356,7 @@ export const zhCN: TranslationCatalog = {
     'OpenClash 管理接口未配置，请前往设置页填写地址与凭据',
   'configSwitch.disable.unreachable': 'OpenClash 管理接口不可达',
   'configSwitch.guidance':
-    '尚未配置可切换的 OpenClash 配置文件。请前往「设置」填写 OpenClash 管理接口地址、凭据，以及配置文件白名单。',
+    '未从 OpenClash 读取到配置文件。请检查管理接口地址和凭据是否正确。',
   'configSwitch.activeBadge': '生效',
 
   // ── ConfirmDialog ──────────────────────────────────────────────

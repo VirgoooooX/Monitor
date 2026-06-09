@@ -295,6 +295,12 @@
   color: var(--pal-accent);
 }
 
+.provider-auth-list__btn--edit:hover:not(:disabled) {
+  border-color: rgba(168, 162, 158, 0.45);
+  background: rgba(168, 162, 158, 0.08);
+  color: var(--pal-text-secondary, rgba(255, 255, 255, 0.7));
+}
+
 .provider-auth-list__btn--delete:hover:not(:disabled) {
   border-color: rgba(248, 113, 113, 0.5);
   background: rgba(248, 113, 113, 0.08);

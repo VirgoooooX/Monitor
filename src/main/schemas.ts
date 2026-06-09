@@ -1016,10 +1016,10 @@ export const networkQuickActionsSchema = z
     configFiles: z
       .object({
         activePath: z.string().nullable(),
-        whitelist: z.array(
+        entries: z.array(
           z
             .object({
-              alias: z.string(),
+              label: z.string(),
               path: z.string(),
               isActive: z.boolean(),
             })
@@ -1312,6 +1312,37 @@ export const setProviderAuthEnabledInputSchema = z
   .strict();
 
 /**
+ * Input for `desktop:updateProviderAuth`. All fields except `id` are
+ * optional. Secret fields use empty-string semantics: omit or empty
+ * means "keep the existing value" so the renderer never needs to
+ * read back the current secret (write-only contract).
+ */
+export const updateProviderAuthInputSchema = z
+  .object({
+    id: trimmedNonEmpty,
+    label: trimmedNonEmpty.max(120).optional(),
+    apiKey: z.string().optional(),
+    baseUrl: z.string().optional(),
+    xiaomiPassToken: z.string().optional(),
+    xiaomiUserId: z.string().optional(),
+    deepseekUserToken: z.string().optional(),
+    opencodeAuthCookie: z.string().optional(),
+    opencodeWorkspaceUrl: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * Input for `desktop:reimportProviderAuthFile`. Re-reads the CPA
+ * auth file for an existing row, replacing its secret payload.
+ */
+export const reimportProviderAuthFileInputSchema = z
+  .object({
+    id: trimmedNonEmpty,
+    label: trimmedNonEmpty.max(120).optional(),
+  })
+  .strict();
+
+/**
  * Result envelope for `desktop:validateProviderAuth`. `ok` is a
  * direct boolean rather than the `IpcResult` discriminator because
  * a "validation failed" outcome is a normal, non-exceptional answer
@@ -1458,6 +1489,14 @@ export const desktopApiSchemas = {
   },
   setProviderAuthEnabled: {
     input: setProviderAuthEnabledInputSchema,
+    output: providerAuthMetadataSchema.nullable(),
+  },
+  updateProviderAuth: {
+    input: updateProviderAuthInputSchema,
+    output: providerAuthMetadataSchema.nullable(),
+  },
+  reimportProviderAuthFile: {
+    input: reimportProviderAuthFileInputSchema,
     output: providerAuthMetadataSchema.nullable(),
   },
 } as const;

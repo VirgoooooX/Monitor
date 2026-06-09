@@ -48,6 +48,8 @@ import type {
   CreateProviderAuthApiKeyInput,
   SetProviderAuthEnabledInput,
   ManualApiKeyProvider,
+  UpdateProviderAuthInput,
+  ReimportProviderAuthFileInput,
 } from '../types';
 import { PROVIDER_DEFAULT_CAPABILITY } from '../types';
 import type {
@@ -134,6 +136,30 @@ export interface ProviderAuthService {
   remove(id: string): void;
   /** Lightweight (no upstream call) validate of a stored account. */
   validate(id: string): ProviderAuthValidationResult;
+  /**
+   * Update an existing row in-place. Only `manual-api-key` rows
+   * accept secret field changes; all rows accept label changes.
+   * Empty/omitted secret fields preserve the existing value.
+   *
+   * @returns Updated metadata, or `null` when the id does not exist.
+   * @throws {ProviderAuthError} with code `validation` when the row
+   *   is not a manual-api-key account and secret fields are provided.
+   */
+  update(
+    input: import('../types').UpdateProviderAuthInput,
+  ): ProviderAuthMetadata | null;
+  /**
+   * Re-import the CPA auth file for an existing `cpa-auth-file`
+   * row. Opens a file dialog, parses the selected file, and
+   * replaces the secret payload while preserving the row id.
+   *
+   * @returns Updated metadata, or `null` when the id does not exist.
+   * @throws {ProviderAuthError} when the row is not a cpa-auth-file
+   *   account, or on any file/dialog/parse failure.
+   */
+  reimportFromFile(
+    input: import('../types').ReimportProviderAuthFileInput,
+  ): Promise<ProviderAuthMetadata | null>;
 }
 
 /**
@@ -961,6 +987,246 @@ export function createProviderAuthService(
     });
   }
 
+  // -------------------------------------------------------------------------
+  // update()
+  // -------------------------------------------------------------------------
+  //
+  // In-place edit of an existing `provider_auth` row. Only
+  // `manual-api-key` rows accept secret field changes; all rows
+  // accept label changes. Empty/omitted secret fields preserve the
+  // existing value so the renderer never needs to read back the
+  // current secret (write-only contract).
+  function update(
+    input: UpdateProviderAuthInput,
+  ): ProviderAuthMetadata | null {
+    const row = repo.get(input.id);
+    if (row === null) return null;
+
+    // Label-only update — allowed for any source.
+    const hasSecretField =
+      (typeof input.apiKey === 'string' && input.apiKey.trim().length > 0) ||
+      (typeof input.baseUrl === 'string' && input.baseUrl.trim().length > 0) ||
+      (typeof input.xiaomiPassToken === 'string' && input.xiaomiPassToken.trim().length > 0) ||
+      (typeof input.xiaomiUserId === 'string' && input.xiaomiUserId.trim().length > 0) ||
+      (typeof input.deepseekUserToken === 'string' && input.deepseekUserToken.trim().length > 0) ||
+      (typeof input.opencodeAuthCookie === 'string' && input.opencodeAuthCookie.trim().length > 0) ||
+      (typeof input.opencodeWorkspaceUrl === 'string' && input.opencodeWorkspaceUrl.trim().length > 0);
+
+    const label =
+      typeof input.label === 'string' && input.label.trim().length > 0
+        ? input.label.trim()
+        : undefined;
+
+    if (!hasSecretField) {
+      // Label-only update.
+      if (label !== undefined) {
+        const updatedAt = now();
+        repo.update(row.id, { label, updatedAt });
+        return redactRow({ ...row, label, updatedAt });
+      }
+      // Nothing to update — return current state.
+      return redactRow(row);
+    }
+
+    // Secret field provided — reject if not a manual-api-key row.
+    if (row.source !== 'manual-api-key') {
+      throw new ProviderAuthError(
+        'validation',
+        bound('only manual-api-key accounts support secret editing'),
+      );
+    }
+
+    // Read existing secret payload.
+    let existing: ProviderAuthSecretPayload;
+    try {
+      const ciphertext = secrets.get(row.secretKey);
+      if (ciphertext === null) {
+        throw new ProviderAuthError(
+          'auth_missing',
+          bound('secret payload missing for account'),
+        );
+      }
+      existing = JSON.parse(ciphertext) as ProviderAuthSecretPayload;
+    } catch (err) {
+      if (err instanceof ProviderAuthError) throw err;
+      throw new ProviderAuthError(
+        'auth_expired',
+        bound('failed to read existing secret'),
+      );
+    }
+
+    // Merge new non-empty fields into existing payload.
+    const merged: ProviderAuthSecretPayload = { ...existing };
+
+    if (typeof input.apiKey === 'string' && input.apiKey.trim().length > 0) {
+      merged.apiKey = input.apiKey.trim();
+    }
+    if (typeof input.baseUrl === 'string') {
+      const trimmed = input.baseUrl.trim();
+      if (trimmed.length > 0) {
+        merged.baseUrl = trimmed;
+      }
+    }
+    if (typeof input.xiaomiPassToken === 'string' && input.xiaomiPassToken.trim().length > 0) {
+      merged.xiaomiPassToken = input.xiaomiPassToken.trim();
+    }
+    if (typeof input.xiaomiUserId === 'string' && input.xiaomiUserId.trim().length > 0) {
+      merged.xiaomiUserId = input.xiaomiUserId.trim();
+    }
+    if (typeof input.deepseekUserToken === 'string' && input.deepseekUserToken.trim().length > 0) {
+      merged.deepseekUserToken = input.deepseekUserToken.trim();
+    }
+    if (typeof input.opencodeAuthCookie === 'string' && input.opencodeAuthCookie.trim().length > 0) {
+      merged.opencodeAuthCookie = input.opencodeAuthCookie.trim();
+    }
+    if (typeof input.opencodeWorkspaceUrl === 'string' && input.opencodeWorkspaceUrl.trim().length > 0) {
+      merged.opencodeWorkspaceUrl = input.opencodeWorkspaceUrl.trim();
+    }
+
+    // Atomic write: update secret + row in transaction.
+    const updatedAt = now();
+    runInTxn(() => {
+      secrets.set(row.secretKey, JSON.stringify(merged));
+      repo.update(row.id, {
+        ...(label !== undefined ? { label } : {}),
+        updatedAt,
+        lastValidatedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      });
+    });
+
+    // Re-validate with the merged payload.
+    const validation = validateLightweight(row.provider, merged);
+    const validatedAt = now();
+    repo.update(row.id, {
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    });
+
+    const finalised: ProviderAuthRow = {
+      ...row,
+      ...(label !== undefined ? { label } : {}),
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    };
+    return redactRow(finalised);
+  }
+
+  // -------------------------------------------------------------------------
+  // reimportFromFile()
+  // -------------------------------------------------------------------------
+  //
+  // Re-import the CPA auth file for an existing `cpa-auth-file` row.
+  // Opens a file dialog, parses the file, and overwrites the same
+  // secretKey. Preserves row id, importedAt, enabled, source, provider.
+  async function reimportFromFile(
+    input: ReimportProviderAuthFileInput,
+  ): Promise<ProviderAuthMetadata | null> {
+    const row = repo.get(input.id);
+    if (row === null) return null;
+
+    if (row.source !== 'cpa-auth-file') {
+      throw new ProviderAuthError(
+        'validation',
+        bound('only cpa-auth-file accounts support re-import'),
+      );
+    }
+
+    // Open file dialog — same pipeline as importFromFile.
+    const dlg = await showOpenDialog();
+    if (dlg.canceled || dlg.filePaths.length === 0) {
+      throw new ProviderAuthError(
+        'cancelled',
+        bound('user cancelled file selection'),
+      );
+    }
+
+    const filePath = dlg.filePaths[0]!;
+
+    if (!isAcceptableExtension(filePath)) {
+      throw new ProviderAuthError(
+        'unsupported_file',
+        bound('only .json or .txt files are accepted'),
+      );
+    }
+
+    const stat = await statFile(filePath);
+    if (stat.size > MAX_FILE_SIZE_BYTES) {
+      throw new ProviderAuthError(
+        'parse_error',
+        bound('file too large (>1 MiB)'),
+      );
+    }
+
+    const raw = await readFile(filePath);
+    const parsed: ParseResult = parse(row.provider, raw);
+
+    if (deps.fetchEmailForAccessToken !== null) {
+      await enrichParseResultWithEmail(
+        row.provider,
+        parsed,
+        deps.fetchEmailForAccessToken ?? undefined,
+      );
+    }
+
+    // Overwrite the existing secret with the new payload.
+    const updatedAt = now();
+    const newLabel =
+      typeof input.label === 'string' && input.label.trim().length > 0
+        ? input.label.trim()
+        : parsed.label;
+
+    runInTxn(() => {
+      secrets.set(row.secretKey, JSON.stringify(parsed.payload));
+      repo.update(row.id, {
+        label: newLabel,
+        accountId: parsed.accountId,
+        projectId: parsed.projectId,
+        quotaCapability: PROVIDER_DEFAULT_CAPABILITY[row.provider],
+        updatedAt,
+        lastValidatedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      });
+    });
+
+    // Re-validate.
+    const validation = validateLightweight(row.provider, parsed.payload);
+    const validatedAt = now();
+    repo.update(row.id, {
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    });
+
+    const finalised: ProviderAuthRow = {
+      ...row,
+      label: newLabel,
+      accountId: parsed.accountId,
+      projectId: parsed.projectId,
+      quotaCapability: PROVIDER_DEFAULT_CAPABILITY[row.provider],
+      updatedAt: validatedAt,
+      lastValidatedAt: validatedAt,
+      lastErrorCode: validation.ok
+        ? null
+        : (validation.code as ProviderAuthErrorCode),
+      lastErrorMessage: validation.ok ? null : bound(validation.message),
+    };
+    return redactRow(finalised);
+  }
+
   return {
     list,
     importFromFile,
@@ -968,5 +1234,7 @@ export function createProviderAuthService(
     setEnabled,
     remove,
     validate,
+    update,
+    reimportFromFile,
   };
 }

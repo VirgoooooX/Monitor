@@ -78,6 +78,7 @@ export interface TranslationCatalog {
   'dashboard.network.nodeListAria': string;      // 节点列表
   'dashboard.network.nodeTitle': string;         // 节点
   'dashboard.network.groupMeta': string;         // 分组
+  'dashboard.network.groupSelectorAria': string; // 选择节点分组
 
   // -------------------------------------------------------------------
   // Renderer boot states (Requirement 4.2, 10.2)
@@ -287,6 +288,10 @@ export interface TranslationCatalog {
   'settings.accounts.providerType.aria': string;
   'settings.accounts.actions.label': string;            // 操作
   'settings.accounts.actions.hint': string;
+  'settings.accounts.actions.edit': string;             // 编辑
+  'settings.accounts.edit.secretPlaceholder': string;   // 留空则保留当前值
+  'settings.accounts.edit.reimport': string;            // 重新选择认证文件
+  'settings.accounts.edit.cancel': string;              // 取消编辑
   'settings.accounts.import.label': string;             // 导入 auth 认证文件
   'settings.accounts.import.busy': string;              // 导入中…
   'settings.accounts.apiKey.openForm': string;          // 输入 API Key

@@ -1,6 +1,6 @@
 // ConfigSwitchCard — list and switch OpenClash config files (Profile / subscriptions).
 //
-// Renders the user-curated whitelist (`managementInterface.configFileWhitelist`)
+// Renders the OpenClash config file list (auto-synced from the management client)
 // decorated with the active-config flag from the management client. Clicking
 // a non-active entry asks the parent (`QuickActionsPanel`) to open the
 // `ConfirmDialog`; this component never calls the IPC directly — the parent
@@ -10,14 +10,14 @@
 // site is one level up.
 //
 // Display contract (Requirement 4.3, 4.4, 4.6):
-//   • Show `entry.alias.trim()` when non-empty, otherwise the basename of
+//   • Show `entry.label.trim()` when non-empty, otherwise the basename of
 //     `entry.path`. NEVER render the absolute `path` verbatim — it can
 //     leak the router's filesystem layout into the UI / screenshots.
 //   • Mark the entry whose `isActive === true` with a localised "Active"
 //     badge (`configSwitch.activeBadge`). The IPC layer guarantees at
 //     most one active entry; we still defensively dedupe so a regression
 //     there cannot light up two badges.
-//   • When the whitelist is empty AND no active path was learned, hide
+//   • When the entries list is empty AND no active path was learned, hide
 //     the action controls and surface guidance text pointing users at
 //     the Settings page (Requirement 4.5).
 //
@@ -75,22 +75,23 @@ export interface ConfigSwitchCardProps {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a user-readable label for a whitelist entry. Trimmed alias wins;
- * otherwise we fall back to the basename of the absolute path. The path
- * itself is intentionally never rendered — see component-level docs.
+ * Derive a user-readable label for a config entry. The `label` field
+ * (from the management client or settings alias) wins; otherwise we
+ * fall back to the basename of the absolute path. The path itself is
+ * intentionally never rendered — see component-level docs.
  *
  * The basename helper accepts both POSIX and Windows-style separators
- * to mirror `ConfirmDialog#basename`. The whitelist regex enforces
+ * to mirror `ConfirmDialog#basename`. The config path regex enforces
  * POSIX paths only (`/etc/openclash/config/*.yaml`), so `\\` handling
  * is purely defensive.
  */
 function entryLabel(
-  entry: { alias: string; path: string },
+  entry: { label: string; path: string },
   fallback: string,
 ): string {
-  const trimmedAlias = entry.alias.trim();
-  if (trimmedAlias.length > 0) {
-    return trimmedAlias;
+  const trimmedLabel = entry.label.trim();
+  if (trimmedLabel.length > 0) {
+    return trimmedLabel;
   }
   const path = entry.path;
   if (!path) return fallback;
@@ -156,7 +157,7 @@ export function ConfigSwitchCard({
   onConfirmSwitch,
 }: ConfigSwitchCardProps): JSX.Element | null {
   const t = useT();
-  const { activePath, whitelist } = configFiles;
+  const { activePath, entries } = configFiles;
   const unnamed = t('configSwitch.unnamed');
 
   // Requirement 4.5: when nothing is configured AND the management
@@ -164,7 +165,7 @@ export function ConfigSwitchCard({
   // guidance message. We deliberately render a sibling element (rather
   // than `null`) so the parent panel can keep its slot order stable
   // and screen readers still see a hint instead of empty space.
-  if (whitelist.length === 0 && activePath === null) {
+  if (entries.length === 0 && activePath === null) {
     return (
       <section
         className="config-switch-card config-switch-card--empty"
@@ -187,8 +188,8 @@ export function ConfigSwitchCard({
   // entry, but a regression there must not light up two badges. We
   // pick the first hit in iteration order (stable across renders).
   let firstActiveIdx = -1;
-  for (let i = 0; i < whitelist.length; i += 1) {
-    if (whitelist[i]?.isActive) {
+  for (let i = 0; i < entries.length; i += 1) {
+    if (entries[i]?.isActive) {
       firstActiveIdx = i;
       break;
     }
@@ -211,8 +212,8 @@ export function ConfigSwitchCard({
   const activeBasenameHint =
     activePath !== null
       ? firstActiveIdx >= 0
-        ? entryLabel(whitelist[firstActiveIdx]!, unnamed)
-        : entryLabel({ alias: '', path: activePath }, unnamed)
+        ? entryLabel(entries[firstActiveIdx]!, unnamed)
+        : entryLabel({ label: '', path: activePath }, unnamed)
       : null;
 
   return (
@@ -241,16 +242,16 @@ export function ConfigSwitchCard({
         )}
       </header>
 
-      {whitelist.length === 0 ? (
+      {entries.length === 0 ? (
         <p
           className="config-switch-card__guidance"
-          data-testid="config-switch-card-no-whitelist"
+          data-testid="config-switch-card-no-entries"
         >
           {t('configSwitch.guidance')}
         </p>
       ) : (
         <ul className="config-switch-card__list" role="list">
-          {whitelist.map((entry, idx) => {
+          {entries.map((entry, idx) => {
             const isActive = idx === firstActiveIdx;
             const label = entryLabel(entry, unnamed);
             // Active entries cannot be the switch target (Requirement 4.3).

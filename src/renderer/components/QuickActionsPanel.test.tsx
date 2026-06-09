@@ -84,9 +84,9 @@ function buildPayload(
     },
     configFiles: {
       activePath: '/etc/openclash/config/main.yaml',
-      whitelist: [
+      entries: [
         {
-          alias: 'Main',
+          label: 'Main',
           path: '/etc/openclash/config/main.yaml',
           isActive: true,
         },
@@ -263,14 +263,14 @@ describe('QuickActionsPanel — Property 2 (banner presence/absence)', () => {
       stubDesktopBridge({
         configFiles: {
           activePath: '/etc/openclash/config/main.yaml',
-          whitelist: [
+          entries: [
             {
-              alias: 'Main',
+              label: 'Main',
               path: '/etc/openclash/config/main.yaml',
               isActive: true,
             },
             {
-              alias: 'Backup',
+              label: 'Backup',
               path: '/etc/openclash/config/backup.yaml',
               isActive: false,
             },

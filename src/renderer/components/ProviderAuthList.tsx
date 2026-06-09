@@ -38,8 +38,8 @@
 //   • src/renderer/components/SettingsView.tsx for the Section/Field
 //     visual rhythm this list lives inside.
 
-import { useMemo } from 'react';
-import { RefreshCw, Trash2, AlertCircle, KeyRound, Clock } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { RefreshCw, Trash2, AlertCircle, KeyRound, Clock, Pencil } from 'lucide-react';
 
 import { ProviderIcon } from './ProviderIcon';
 import { useT } from '../lib/i18n';
@@ -319,6 +319,16 @@ export interface ProviderAuthListProps {
   readonly rows: ReadonlyArray<ProviderAuthMetadata>;
   readonly onRefresh: (id: string) => void;
   readonly onDelete: (id: string) => void;
+  /** Edit an existing account. When supplied, an edit button appears
+   *  on each row. The parent decides whether to open a manual-key
+   *  form or a reimport panel based on the row's `source`. */
+  readonly onEdit?: (row: ProviderAuthMetadata) => void;
+  /** ID of the row currently being edited. When set, `editPanel` is
+   *  rendered inline below that row. */
+  readonly editingRowId?: string | null;
+  /** Edit form content to render inline below the row being edited.
+   *  Only rendered when `editingRowId` matches a row. */
+  readonly editPanel?: React.ReactNode;
   /** Toggle the per-row `enabled` flag. Optional so legacy call
    *  sites that have not been migrated to per-account switches keep
    *  rendering rows with the toggle hidden — the action is visible
@@ -348,6 +358,9 @@ export function ProviderAuthList({
   rows,
   onRefresh,
   onDelete,
+  onEdit,
+  editingRowId,
+  editPanel,
   onToggleEnabled,
   kiroTokenRefresh,
   onKiroRefreshSettingsChange,
@@ -387,24 +400,31 @@ export function ProviderAuthList({
       aria-label="已导入的 AI 账号"
     >
       {sortedRows.map((row) => (
-        <ProviderAuthRow
-          key={row.id}
-          row={row}
-          now={now}
-          busy={busyId === row.id}
-          onRefresh={onRefresh}
-          onDelete={onDelete}
-          {...(onToggleEnabled !== undefined
-            ? { onToggleEnabled }
-            : {})}
-          {...(kiroTokenRefresh !== undefined &&
-          onKiroRefreshSettingsChange !== undefined
-            ? {
-                kiroTokenRefresh,
-                onKiroRefreshSettingsChange,
-              }
-            : {})}
-        />
+        <React.Fragment key={row.id}>
+          <ProviderAuthRow
+            row={row}
+            now={now}
+            busy={busyId === row.id}
+            onRefresh={onRefresh}
+            onDelete={onDelete}
+            {...(onEdit !== undefined ? { onEdit } : {})}
+            {...(onToggleEnabled !== undefined
+              ? { onToggleEnabled }
+              : {})}
+            {...(kiroTokenRefresh !== undefined &&
+            onKiroRefreshSettingsChange !== undefined
+              ? {
+                  kiroTokenRefresh,
+                  onKiroRefreshSettingsChange,
+                }
+              : {})}
+          />
+          {editingRowId === row.id && editPanel !== undefined && (
+            <li className="provider-auth-list__edit-panel">
+              {editPanel}
+            </li>
+          )}
+        </React.Fragment>
       ))}
     </ul>
   );
@@ -420,6 +440,7 @@ interface ProviderAuthRowProps {
   readonly busy: boolean;
   readonly onRefresh: (id: string) => void;
   readonly onDelete: (id: string) => void;
+  readonly onEdit?: (row: ProviderAuthMetadata) => void;
   readonly onToggleEnabled?: (id: string, enabled: boolean) => void;
   readonly kiroTokenRefresh?: KiroTokenRefreshSettings;
   readonly onKiroRefreshSettingsChange?: (
@@ -433,6 +454,7 @@ function ProviderAuthRow({
   busy,
   onRefresh,
   onDelete,
+  onEdit,
   onToggleEnabled,
   kiroTokenRefresh,
   onKiroRefreshSettingsChange,
@@ -692,6 +714,20 @@ function ProviderAuthRow({
           />
           <span>{busy ? '刷新中…' : '刷新'}</span>
         </button>
+
+        {onEdit !== undefined && (
+          <button
+            type="button"
+            className="provider-auth-list__btn provider-auth-list__btn--edit"
+            onClick={() => onEdit(row)}
+            disabled={busy}
+            aria-label={`编辑 ${PROVIDER_LABELS[row.provider]} ${row.label}`}
+            data-testid={`provider-auth-list-row-${row.id}-edit`}
+          >
+            <Pencil size={13} strokeWidth={1.75} aria-hidden="true" />
+            <span>编辑</span>
+          </button>
+        )}
 
         <button
           type="button"

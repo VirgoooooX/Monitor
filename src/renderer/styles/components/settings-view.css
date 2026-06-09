@@ -1356,6 +1356,67 @@
   letter-spacing: 0.02em;
 }
 
+/* ── Inline edit panel (rendered inside ProviderAuthList) ─────────── */
+
+.settings-view__edit-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.settings-view__edit-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-view__edit-inline-row > * {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.settings-view__edit-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-view__btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: var(--type-xs, 12px);
+  font-weight: 500;
+  color: var(--sv-text-secondary, rgba(255, 255, 255, 0.55));
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.settings-view__btn-ghost:hover {
+  color: var(--sv-text-primary, rgba(255, 255, 255, 0.88));
+}
+
+[data-color-mode='light'] .settings-view__edit-inline {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-color-mode='light'] .settings-view__btn-ghost {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+[data-color-mode='light'] .settings-view__btn-ghost:hover {
+  color: rgba(0, 0, 0, 0.88);
+}
+
 .settings-view__whitelist {
   display: flex;
   flex-direction: column;

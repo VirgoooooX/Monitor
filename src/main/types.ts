@@ -575,6 +575,48 @@ export interface ProviderAuthMetadata {
 }
 
 /**
+ * Input for `desktop:updateProviderAuth`. Allows in-place editing of
+ * a `provider_auth` row. Only `source === 'manual-api-key'` rows
+ * accept secret field changes; all rows accept label changes.
+ *
+ * Secret fields are optional — omitted or empty values signal
+ * "keep the existing secret" so the renderer never needs to read
+ * back the current value (write-only contract, Requirement 1.4).
+ */
+export interface UpdateProviderAuthInput {
+  /** Row id (required). */
+  id: string;
+  /** New display label. Omit or empty to keep existing. */
+  label?: string;
+  /** New API key. Empty string = keep existing. Only for manual-api-key rows. */
+  apiKey?: string;
+  /** New base URL. Empty string = keep existing. Only for openai-compatible. */
+  baseUrl?: string;
+  /** Xiaomi pass token. Empty = keep existing. Only for xiaomi manual rows. */
+  xiaomiPassToken?: string;
+  /** Xiaomi user ID. Empty = keep existing. Only for xiaomi manual rows. */
+  xiaomiUserId?: string;
+  /** DeepSeek user token. Empty = keep existing. Only for deepseek manual rows. */
+  deepseekUserToken?: string;
+  /** OpenCode auth cookie. Empty = keep existing. Only for opencode manual rows. */
+  opencodeAuthCookie?: string;
+  /** OpenCode workspace URL. Empty = keep existing. Only for opencode manual rows. */
+  opencodeWorkspaceUrl?: string;
+}
+
+/**
+ * Input for `desktop:reimportProviderAuthFile`. Re-reads the CPA
+ * auth file for an existing `cpa-auth-file` row, replacing its
+ * secret payload while preserving the row id and metadata.
+ */
+export interface ReimportProviderAuthFileInput {
+  /** Row id (required). */
+  id: string;
+  /** New display label. Omit or empty to keep existing. */
+  label?: string;
+}
+
+/**
  * Subset of API-key providers that accept a manually-typed credential
  * via the "AI 账号" settings panel. OAuth-style providers
  * (`claude-code`, `codex`, `gemini-cli`, `antigravity`) are NOT in
@@ -1291,8 +1333,9 @@ export interface NetworkQuickActions {
   configFiles: {
     /** Active config (uci openclash.config.config_path) when management is reachable; `null` otherwise. */
     activePath: string | null;
-    whitelist: Array<{
-      alias: string;
+    entries: Array<{
+      /** Display label — alias from settings or auto-generated basename. */
+      label: string;
       path: string;
       /** `true` iff `path === activePath`. */
       isActive: boolean;
@@ -1437,6 +1480,27 @@ export interface DesktopApi {
     code: ProviderAuthErrorCode | 'ok';
     message: string;
   }>;
+  /**
+   * Update an existing `provider_auth` row in-place. Only
+   * `manual-api-key` rows accept secret field changes; all rows
+   * accept label changes. Empty secret fields preserve the existing
+   * value (write-only — the current secret is never echoed back).
+   * Returns the updated metadata, or `null` when the id does not
+   * exist.
+   */
+  updateProviderAuth(
+    input: UpdateProviderAuthInput,
+  ): Promise<ProviderAuthMetadata | null>;
+  /**
+   * Re-import the CPA auth file for an existing `cpa-auth-file`
+   * row. Opens a file dialog, parses the selected file, and
+   * replaces the secret payload while preserving the row id.
+   * Returns the updated metadata, or `null` when the id does not
+   * exist.
+   */
+  reimportProviderAuthFile(
+    input: ReimportProviderAuthFileInput,
+  ): Promise<ProviderAuthMetadata | null>;
   on<C extends DesktopPushChannel>(
     channel: C,
     cb: (payload: DesktopPushPayloads[C]) => void,

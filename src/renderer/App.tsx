@@ -26,6 +26,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
+  ChevronLeft,
+  ChevronRight,
   Settings as SettingsIcon,
   RefreshCw,
 } from 'lucide-react';
@@ -241,6 +243,57 @@ function networkStatusTone(status: DashboardState['status']): 'healthy' | 'warn'
     case 'home_down':
       return 'critical';
   }
+}
+
+type OpsSignalTone = 'ok' | 'warn' | 'bad' | 'neutral';
+
+function padClock(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+export function formatOpsTimestamp(timestamp: number | null | undefined): string {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+    return '—';
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  return [
+    padClock(date.getHours()),
+    padClock(date.getMinutes()),
+    padClock(date.getSeconds()),
+  ].join(':');
+}
+
+export function formatOpsSuccessRate(rate: number | null | undefined): string {
+  if (typeof rate !== 'number' || !Number.isFinite(rate)) {
+    return '—';
+  }
+  const clamped = Math.min(1, Math.max(0, rate));
+  return `${Math.round(clamped * 100)}%`;
+}
+
+export function openclashApiTone(
+  apiOk: DashboardState['openclash']['apiOk'] | null | undefined,
+): OpsSignalTone {
+  if (apiOk === true) return 'ok';
+  if (apiOk === 'auth_error') return 'warn';
+  return 'bad';
+}
+
+function booleanOpsTone(ok: boolean | null | undefined): OpsSignalTone {
+  if (ok === true) return 'ok';
+  if (ok === false) return 'bad';
+  return 'neutral';
+}
+
+function openclashApiLabel(
+  apiOk: DashboardState['openclash']['apiOk'] | null | undefined,
+): string {
+  if (apiOk === true) return 'API 正常';
+  if (apiOk === 'auth_error') return 'API 鉴权';
+  return 'API 失败';
 }
 
 export function App(): JSX.Element | null {
@@ -590,6 +643,137 @@ const TABS: readonly TabDef[] = [
   { id: 'settings', labelKey: 'expanded.tab.settings', icon: <SettingsIcon size={15} strokeWidth={1.75} /> },
 ];
 
+// ---------------------------------------------------------------------------
+// GroupTabBar — scrollable tab bar with fade edges and arrow buttons
+// ---------------------------------------------------------------------------
+
+function GroupTabBar({
+  groups,
+  selectedName,
+  onSelect,
+  ariaLabel,
+}: {
+  readonly groups: ReadonlyArray<{ name: string }>;
+  readonly selectedName: string | null;
+  readonly onSelect: (name: string) => void;
+  readonly ariaLabel: string;
+}): JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 2);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    updateScrollState();
+    el.addEventListener('scroll', updateScrollState, { passive: true });
+    const ro = new ResizeObserver(updateScrollState);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', updateScrollState);
+      ro.disconnect();
+    };
+  }, [updateScrollState, groups]);
+
+  // Scroll active tab into view on selection change.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || selectedName === null) return;
+    const activeTab = el.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (activeTab) {
+      const activeLeft = activeTab.offsetLeft;
+      const activeRight = activeLeft + activeTab.offsetWidth;
+      const viewportLeft = el.scrollLeft;
+      const viewportRight = viewportLeft + el.clientWidth;
+
+      if (activeLeft < viewportLeft) {
+        el.scrollTo({ left: activeLeft, behavior: 'smooth' });
+      } else if (activeRight > viewportRight) {
+        el.scrollTo({
+          left: activeRight - el.clientWidth,
+          behavior: 'smooth',
+        });
+      }
+    }
+  }, [selectedName]);
+
+  // Convert vertical wheel to horizontal scroll.
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    }
+  }, []);
+
+  const scrollBy = useCallback((direction: 'left' | 'right') => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const amount = el.clientWidth * 0.6;
+    el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' });
+  }, []);
+
+  return (
+    <div className="ex__group-bar">
+      {canScrollLeft && (
+        <button
+          type="button"
+          className="ex__group-arrow"
+          onClick={() => scrollBy('left')}
+          aria-label="Scroll left"
+          tabIndex={-1}
+        >
+          <ChevronLeft size={13} strokeWidth={2} />
+        </button>
+      )}
+
+      <div
+        ref={scrollRef}
+        className="ex__group-track"
+        role="tablist"
+        aria-label={ariaLabel}
+        onWheel={handleWheel}
+      >
+        {groups.map((g) => (
+          <button
+            key={g.name}
+            type="button"
+            role="tab"
+            aria-selected={g.name === selectedName}
+            className={[
+              'ex__group-tab',
+              g.name === selectedName ? 'ex__group-tab--active' : '',
+            ].join(' ')}
+            onClick={() => onSelect(g.name)}
+          >
+            {g.name}
+          </button>
+        ))}
+      </div>
+
+      {canScrollRight && (
+        <button
+          type="button"
+          className="ex__group-arrow"
+          onClick={() => scrollBy('right')}
+          aria-label="Scroll right"
+          tabIndex={-1}
+        >
+          <ChevronRight size={13} strokeWidth={2} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ExpandedRoot({
   appearance,
 }: {
@@ -603,24 +787,40 @@ function ExpandedRoot({
   const [switchConfirm, setSwitchConfirm] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [availableGroups, setAvailableGroups] = useState<Array<{ name: string; nodes: NodeView[] }>>([]);
+  const [selectedGroupName, setSelectedGroupName] = useState<string | null>(null);
 
   const reloadNodes = useCallback(async (): Promise<void> => {
     const desktop = window.desktop;
     if (!desktop) return;
     try {
       const details = await desktop.getOpenClashDetails();
-      if (details.groups.length > 0) {
-        const primary = details.groups[0];
-        if (primary) {
-          setNodes(primary.nodes);
-          setCurrentGroup(primary.name);
-        }
+      const groups = details.groups.map((g) => ({ name: g.name, nodes: g.nodes }));
+      setAvailableGroups(groups);
+
+      if (groups.length === 0) {
+        setNodes([]);
+        setCurrentGroup(null);
+        setSelectedGroupName(null);
+        return;
       }
+
+      // If the currently selected group still exists, keep it;
+      // otherwise fall back to the first group.
+      const stillExists =
+        selectedGroupName !== null &&
+        groups.some((g) => g.name === selectedGroupName);
+      const activeName = stillExists ? selectedGroupName! : groups[0]!.name;
+      const activeGroup = groups.find((g) => g.name === activeName) ?? groups[0]!;
+
+      setSelectedGroupName(activeName);
+      setNodes(activeGroup.nodes);
+      setCurrentGroup(activeName);
     } catch (err: unknown) {
       // eslint-disable-next-line no-console
       console.error('[ExpandedRoot] getOpenClashDetails failed:', err);
     }
-  }, []);
+  }, [selectedGroupName]);
 
   const handleRefresh = useCallback(async (): Promise<void> => {
     const desktop = window.desktop;
@@ -638,6 +838,18 @@ function ExpandedRoot({
       setTimeout(() => setRefreshing(false), 350);
     }
   }, [reloadNodes]);
+
+  const handleGroupSelect = useCallback(
+    (groupName: string) => {
+      const group = availableGroups.find((g) => g.name === groupName);
+      if (group) {
+        setSelectedGroupName(groupName);
+        setNodes(group.nodes);
+        setCurrentGroup(groupName);
+      }
+    },
+    [availableGroups],
+  );
 
   useEffect(() => {
     const desktop = window.desktop;
@@ -701,7 +913,7 @@ function ExpandedRoot({
 
   return (
     <div
-      className="ex"
+      className={tab === 'network' ? 'ex ex--network-ops' : 'ex'}
       data-testid="expanded-root"
       data-color-mode={appearance.colorMode}
       data-compact-theme={appearance.compactTheme}
@@ -762,118 +974,169 @@ function ExpandedRoot({
         )}
 
         {tab === 'network' && (
-          <div className="ex__stack">
-            {/* Network glance — compact telemetry strip layout.
-                One primary row that packs all live signals in a single
-                horizontal scan: status pill · node ribbon · sparkline
-                · latency readout. The ratio is intentional — the
-                sparkline gets the most width because it carries time-
-                series information; the latency number anchors the
-                right edge as the "current value". */}
-            <article className="ex__card ex__card--network" aria-label={t('dashboard.network.cardAria')}>
-              <header className="ex__card-head">
-                <span className="ex__card-eyebrow">{t('dashboard.network.eyebrow')}</span>
-                {dashboard?.currentNode.sparkline.length ? (
-                  <span className="ex__card-range" aria-label={t('dashboard.network.latencyRangeAria')}>
-                    <span className="ex__card-range-num">
-                      {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
-                    </span>
-                    <span className="ex__card-range-sep">–</span>
-                    <span className="ex__card-range-num">
-                      {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
-                    </span>
-                    <span className="ex__card-range-unit">ms</span>
-                  </span>
-                ) : null}
-                {dashboard && (
-                  <span
-                    className="ex__card-pulse"
-                    data-status={dashboard.status}
-                    aria-label={t('dashboard.network.liveAria')}
-                    title={t('dashboard.network.liveTitle')}
-                  >
-                    <span className="ex__card-pulse-dot" aria-hidden="true" />
-                    LIVE
-                  </span>
-                )}
-              </header>
+          <div className="ops-network">
+            <section
+              className="ops-network__status-strip"
+              aria-label="网络运行状态"
+              data-status={dashboard ? networkStatusTone(dashboard.status) : 'unknown'}
+            >
+              <div className="ops-network__status-cell ops-network__status-cell--health">
+                <span
+                  className="ops-network__status-dot"
+                  aria-hidden="true"
+                  data-status={dashboard ? networkStatusTone(dashboard.status) : 'unknown'}
+                />
+                <span className="ops-network__status-kicker">HEALTH</span>
+                <strong>
+                  {dashboard
+                    ? t(('dashboard.health.' + dashboard.status) as TranslationKey)
+                    : t('dashboard.network.waitingData')}
+                </strong>
+              </div>
 
-              {dashboard ? (
-                <div
-                  className="ex__strip"
-                  data-status={networkStatusTone(dashboard.status)}
-                >
-                  {/* Status cell */}
-                  <div className="ex__strip-status">
-                    <span
-                      className="ex__strip-dot"
-                      aria-hidden="true"
-                      data-status={networkStatusTone(dashboard.status)}
-                    />
-                    <span className="ex__strip-label">{dashboard.statusLabel}</span>
-                  </div>
+              <div className="ops-network__status-cell">
+                <span className="ops-network__status-kicker">LATENCY</span>
+                <strong>
+                  {formatLatencyNumber(dashboard?.currentNode.avgLatencyMs ?? null)}
+                  <span>ms</span>
+                </strong>
+              </div>
 
-                  {/* Node cell */}
-                  <div className="ex__strip-node" title={dashboard.currentNode.node ?? ''}>
-                    {dashboard.currentNode.group && (
-                      <span className="ex__strip-node-tag">
-                        {dashboard.currentNode.group}
-                      </span>
-                    )}
-                    <span className="ex__strip-node-name">
-                      {dashboard.currentNode.node ?? t('dashboard.network.waitingNodeData')}
-                    </span>
-                  </div>
+              <div className="ops-network__status-cell">
+                <span className="ops-network__status-kicker">GROUP</span>
+                <strong>{currentGroup ?? dashboard?.currentNode.group ?? '—'}</strong>
+              </div>
 
-                  {/* Sparkline cell — takes the slack */}
-                  <div className="ex__strip-trend" aria-hidden="true">
-                    <TelemetryWave
-                      data={dashboard.currentNode.sparkline}
-                      width={520}
-                      height={84}
-                      strokeWidth={1.75}
-                    />
-                  </div>
+              <div className="ops-network__status-cell ops-network__status-cell--wide">
+                <span className="ops-network__status-kicker">CURRENT NODE</span>
+                <strong title={dashboard?.currentNode.node ?? undefined}>
+                  {dashboard?.currentNode.node ?? t('dashboard.network.waitingNodeData')}
+                </strong>
+              </div>
 
-                  {/* Latency cell */}
-                  <div className="ex__strip-metric" aria-label={t('dashboard.network.avgLatencyAria')}>
-                    <span className="ex__strip-metric-num">
-                      {formatLatencyNumber(dashboard.currentNode.avgLatencyMs)}
-                    </span>
-                    <span className="ex__strip-metric-unit">ms</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="ex__placeholder">{t('dashboard.network.waitingData')}</div>
-              )}
-            </article>
+              <div className="ops-network__status-cell">
+                <span className="ops-network__status-kicker">MODE</span>
+                <strong>{dashboard?.openclash.mode ?? '—'}</strong>
+              </div>
 
-            {/* Quick actions — Quick Node Card + Config Switch Card.
-                Only mounted on the expanded window's Network tab
-                (Requirement 1: compact window stays untouched). */}
-            <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
-
-            {/* Node table */}
-            <section className="ex__panel ex__panel--network" aria-label={t('dashboard.network.nodeListAria')}>
-              <header className="ex__panel-head">
-                <h2 className="ex__panel-title">
-                  {t('dashboard.network.nodeTitle')}
-                  <span className="ex__panel-count">{nodes.length}</span>
-                </h2>
-                {currentGroup && (
-                  <span className="ex__panel-meta">
-                    {t('dashboard.network.groupMeta')} <strong>{currentGroup}</strong>
-                  </span>
-                )}
-              </header>
-
-              <NodeTable
-                nodes={nodes}
-                currentNode={dashboard?.currentNode.node ?? null}
-                groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
-                switchConfirmEnabled={switchConfirm}
-              />
+              <div className="ops-network__status-cell">
+                <span className="ops-network__status-kicker">UPDATED</span>
+                <strong>{formatOpsTimestamp(dashboard?.generatedAt)}</strong>
+              </div>
             </section>
+
+            <div className="ops-network__workspace">
+              <div className="ops-network__primary">
+                <section className="ops-network__panel ops-network__panel--telemetry">
+                  <header className="ops-network__panel-head">
+                    <div>
+                      <span className="ops-network__eyebrow">{t('dashboard.network.eyebrow')}</span>
+                      <h2 className="ops-network__title">实时链路遥测</h2>
+                    </div>
+                    {dashboard?.currentNode.sparkline.length ? (
+                      <span
+                        className="ops-network__range"
+                        aria-label={t('dashboard.network.latencyRangeAria')}
+                      >
+                        {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
+                        <span>–</span>
+                        {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
+                        <em>ms</em>
+                      </span>
+                    ) : null}
+                  </header>
+
+                  {dashboard ? (
+                    <div className="ops-network__telemetry-grid">
+                      <div className="ops-network__chart" aria-hidden="true">
+                        <TelemetryWave
+                          data={dashboard.currentNode.sparkline}
+                          width={760}
+                          height={190}
+                          strokeWidth={1.85}
+                        />
+                      </div>
+
+                      <div className="ops-network__signal-list" aria-label="运行信号">
+                        <div
+                          className="ops-network__signal"
+                          data-tone={booleanOpsTone(dashboard.router.ok)}
+                        >
+                          <span>Router</span>
+                          <strong>{dashboard.router.ok ? 'Online' : 'Offline'}</strong>
+                        </div>
+                        <div
+                          className="ops-network__signal"
+                          data-tone={booleanOpsTone(dashboard.openclash.tcpOk)}
+                        >
+                          <span>TCP</span>
+                          <strong>{dashboard.openclash.tcpOk ? 'Reachable' : 'Down'}</strong>
+                        </div>
+                        <div
+                          className="ops-network__signal"
+                          data-tone={openclashApiTone(dashboard.openclash.apiOk)}
+                        >
+                          <span>OpenClash</span>
+                          <strong>{openclashApiLabel(dashboard.openclash.apiOk)}</strong>
+                        </div>
+                        <div className="ops-network__signal" data-tone="neutral">
+                          <span>Success 5</span>
+                          <strong>{formatOpsSuccessRate(dashboard.currentNode.successRate5)}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="ops-network__placeholder">
+                      {t('dashboard.network.waitingData')}
+                    </div>
+                  )}
+                </section>
+
+                {availableGroups.length > 1 && (
+                  <div className="ops-network__groups">
+                    <GroupTabBar
+                      groups={availableGroups}
+                      selectedName={selectedGroupName}
+                      onSelect={handleGroupSelect}
+                      ariaLabel={t('dashboard.network.groupSelectorAria')}
+                    />
+                  </div>
+                )}
+
+                <section
+                  className="ops-network__panel ops-network__panel--nodes ex__panel--network"
+                  aria-label={t('dashboard.network.nodeListAria')}
+                >
+                  <header className="ops-network__panel-head">
+                    <div>
+                      <span className="ops-network__eyebrow">NODE LIST</span>
+                      <h2 className="ops-network__title">
+                        {t('dashboard.network.nodeTitle')}
+                      </h2>
+                    </div>
+                    <div className="ops-network__panel-meta">
+                      <span>{nodes.length}</span>
+                      {currentGroup && <strong>{currentGroup}</strong>}
+                    </div>
+                  </header>
+
+                  <NodeTable
+                    nodes={nodes}
+                    currentNode={dashboard?.currentNode.node ?? null}
+                    groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
+                    switchConfirmEnabled={switchConfirm}
+                  />
+                </section>
+              </div>
+
+              <aside className="ops-network__side" aria-label="配置切换">
+                <header className="ops-network__side-head">
+                  <span className="ops-network__eyebrow">CONTROL</span>
+                  <h2 className="ops-network__side-title">配置切换</h2>
+                </header>
+                <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
+              </aside>
+            </div>
           </div>
         )}
 

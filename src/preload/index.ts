@@ -45,12 +45,14 @@ import type {
   ProviderAuthMetadata,
   ProviderId,
   QuotaStatus,
+  ReimportProviderAuthFileInput,
   ResizeCompactWindowInput,
   SetProviderAuthEnabledInput,
   SwitchNodeInput,
   SwitchNodeResult,
   SwitchOpenClashConfigInput,
   Unsubscribe,
+  UpdateProviderAuthInput,
   UpdateSecretInput,
   UsageSummary,
   UsageSummaryInput,
@@ -382,6 +384,24 @@ const desktopApi: DesktopApi = {
       code: ProviderAuthErrorCode | 'ok';
       message: string;
     }>(DESKTOP_INVOKE_CHANNELS.validateProviderAuth, input);
+  },
+
+  updateProviderAuth(
+    input: UpdateProviderAuthInput,
+  ): Promise<ProviderAuthMetadata | null> {
+    return invoke<ProviderAuthMetadata | null>(
+      DESKTOP_INVOKE_CHANNELS.updateProviderAuth,
+      input,
+    );
+  },
+
+  reimportProviderAuthFile(
+    input: ReimportProviderAuthFileInput,
+  ): Promise<ProviderAuthMetadata | null> {
+    return invoke<ProviderAuthMetadata | null>(
+      DESKTOP_INVOKE_CHANNELS.reimportProviderAuthFile,
+      input,
+    );
   },
 
   on<C extends DesktopPushChannel>(

@@ -20,7 +20,7 @@
 //     (the happy path).
 //   • The component MUST NEVER render the entry's absolute `path` verbatim
 //     (router filesystem layout is sensitive — see ConfigSwitchCard
-//     header comments). When `alias` is non-empty after trim it wins;
+//     header comments). When `label` is non-empty after trim it wins;
 //     otherwise the basename of the path is shown.
 //
 // Property 4 (Config switch is gated by an explicit confirmation —
@@ -79,14 +79,14 @@ function buildQuickActions(
     },
     configFiles: {
       activePath: '/etc/openclash/config/main.yaml',
-      whitelist: [
+      entries: [
         {
-          alias: 'Main',
+          label: 'Main',
           path: '/etc/openclash/config/main.yaml',
           isActive: true,
         },
         {
-          alias: 'Backup',
+          label: 'Backup',
           path: '/etc/openclash/config/backup.yaml',
           isActive: false,
         },
@@ -196,14 +196,14 @@ describe('ConfigSwitchCard — Property 18: whitelist render contract', () => {
     const data = buildQuickActions({
       configFiles: {
         activePath: '/etc/openclash/config/alpha.yaml',
-        whitelist: [
+        entries: [
           {
-            alias: 'Alpha',
+            label: 'Alpha',
             path: '/etc/openclash/config/alpha.yaml',
             isActive: true,
           },
           {
-            alias: 'Beta',
+            label: 'Beta',
             path: '/etc/openclash/config/beta.yaml',
             // Intentional regression: two `isActive: true` entries. The
             // component MUST defensively pick exactly one.
@@ -232,10 +232,10 @@ describe('ConfigSwitchCard — Property 18: whitelist render contract', () => {
     const data = buildQuickActions({
       configFiles: {
         activePath,
-        whitelist: [
-          { alias: 'Main', path: activePath, isActive: true },
+        entries: [
+          { label: 'Main', path: activePath, isActive: true },
           {
-            alias: 'Backup',
+            label: 'Backup',
             path: '/etc/openclash/config/backup.yaml',
             isActive: false,
           },
@@ -266,13 +266,13 @@ describe('ConfigSwitchCard — Property 18: whitelist render contract', () => {
   // Never renders the literal `path`
   // -------------------------------------------------------------------------
 
-  it('renders the trimmed alias and never the absolute path', () => {
+  it('renders the trimmed label and never the absolute path', () => {
     const sensitivePath = '/etc/openclash/config/foo.yaml';
     const data = buildQuickActions({
       configFiles: {
         activePath: null,
-        whitelist: [
-          { alias: 'My Profile', path: sensitivePath, isActive: false },
+        entries: [
+          { label: 'My Profile', path: sensitivePath, isActive: false },
         ],
       },
     });
@@ -295,12 +295,12 @@ describe('ConfigSwitchCard — Property 18: whitelist render contract', () => {
     expect(container.textContent ?? '').not.toContain('/etc/openclash/config');
   });
 
-  it('falls back to the basename when alias is empty (still never renders the full path)', () => {
+  it('falls back to the basename when label is empty (still never renders the full path)', () => {
     const sensitivePath = '/etc/openclash/config/foo.yaml';
     const data = buildQuickActions({
       configFiles: {
         activePath: null,
-        whitelist: [{ alias: '', path: sensitivePath, isActive: false }],
+        entries: [{ label: '', path: sensitivePath, isActive: false }],
       },
     });
 
@@ -316,7 +316,7 @@ describe('ConfigSwitchCard — Property 18: whitelist render contract', () => {
 
     // Basename appears as the user-facing label.
     expect(screen.getByText('foo.yaml')).toBeDefined();
-    // The full path is never rendered, even when alias falls back.
+    // The full path is never rendered, even when label falls back.
     expect(container.textContent ?? '').not.toContain(sensitivePath);
     expect(container.textContent ?? '').not.toContain('/etc/openclash/config');
   });

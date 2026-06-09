@@ -83,6 +83,7 @@ export const enUS: TranslationCatalog = {
   'dashboard.network.nodeListAria': 'Node list',
   'dashboard.network.nodeTitle': 'Node',
   'dashboard.network.groupMeta': 'Group',
+  'dashboard.network.groupSelectorAria': 'Select node group',
 
   // --------------------------------------------------------------------
   // Renderer boot states (Requirement 4.2, 10.2)
@@ -308,6 +309,10 @@ export const enUS: TranslationCatalog = {
   'settings.accounts.actions.label': 'Actions',
   'settings.accounts.actions.hint':
     'The main process opens the file picker; tokens and API keys are never exposed to the page.',
+  'settings.accounts.actions.edit': 'Edit',
+  'settings.accounts.edit.secretPlaceholder': 'Leave empty to keep current value',
+  'settings.accounts.edit.reimport': 'Re-select auth file',
+  'settings.accounts.edit.cancel': 'Cancel edit',
   'settings.accounts.import.label': 'Import auth file',
   'settings.accounts.import.busy': 'Importing…',
   'settings.accounts.apiKey.openForm': 'Enter API key',
@@ -393,7 +398,7 @@ export const enUS: TranslationCatalog = {
   'configSwitch.disable.unreachable':
     'OpenClash management API is currently unreachable.',
   'configSwitch.guidance':
-    'No switchable OpenClash config files are configured yet. Add entries to the allowlist in Settings to enable switching.',
+    'No config files were read from OpenClash. Check that the management interface URL and credentials are correct.',
   'configSwitch.activeBadge': 'Active',
 
   // --------------------------------------------------------------------

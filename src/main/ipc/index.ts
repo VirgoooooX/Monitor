@@ -287,6 +287,13 @@ export interface IpcRegistryDeps {
   runRefreshNow?: () => Promise<void> | void;
   /** Callback to open/focus the expanded window. */
   openExpanded?: () => void;
+  /**
+   * Scheduler for triggering immediate collector runs. Used after a
+   * successful config switch to force an OpenClash data refresh so
+   * the renderer sees updated groups/nodes without waiting for the
+   * next scheduled tick.
+   */
+  scheduler?: import('../scheduler').Scheduler;
 }
 
 /** Returned by {@link registerIpcHandlers} so callers can tear down cleanly. */
@@ -717,13 +724,13 @@ function buildPrimaryGroupSlice(
  * Build the `configFiles` slice of the payload. Reads the user-
  * curated whitelist from `AppSettings.managementInterface` and — when
  * management is configured — decorates each entry with `isActive`
- * based on the live `readActiveConfigPath()` probe. When management
- * is unreachable or unconfigured, `activePath` is `null` and every
- * `isActive` flag collapses to `false`.
+ * from the live OpenClash `config_name` endpoint. When management is
+ * unreachable or unconfigured, `activePath` is `null` and `entries`
+ * is empty.
  *
- * The probe is wrapped in a defensive try/catch even though the
- * management client's contract says it throws `ManagementError`
- * exclusively — the catch is cheap and absorbs any future drift.
+ * Labels are resolved by checking the settings whitelist for a
+ * matching alias; when no alias exists, the basename (sans extension)
+ * is used.
  */
 async function buildConfigFilesSlice(
   managementClient: OpenClashManagementClient,
@@ -731,32 +738,44 @@ async function buildConfigFilesSlice(
   managementConfigured: boolean,
 ): Promise<{
   activePath: string | null;
-  whitelist: Array<{ alias: string; path: string; isActive: boolean }>;
+  entries: Array<{ label: string; path: string; isActive: boolean }>;
 }> {
-  const whitelist = settings.managementInterface.configFileWhitelist;
-  let activePath: string | null = null;
-
-  if (managementConfigured) {
-    try {
-      activePath = await managementClient.readActiveConfigPath({
-        timeoutMs: QUICK_ACTIONS_MGMT_TIMEOUT_MS,
-      });
-    } catch {
-      // Any thrown error (ManagementError or otherwise) collapses to
-      // "active path unknown". The collector_health row is updated
-      // by the management client itself; we never echo error text
-      // across the IPC boundary here.
-      activePath = null;
-    }
+  if (!managementConfigured) {
+    return { activePath: null, entries: [] };
   }
 
-  const decorated = whitelist.map((entry) => ({
-    alias: entry.alias,
-    path: entry.path,
-    isActive: activePath !== null && entry.path === activePath,
-  }));
+  // Build alias lookup from settings whitelist (kept for backward
+  // compatibility — users may have set friendly names).
+  const aliasMap = new Map<string, string>();
+  for (const entry of settings.managementInterface.configFileWhitelist) {
+    aliasMap.set(entry.path, entry.alias);
+  }
 
-  return { activePath, whitelist: decorated };
+  try {
+    const result = await managementClient.listConfigFiles({
+      timeoutMs: QUICK_ACTIONS_MGMT_TIMEOUT_MS,
+    });
+
+    const entries = result.entries.map((file) => {
+      const alias = aliasMap.get(file.path);
+      // Derive label: explicit alias > basename without extension.
+      const label =
+        alias !== undefined && alias.trim().length > 0
+          ? alias
+          : file.name.replace(/\.(yaml|yml)$/i, '');
+      return {
+        label,
+        path: file.path,
+        isActive:
+          result.activePath !== null && file.path === result.activePath,
+      };
+    });
+
+    return { activePath: result.activePath, entries };
+  } catch {
+    // Any thrown error collapses to "no configs available".
+    return { activePath: null, entries: [] };
+  }
 }
 
 /**
@@ -790,7 +809,7 @@ export interface NetworkQuickActions {
   };
   configFiles: {
     activePath: string | null;
-    whitelist: Array<{ alias: string; path: string; isActive: boolean }>;
+    entries: Array<{ label: string; path: string; isActive: boolean }>;
   };
   management: {
     configured: boolean;
@@ -1365,19 +1384,31 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
       const { targetPath } = parsed.data;
 
       // (1b) Live-whitelist membership. The setting mutates at
-      // runtime and is read here through the live `getSettings()`
-      // accessor so a freshly-saved whitelist row takes effect on
-      // the very next invocation.
+      // runtime — we query the live config list from the management
+      // client rather than relying on the static settings whitelist.
       const settings = deps.getSettings();
-      const whitelist =
-        settings.managementInterface.configFileWhitelist;
-      const inWhitelist = whitelist.some(
-        (entry) => entry.path === targetPath,
-      );
-      if (!inWhitelist) {
+
+      // (1b) Live-entries membership. Call listConfigFiles to verify
+      // the target is actually known to OpenClash.
+      let liveEntries: ReadonlyArray<{ readonly path: string }> = [];
+      try {
+        const configResult =
+          await deps.openClashManagementClient.listConfigFiles({
+            timeoutMs: settings.managementInterface.requestTimeoutMs,
+          });
+        liveEntries = configResult.entries;
+      } catch {
+        // If we can't read the config list, fall through — the switch
+        // will fail at the management client level if the path is
+        // truly invalid.
+      }
+      if (
+        liveEntries.length > 0 &&
+        !liveEntries.some((e) => e.path === targetPath)
+      ) {
         return failure(
           'validation',
-          `targetPath '${targetPath}' is not in the configured whitelist`,
+          `targetPath '${targetPath}' is not in the live config list`,
         );
       }
 
@@ -1493,6 +1524,14 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
           const t = refreshHandle as { unref?: () => void };
           if (typeof t.unref === 'function') {
             t.unref();
+          }
+
+          // Trigger an immediate OpenClash collector run so the
+          // dashboard carries the new config's groups/nodes on the
+          // very next push. Best-effort — the regular interval
+          // collector will catch up regardless.
+          if (deps.scheduler !== undefined) {
+            void deps.scheduler.runNow('openclash').catch(() => {});
           }
         }
 
@@ -1987,6 +2026,120 @@ export function registerIpcHandlers(deps: IpcRegistryDeps): IpcRegistry {
         }
         if (value !== null) {
           broadcastProviderAuthUpdate('updated');
+        }
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // updateProviderAuth
+  // -------------------------------------------------------------------------
+  //
+  // In-place edit of an existing `provider_auth` row. Only
+  // `manual-api-key` rows accept secret field changes; all rows
+  // accept label changes. Empty/omitted secret fields preserve the
+  // existing value (write-only contract — the renderer never needs
+  // to read back the current secret).
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.updateProviderAuth,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata | null>> => {
+      const parsed =
+        desktopApiSchemas.updateProviderAuth.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'updateProviderAuth',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        // Build input explicitly to satisfy exactOptionalPropertyTypes —
+        // Zod's parsed.data may carry `label?: string | undefined`
+        // which is not assignable to `label?: string` when the
+        // compiler flags explicit undefined.
+        const input: import('../types').UpdateProviderAuthInput = {
+          id: parsed.data.id,
+        };
+        if (parsed.data.label !== undefined) input.label = parsed.data.label;
+        if (parsed.data.apiKey !== undefined) input.apiKey = parsed.data.apiKey;
+        if (parsed.data.baseUrl !== undefined) input.baseUrl = parsed.data.baseUrl;
+        if (parsed.data.xiaomiPassToken !== undefined) input.xiaomiPassToken = parsed.data.xiaomiPassToken;
+        if (parsed.data.xiaomiUserId !== undefined) input.xiaomiUserId = parsed.data.xiaomiUserId;
+        if (parsed.data.deepseekUserToken !== undefined) input.deepseekUserToken = parsed.data.deepseekUserToken;
+        if (parsed.data.opencodeAuthCookie !== undefined) input.opencodeAuthCookie = parsed.data.opencodeAuthCookie;
+        if (parsed.data.opencodeWorkspaceUrl !== undefined) input.opencodeWorkspaceUrl = parsed.data.opencodeWorkspaceUrl;
+
+        const value = service.update(input);
+        if (value !== null) {
+          broadcastProviderAuthUpdate('updated');
+          if (deps.quotaService !== undefined) {
+            void deps.quotaService
+              .refresh({ id: parsed.data.id })
+              .then(() => broadcastProviderAuthUpdate('quota-refreshed'))
+              .catch(() => {
+                // best-effort
+              });
+          }
+        }
+        return { ok: true, value };
+      } catch (err) {
+        return mapProviderAuthError(err);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // reimportProviderAuthFile
+  // -------------------------------------------------------------------------
+  //
+  // Re-import the CPA auth file for an existing `cpa-auth-file` row.
+  // Opens a file dialog, parses the file, and replaces the secret
+  // payload while preserving the row id. Only `cpa-auth-file` rows
+  // are accepted.
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.reimportProviderAuthFile,
+    async (
+      _event: IpcMainInvokeEvent,
+      payload: unknown,
+    ): Promise<IpcResult<ProviderAuthMetadata | null>> => {
+      const parsed =
+        desktopApiSchemas.reimportProviderAuthFile.input.safeParse(payload);
+      if (!parsed.success) {
+        return VALIDATION_FAILURE(parsed.error.issues);
+      }
+      const service = deps.providerAuthService;
+      if (service === undefined) {
+        return NOT_IMPLEMENTED_FAILURE(
+          'reimportProviderAuthFile',
+          'awaiting provider_auth.service wiring',
+        );
+      }
+      try {
+        const input: import('../types').ReimportProviderAuthFileInput = {
+          id: parsed.data.id,
+        };
+        if (parsed.data.label !== undefined) input.label = parsed.data.label;
+
+        const value = await service.reimportFromFile(input);
+        if (value !== null) {
+          broadcastProviderAuthUpdate('updated');
+          if (deps.quotaService !== undefined) {
+            void deps.quotaService
+              .refresh({ id: parsed.data.id })
+              .then(() => broadcastProviderAuthUpdate('quota-refreshed'))
+              .catch(() => {
+                // best-effort
+              });
+          }
         }
         return { ok: true, value };
       } catch (err) {

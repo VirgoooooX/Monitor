@@ -8,7 +8,7 @@
 //   ├──────────────────────────────────────────────────────────────┤
 //   │  QuickNodeCard       (primary group + ranked candidates)     │
 //   ├──────────────────────────────────────────────────────────────┤
-//   │  ConfigSwitchCard    (whitelist + active marker)             │
+//   │  ConfigSwitchCard    (config entries + active marker)        │
 //   └──────────────────────────────────────────────────────────────┘
 //   Plus a single-instance ConfirmDialog (modal, only when open).
 //

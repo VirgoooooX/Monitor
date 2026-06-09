@@ -72,6 +72,8 @@ export const DESKTOP_INVOKE_CHANNELS = {
   // the existing CPA channels stay as the file-import path.
   createProviderAuthApiKey: 'desktop:createProviderAuthApiKey',
   setProviderAuthEnabled: 'desktop:setProviderAuthEnabled',
+  updateProviderAuth: 'desktop:updateProviderAuth',
+  reimportProviderAuthFile: 'desktop:reimportProviderAuthFile',
 } as const;
 
 /** Compile-time union of every supported invoke method name. */

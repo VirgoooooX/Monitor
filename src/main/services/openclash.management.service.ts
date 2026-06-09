@@ -161,6 +161,26 @@ export interface ManagementRequestOptions {
   readonly timeoutMs?: number;
 }
 
+/**
+ * A single config file discovered from the OpenClash config_name endpoint.
+ */
+export interface OpenClashConfigFile {
+  /** Absolute canonical path, e.g. `/etc/openclash/config/iKuuu.yaml`. */
+  readonly path: string;
+  /** Original basename as returned by the router, e.g. `iKuuu.yaml`. */
+  readonly name: string;
+}
+
+/**
+ * Result of {@link OpenClashManagementClient.listConfigFiles}.
+ */
+export interface OpenClashConfigFilesResult {
+  /** Active config path (canonical) or `null` if the probe failed. */
+  readonly activePath: string | null;
+  /** Deduplicated list of config files, preserving original order. */
+  readonly entries: ReadonlyArray<OpenClashConfigFile>;
+}
+
 /** Inputs for {@link OpenClashManagementClient.switchActiveConfig}. */
 export interface SwitchActiveConfigInput {
   readonly targetPath: string;
@@ -187,6 +207,17 @@ export interface OpenClashManagementClient {
    * lands.
    */
   readActiveConfigPath(opts?: ManagementRequestOptions): Promise<string>;
+
+  /**
+   * List all config files known to OpenClash and return the currently
+   * active one. Issues a single
+   * `GET /cgi-bin/luci/admin/services/openclash/config_name` and
+   * parses both `config_name[]` (the file list) and `config_path`
+   * (the active file).
+   *
+   * @throws ManagementError on failure.
+   */
+  listConfigFiles(opts?: ManagementRequestOptions): Promise<OpenClashConfigFilesResult>;
 
   /**
    * Set + commit the active config path then restart OpenClash.
@@ -464,6 +495,47 @@ function extractConfigPathFromConfigName(payload: unknown): string | null {
   }
   const record = payload as Record<string, unknown>;
   return canonicalConfigPath(record.config_path);
+}
+
+/**
+ * Parse the full config_name response into a structured
+ * {@link OpenClashConfigFilesResult}. Extracts both the active path
+ * (from `config_path`) and the file list (from `config_name[]`),
+ * canonicalizing each name and deduplicating by path.
+ *
+ * Returns `null` for the `activePath` when the `config_path` field is
+ * missing or fails normalization. The `entries` array is empty when
+ * `config_name` is missing, empty, or contains no valid names.
+ */
+function extractConfigFilesFromConfigName(
+  payload: unknown,
+): OpenClashConfigFilesResult {
+  if (payload === null || typeof payload !== 'object') {
+    return { activePath: null, entries: [] };
+  }
+  const record = payload as Record<string, unknown>;
+
+  const activePath = canonicalConfigPath(record.config_path);
+
+  const rawNames = Array.isArray(record.config_name)
+    ? record.config_name
+    : [];
+  const seen = new Set<string>();
+  const entries: OpenClashConfigFile[] = [];
+  for (const item of rawNames) {
+    if (item === null || typeof item !== 'object') continue;
+    const name = (item as Record<string, unknown>).name;
+    if (typeof name !== 'string') continue;
+    const trimmed = name.trim();
+    if (trimmed.length === 0) continue;
+    const canonicalPath = canonicalConfigPath(trimmed);
+    if (canonicalPath === null) continue;
+    if (seen.has(canonicalPath)) continue;
+    seen.add(canonicalPath);
+    entries.push({ path: canonicalPath, name: trimmed });
+  }
+
+  return { activePath, entries };
 }
 
 /**
@@ -1223,6 +1295,27 @@ export function createOpenClashManagementClient(
         recordCollectorFailure(now(), err.code);
         throw err;
       }
+    },
+
+    async listConfigFiles(
+      opts?: ManagementRequestOptions,
+    ): Promise<OpenClashConfigFilesResult> {
+      const timeoutMs = resolveTimeoutMs(opts);
+      let parsed: unknown;
+      try {
+        parsed = await pluginCall(
+          'GET',
+          OPENCLASH_CONFIG_NAME_PATH,
+          { kind: 'none' },
+          timeoutMs,
+        );
+        recordCollectorSuccess(now());
+      } catch (cause) {
+        const err = coerceManagementError(cause);
+        recordCollectorFailure(now(), err.code);
+        throw err;
+      }
+      return extractConfigFilesFromConfigName(parsed);
     },
 
     async switchActiveConfig(
