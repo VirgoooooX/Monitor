@@ -1026,61 +1026,61 @@ function ExpandedRoot({
             </section>
 
             <div className="ops-network__workspace">
-              <div className="ops-network__primary">
-                <section className="ops-network__panel ops-network__panel--telemetry">
-                  <header className="ops-network__panel-head">
-                    <div>
-                      <span className="ops-network__eyebrow">{t('dashboard.network.eyebrow')}</span>
-                      <h2 className="ops-network__title">实时链路遥测</h2>
-                    </div>
-                    <div className="ops-network__panel-head-right">
-                      {dashboard && (
-                        <div className="ops-network__pills" aria-label="连通性状态">
-                          <span
-                            className="ops-network__pill"
-                            data-tone={booleanOpsTone(dashboard.router.ok)}
-                          >
-                            <span className="ops-network__pill-dot" aria-hidden="true" />
-                            <span>Router</span>
-                            <strong>{dashboard.router.ok ? 'Online' : 'Offline'}</strong>
-                          </span>
-                          <span
-                            className="ops-network__pill"
-                            data-tone={booleanOpsTone(dashboard.openclash.tcpOk)}
-                          >
-                            <span className="ops-network__pill-dot" aria-hidden="true" />
-                            <span>TCP</span>
-                            <strong>{dashboard.openclash.tcpOk ? 'OK' : 'Down'}</strong>
-                          </span>
-                          <span
-                            className="ops-network__pill"
-                            data-tone={openclashApiTone(dashboard.openclash.apiOk)}
-                          >
-                            <span className="ops-network__pill-dot" aria-hidden="true" />
-                            <span>OpenClash</span>
-                            <strong>{openclashApiLabel(dashboard.openclash.apiOk)}</strong>
-                          </span>
-                          <span className="ops-network__pill" data-tone="neutral">
-                            <span className="ops-network__pill-dot" aria-hidden="true" />
-                            <span>S5</span>
-                            <strong>{formatOpsSuccessRate(dashboard.currentNode.successRate5)}</strong>
-                          </span>
-                        </div>
-                      )}
-                      {dashboard?.currentNode.sparkline.length ? (
+              <section className="ops-network__panel ops-network__panel--telemetry">
+                <header className="ops-network__panel-head">
+                  <div>
+                    <span className="ops-network__eyebrow">{t('dashboard.network.eyebrow')}</span>
+                    <h2 className="ops-network__title">实时链路遥测</h2>
+                  </div>
+                  <div className="ops-network__panel-head-right">
+                    {dashboard && (
+                      <div className="ops-network__pills" aria-label="连通性状态">
                         <span
-                          className="ops-network__range"
-                          aria-label={t('dashboard.network.latencyRangeAria')}
+                          className="ops-network__pill"
+                          data-tone={booleanOpsTone(dashboard.router.ok)}
                         >
-                          {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
-                          <span>–</span>
-                          {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
-                          <em>ms</em>
+                          <span className="ops-network__pill-dot" aria-hidden="true" />
+                          <span>Router</span>
+                          <strong>{dashboard.router.ok ? 'Online' : 'Offline'}</strong>
                         </span>
-                      ) : null}
-                    </div>
-                  </header>
+                        <span
+                          className="ops-network__pill"
+                          data-tone={booleanOpsTone(dashboard.openclash.tcpOk)}
+                        >
+                          <span className="ops-network__pill-dot" aria-hidden="true" />
+                          <span>TCP</span>
+                          <strong>{dashboard.openclash.tcpOk ? 'OK' : 'Down'}</strong>
+                        </span>
+                        <span
+                          className="ops-network__pill"
+                          data-tone={openclashApiTone(dashboard.openclash.apiOk)}
+                        >
+                          <span className="ops-network__pill-dot" aria-hidden="true" />
+                          <span>OpenClash</span>
+                          <strong>{openclashApiLabel(dashboard.openclash.apiOk)}</strong>
+                        </span>
+                        <span className="ops-network__pill" data-tone="neutral">
+                          <span className="ops-network__pill-dot" aria-hidden="true" />
+                          <span>S5</span>
+                          <strong>{formatOpsSuccessRate(dashboard.currentNode.successRate5)}</strong>
+                        </span>
+                      </div>
+                    )}
+                    {dashboard?.currentNode.sparkline.length ? (
+                      <span
+                        className="ops-network__range"
+                        aria-label={t('dashboard.network.latencyRangeAria')}
+                      >
+                        {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
+                        <span>–</span>
+                        {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
+                        <em>ms</em>
+                      </span>
+                    ) : null}
+                  </div>
+                </header>
 
+                <div className="ops-network__telemetry-body">
                   {dashboard ? (
                     <div className="ops-network__chart" aria-hidden="true">
                       <TelemetryWave
@@ -1095,52 +1095,48 @@ function ExpandedRoot({
                       {t('dashboard.network.waitingData')}
                     </div>
                   )}
-                </section>
 
-                {availableGroups.length > 1 && (
-                  <div className="ops-network__groups">
-                    <GroupTabBar
-                      groups={availableGroups}
-                      selectedName={selectedGroupName}
-                      onSelect={handleGroupSelect}
-                      ariaLabel={t('dashboard.network.groupSelectorAria')}
-                    />
-                  </div>
-                )}
+                  <aside className="ops-network__config-switch" aria-label="配置切换">
+                    <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
+                  </aside>
+                </div>
+              </section>
 
-                <section
-                  className="ops-network__panel ops-network__panel--nodes ex__panel--network"
-                  aria-label={t('dashboard.network.nodeListAria')}
-                >
-                  <header className="ops-network__panel-head">
-                    <div>
-                      <span className="ops-network__eyebrow">NODE LIST</span>
-                      <h2 className="ops-network__title">
-                        {t('dashboard.network.nodeTitle')}
-                      </h2>
-                    </div>
-                    <div className="ops-network__panel-meta">
-                      <span>{nodes.length}</span>
-                      {currentGroup && <strong>{currentGroup}</strong>}
-                    </div>
-                  </header>
-
-                  <NodeTable
-                    nodes={nodes}
-                    currentNode={dashboard?.currentNode.node ?? null}
-                    groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
-                    switchConfirmEnabled={switchConfirm}
+              {availableGroups.length > 1 && (
+                <div className="ops-network__groups">
+                  <GroupTabBar
+                    groups={availableGroups}
+                    selectedName={selectedGroupName}
+                    onSelect={handleGroupSelect}
+                    ariaLabel={t('dashboard.network.groupSelectorAria')}
                   />
-                </section>
-              </div>
+                </div>
+              )}
 
-              <aside className="ops-network__side" aria-label="配置切换">
-                <header className="ops-network__side-head">
-                  <span className="ops-network__eyebrow">CONTROL</span>
-                  <h2 className="ops-network__side-title">配置切换</h2>
+              <section
+                className="ops-network__panel ops-network__panel--nodes ex__panel--network"
+                aria-label={t('dashboard.network.nodeListAria')}
+              >
+                <header className="ops-network__panel-head">
+                  <div>
+                    <span className="ops-network__eyebrow">NODE LIST</span>
+                    <h2 className="ops-network__title">
+                      {t('dashboard.network.nodeTitle')}
+                    </h2>
+                  </div>
+                  <div className="ops-network__panel-meta">
+                    <span>{nodes.length}</span>
+                    {currentGroup && <strong>{currentGroup}</strong>}
+                  </div>
                 </header>
-                <QuickActionsPanel healthStatus={dashboard?.status ?? 'healthy'} />
-              </aside>
+
+                <NodeTable
+                  nodes={nodes}
+                  currentNode={dashboard?.currentNode.node ?? null}
+                  groupName={currentGroup ?? dashboard?.currentNode.group ?? null}
+                  switchConfirmEnabled={switchConfirm}
+                />
+              </section>
             </div>
           </div>
         )}

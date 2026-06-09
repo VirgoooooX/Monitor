@@ -1825,44 +1825,68 @@ body.mode-expanded[data-color-mode='light'] {
 }
 
 .ops-network__workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ops-network__telemetry-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 328px;
+  grid-template-columns: minmax(0, 1fr) 280px;
   gap: 12px;
   align-items: start;
 }
 
-.ops-network__primary {
+.ops-network__config-switch {
   display: flex;
-  min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  min-width: 0;
 }
 
-.ops-network__panel,
-.ops-network__side {
+.ops-network__config-switch .quick-actions-panel {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ops-network__config-switch .config-switch-card {
+  padding: 12px;
+  background: var(--ops-panel-soft);
+  border: 1px solid var(--ops-border);
+  border-radius: 8px;
+}
+
+.ops-network__chart {
+  min-width: 0;
+  height: 200px;
+  padding: 12px;
+  border: 1px solid var(--ops-border);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(18, 32, 31, 0.045) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(18, 32, 31, 0.045) 1px, transparent 1px),
+    #f8fbfa;
+  background-size: 34px 34px;
+  color: var(--ops-accent);
+  overflow: hidden;
+}
+
+.ops-network__chart .telemetry-wave {
+  width: 100%;
+  height: 100%;
+}
+
+.ops-network__panel {
   background: var(--ops-panel);
   border: 1px solid var(--ops-border);
   border-radius: 8px;
   box-shadow: 0 1px 2px rgba(18, 32, 31, 0.05);
-}
-
-.ops-network__panel {
   min-width: 0;
   padding: 13px 14px 14px;
 }
 
-.ops-network__side {
-  position: sticky;
-  top: 0;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 10px;
-  padding: 13px 14px 14px;
-}
-
-.ops-network__panel-head,
-.ops-network__side-head {
+.ops-network__panel-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1871,10 +1895,6 @@ body.mode-expanded[data-color-mode='light'] {
   padding-bottom: 10px;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--ops-border);
-}
-
-.ops-network__side-head {
-  margin-bottom: 0;
 }
 
 .ops-network__panel-head-right {
@@ -1948,18 +1968,13 @@ body.mode-expanded[data-color-mode='light'] {
   text-transform: uppercase;
 }
 
-.ops-network__title,
-.ops-network__side-title {
+.ops-network__title {
   margin: 0;
   color: var(--ops-ink);
   font-size: var(--type-lg);
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.25;
-}
-
-.ops-network__side-title {
-  font-size: var(--type-base);
 }
 
 .ops-network__range {
@@ -1982,25 +1997,6 @@ body.mode-expanded[data-color-mode='light'] {
   color: var(--ops-faint);
   font-style: normal;
   font-weight: 650;
-}
-
-.ops-network__chart {
-  min-width: 0;
-  height: 214px;
-  padding: 12px;
-  border: 1px solid var(--ops-border);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(18, 32, 31, 0.045) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(18, 32, 31, 0.045) 1px, transparent 1px),
-    #f8fbfa;
-  background-size: 34px 34px;
-  color: var(--ops-accent);
-}
-
-.ops-network__chart .telemetry-wave {
-  width: 100%;
-  height: 100%;
 }
 
 .ops-network__placeholder {
@@ -2292,7 +2288,7 @@ body.mode-expanded[data-color-mode='light'] {
 
 @media (max-width: 1040px) {
   .ops-network__chart {
-    height: 180px;
+    min-height: 180px;
   }
 }
 
@@ -2325,12 +2321,8 @@ body.mode-expanded[data-color-mode='light'] {
 }
 
 @media (max-width: 720px) {
-  .ops-network__workspace {
+  .ops-network__telemetry-body {
     grid-template-columns: 1fr;
-  }
-
-  .ops-network__side {
-    position: static;
   }
 }
 
@@ -2347,10 +2339,13 @@ body.mode-expanded[data-color-mode='light'] {
     border-right: none;
   }
 
-  .ops-network__panel-head,
-  .ops-network__side-head {
+  .ops-network__panel-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .ops-network__telemetry-body {
+    grid-template-columns: 1fr;
   }
 
   .ex.ex--network-ops .ops-network .node-table__grid {
