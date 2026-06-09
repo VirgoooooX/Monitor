@@ -20,7 +20,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Server,
   Radar,
-  Layers,
   Router,
   Timer,
   ArrowLeftRight,
@@ -44,7 +43,6 @@ import type {
   CreateProviderAuthApiKeyInput,
   KiroTokenRefreshSettings,
   Locale_Code,
-  ManagementConfigFileEntry,
   ManualApiKeyProvider,
   ProviderAuthMetadata,
   ProviderId,
@@ -71,7 +69,6 @@ interface ValidationErrors {
   managementUrl?: string;
   managementRequestTimeoutMs?: string;
   configSwitchVerifyWindowMs?: string;
-  configFileWhitelist?: string;
 }
 
 /**
@@ -131,12 +128,6 @@ const COMPACT_THEME_OPTIONS: readonly CompactThemeOption[] = [
 ];
 
 const HTTP_URL_RE = /^https?:\/\//;
-// Mirror of `CONFIG_PATH_RE` in `src/main/schemas.ts`. Keeping the
-// regex local to the renderer avoids a runtime import from `src/main`
-// (sandbox boundary) at the cost of a duplicated literal — drift is
-// caught by the IPC layer's zod validation, which always re-checks
-// the value before persisting.
-const CONFIG_PATH_RE = /^\/etc\/openclash\/config\/[A-Za-z0-9._\-]+\.(yaml|yml)$/;
 
 /**
  * Validate the (trimmed) management URL. Mirrors `managementUrlSchema`
@@ -239,22 +230,6 @@ function validateSettings(
       '配置切换校验窗口必须在 1000 - 30000 ms 之间';
   }
 
-  const whitelist = settings.managementInterface.configFileWhitelist;
-  const whitelistIssues: string[] = [];
-  whitelist.forEach((entry, i) => {
-    if (entry.alias.trim().length === 0) {
-      whitelistIssues.push(`第 ${i + 1} 行：别名不能为空`);
-    }
-    if (!CONFIG_PATH_RE.test(entry.path.trim())) {
-      whitelistIssues.push(
-        `第 ${i + 1} 行：路径必须形如 /etc/openclash/config/*.yaml`,
-      );
-    }
-  });
-  if (whitelistIssues.length > 0) {
-    errors.configFileWhitelist = whitelistIssues.join('；');
-  }
-
   return errors;
 }
 
@@ -289,11 +264,6 @@ const SECTIONS: readonly SectionDef[] = [
     id: 'probes',
     i18nKey: 'probes',
     icon: <Radar size={14} strokeWidth={1.75} />,
-  },
-  {
-    id: 'groups',
-    i18nKey: 'groups',
-    icon: <Layers size={14} strokeWidth={1.75} />,
   },
   {
     id: 'router',
@@ -757,31 +727,6 @@ export function SettingsView(): JSX.Element {
     });
   }, []);
 
-  // Primary groups management
-  const updatePrimaryGroup = useCallback((index: number, value: string) => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      const next = [...prev.primaryGroups];
-      next[index] = value;
-      return { ...prev, primaryGroups: next };
-    });
-    setSaveSuccess(false);
-  }, []);
-
-  const addPrimaryGroup = useCallback(() => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      return { ...prev, primaryGroups: [...prev.primaryGroups, ''] };
-    });
-  }, []);
-
-  const removePrimaryGroup = useCallback((index: number) => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      const next = prev.primaryGroups.filter((_, i) => i !== index);
-      return { ...prev, primaryGroups: next };
-    });
-  }, []);
 
   // ---------------------------------------------------------------------------
   // Management interface (network-quick-actions task 16.1)
@@ -821,61 +766,6 @@ export function SettingsView(): JSX.Element {
     setSaveSuccess(false);
   }, []);
 
-  const updateWhitelistEntry = useCallback(
-    (index: number, patch: Partial<ManagementConfigFileEntry>) => {
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const list = prev.managementInterface.configFileWhitelist;
-        const current = list[index];
-        if (!current) return prev;
-        const next: ManagementConfigFileEntry[] = list.slice();
-        next[index] = { ...current, ...patch };
-        return {
-          ...prev,
-          managementInterface: {
-            ...prev.managementInterface,
-            configFileWhitelist: next,
-          },
-        };
-      });
-      setSaveSuccess(false);
-    },
-    [],
-  );
-
-  const addWhitelistEntry = useCallback(() => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        managementInterface: {
-          ...prev.managementInterface,
-          configFileWhitelist: [
-            ...prev.managementInterface.configFileWhitelist,
-            { alias: '', path: '' },
-          ],
-        },
-      };
-    });
-    setSaveSuccess(false);
-  }, []);
-
-  const removeWhitelistEntry = useCallback((index: number) => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      const next = prev.managementInterface.configFileWhitelist.filter(
-        (_, i) => i !== index,
-      );
-      return {
-        ...prev,
-        managementInterface: {
-          ...prev.managementInterface,
-          configFileWhitelist: next,
-        },
-      };
-    });
-    setSaveSuccess(false);
-  }, []);
 
   /**
    * Wipe the LuCI credential rows from `secrets` and invalidate any
@@ -1783,22 +1673,8 @@ export function SettingsView(): JSX.Element {
             )}
           </Section>
 
-          {/* ── Primary Groups ───────────────────────────────── */}
-          <Section id="groups" section={SECTIONS[3]!}>
-            <ListField
-              items={settings.primaryGroups}
-              placeholder={t('settings.groups.placeholder')}
-              addLabel={t('settings.groups.addLabel')}
-              type="text"
-              onUpdate={updatePrimaryGroup}
-              onAdd={addPrimaryGroup}
-              onRemove={removePrimaryGroup}
-              ariaLabel={t('settings.groups.itemAria')}
-            />
-          </Section>
-
           {/* ── Router Health ────────────────────────────────── */}
-          <Section id="router" section={SECTIONS[4]!}>
+          <Section id="router" section={SECTIONS.find(s => s.id === 'router')!}>
             <div className="settings-view__row settings-view__row--router">
               <Field
                 label={t('settings.router.host.label')}
@@ -1841,7 +1717,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Refresh intervals ────────────────────────────── */}
-          <Section id="intervals" section={SECTIONS[5]!}>
+          <Section id="intervals" section={SECTIONS.find(s => s.id === 'intervals')!}>
             <div className="settings-view__grid">
               {(Object.entries(settings.refreshIntervals) as [
                 keyof RefreshIntervalSettings,
@@ -1879,7 +1755,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── Switch settings ──────────────────────────────── */}
-          <Section id="switching" section={SECTIONS[6]!}>
+          <Section id="switching" section={SECTIONS.find(s => s.id === 'switching')!}>
             <div className="settings-view__row">
               <Field
                 label={t('settings.switching.verifyDelay.label')}
@@ -1913,7 +1789,7 @@ export function SettingsView(): JSX.Element {
           </Section>
 
           {/* ── OpenClash 管理接口 ───────────────────────────── */}
-          <Section id="management" section={SECTIONS[7]!}>
+          <Section id="management" section={SECTIONS.find(s => s.id === 'management')!}>
             <div className="settings-view__row">
               <Field
                 label={t('settings.management.url.label')}
@@ -2050,93 +1926,10 @@ export function SettingsView(): JSX.Element {
                 </span>
               )}
             </div>
-
-            {/* Whitelist editor — alias + path rows. The renderer
-                surfaces the alias to users (Requirement 4.4); the
-                path is sent verbatim to the management interface
-                and validated against `CONFIG_PATH_RE`. */}
-            <div className="settings-view__whitelist">
-              <header className="settings-view__whitelist-head">
-                <span className="settings-view__label">
-                  {t('settings.management.whitelist.label')}
-                </span>
-                <span className="settings-view__hint">
-                  {t('settings.management.whitelist.hint')}
-                </span>
-              </header>
-              {settings.managementInterface.configFileWhitelist.length === 0 && (
-                <p className="settings-view__empty">
-                  {t('settings.management.whitelist.empty')}
-                </p>
-              )}
-              {settings.managementInterface.configFileWhitelist.map(
-                (entry, i) => (
-                  <div className="settings-view__whitelist-row" key={i}>
-                    <span className="settings-view__list-index">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
-                    <input
-                      className="settings-view__input"
-                      type="text"
-                      value={entry.alias}
-                      onChange={(e) =>
-                        updateWhitelistEntry(i, { alias: e.target.value })
-                      }
-                      placeholder={t(
-                        'settings.management.whitelist.aliasPlaceholder',
-                      )}
-                      aria-label={t(
-                        'settings.management.whitelist.aliasAria',
-                        { n: i + 1 },
-                      )}
-                    />
-                    <input
-                      className="settings-view__input"
-                      type="text"
-                      value={entry.path}
-                      onChange={(e) =>
-                        updateWhitelistEntry(i, { path: e.target.value })
-                      }
-                      placeholder={t(
-                        'settings.management.whitelist.pathPlaceholder',
-                      )}
-                      aria-label={t(
-                        'settings.management.whitelist.pathAria',
-                        { n: i + 1 },
-                      )}
-                    />
-                    <button
-                      type="button"
-                      className="settings-view__btn-icon"
-                      onClick={() => removeWhitelistEntry(i)}
-                      aria-label={t(
-                        'settings.management.whitelist.deleteAria',
-                        { n: i + 1 },
-                      )}
-                    >
-                      <Trash2 size={14} strokeWidth={1.75} />
-                    </button>
-                  </div>
-                ),
-              )}
-              <button
-                type="button"
-                className="settings-view__btn-add"
-                onClick={addWhitelistEntry}
-              >
-                <Plus size={14} strokeWidth={2} />
-                <span>{t('settings.management.whitelist.addLabel')}</span>
-              </button>
-              {errors.configFileWhitelist && (
-                <p className="settings-view__error-msg" role="alert">
-                  {errors.configFileWhitelist}
-                </p>
-              )}
-            </div>
           </Section>
 
           {/* ── AI 账号 ─────────────────────────────────────── */}
-          <Section id="accounts" section={SECTIONS[8]!}>
+          <Section id="accounts" section={SECTIONS.find(s => s.id === 'accounts')!}>
             <div className="settings-view__row">
               <Field
                 label={t('settings.accounts.providerType.label')}

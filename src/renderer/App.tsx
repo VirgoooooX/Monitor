@@ -1033,57 +1033,62 @@ function ExpandedRoot({
                       <span className="ops-network__eyebrow">{t('dashboard.network.eyebrow')}</span>
                       <h2 className="ops-network__title">实时链路遥测</h2>
                     </div>
-                    {dashboard?.currentNode.sparkline.length ? (
-                      <span
-                        className="ops-network__range"
-                        aria-label={t('dashboard.network.latencyRangeAria')}
-                      >
-                        {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
-                        <span>–</span>
-                        {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
-                        <em>ms</em>
-                      </span>
-                    ) : null}
+                    <div className="ops-network__panel-head-right">
+                      {dashboard && (
+                        <div className="ops-network__pills" aria-label="连通性状态">
+                          <span
+                            className="ops-network__pill"
+                            data-tone={booleanOpsTone(dashboard.router.ok)}
+                          >
+                            <span className="ops-network__pill-dot" aria-hidden="true" />
+                            <span>Router</span>
+                            <strong>{dashboard.router.ok ? 'Online' : 'Offline'}</strong>
+                          </span>
+                          <span
+                            className="ops-network__pill"
+                            data-tone={booleanOpsTone(dashboard.openclash.tcpOk)}
+                          >
+                            <span className="ops-network__pill-dot" aria-hidden="true" />
+                            <span>TCP</span>
+                            <strong>{dashboard.openclash.tcpOk ? 'OK' : 'Down'}</strong>
+                          </span>
+                          <span
+                            className="ops-network__pill"
+                            data-tone={openclashApiTone(dashboard.openclash.apiOk)}
+                          >
+                            <span className="ops-network__pill-dot" aria-hidden="true" />
+                            <span>OpenClash</span>
+                            <strong>{openclashApiLabel(dashboard.openclash.apiOk)}</strong>
+                          </span>
+                          <span className="ops-network__pill" data-tone="neutral">
+                            <span className="ops-network__pill-dot" aria-hidden="true" />
+                            <span>S5</span>
+                            <strong>{formatOpsSuccessRate(dashboard.currentNode.successRate5)}</strong>
+                          </span>
+                        </div>
+                      )}
+                      {dashboard?.currentNode.sparkline.length ? (
+                        <span
+                          className="ops-network__range"
+                          aria-label={t('dashboard.network.latencyRangeAria')}
+                        >
+                          {formatLatencyNumber(sparklineMin(dashboard.currentNode.sparkline))}
+                          <span>–</span>
+                          {formatLatencyNumber(sparklineMax(dashboard.currentNode.sparkline))}
+                          <em>ms</em>
+                        </span>
+                      ) : null}
+                    </div>
                   </header>
 
                   {dashboard ? (
-                    <div className="ops-network__telemetry-grid">
-                      <div className="ops-network__chart" aria-hidden="true">
-                        <TelemetryWave
-                          data={dashboard.currentNode.sparkline}
-                          width={760}
-                          height={190}
-                          strokeWidth={1.85}
-                        />
-                      </div>
-
-                      <div className="ops-network__signal-list" aria-label="运行信号">
-                        <div
-                          className="ops-network__signal"
-                          data-tone={booleanOpsTone(dashboard.router.ok)}
-                        >
-                          <span>Router</span>
-                          <strong>{dashboard.router.ok ? 'Online' : 'Offline'}</strong>
-                        </div>
-                        <div
-                          className="ops-network__signal"
-                          data-tone={booleanOpsTone(dashboard.openclash.tcpOk)}
-                        >
-                          <span>TCP</span>
-                          <strong>{dashboard.openclash.tcpOk ? 'Reachable' : 'Down'}</strong>
-                        </div>
-                        <div
-                          className="ops-network__signal"
-                          data-tone={openclashApiTone(dashboard.openclash.apiOk)}
-                        >
-                          <span>OpenClash</span>
-                          <strong>{openclashApiLabel(dashboard.openclash.apiOk)}</strong>
-                        </div>
-                        <div className="ops-network__signal" data-tone="neutral">
-                          <span>Success 5</span>
-                          <strong>{formatOpsSuccessRate(dashboard.currentNode.successRate5)}</strong>
-                        </div>
-                      </div>
+                    <div className="ops-network__chart" aria-hidden="true">
+                      <TelemetryWave
+                        data={dashboard.currentNode.sparkline}
+                        width={760}
+                        height={190}
+                        strokeWidth={1.85}
+                      />
                     </div>
                   ) : (
                     <div className="ops-network__placeholder">

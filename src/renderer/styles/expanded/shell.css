@@ -1622,7 +1622,7 @@ body.mode-expanded[data-color-mode='light'] {
    ========================================================================== */
 
 .ex.ex--network-ops {
-  --ex-content-max: 1280px;
+  --ex-content-max: 1040px;
   --ops-bg: #edf2f1;
   --ops-panel: #ffffff;
   --ops-panel-soft: #f7faf9;
@@ -1877,6 +1877,67 @@ body.mode-expanded[data-color-mode='light'] {
   margin-bottom: 0;
 }
 
+.ops-network__panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ops-network__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ops-network__pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ops-panel-soft);
+  border: 1px solid var(--ops-border);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ops-network__pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.ops-network__pill[data-tone='ok'] .ops-network__pill-dot {
+  background: var(--ops-ok);
+  box-shadow: 0 0 4px var(--ops-ok);
+}
+
+.ops-network__pill[data-tone='warn'] .ops-network__pill-dot {
+  background: var(--ops-warn);
+  box-shadow: 0 0 4px var(--ops-warn);
+}
+
+.ops-network__pill[data-tone='bad'] .ops-network__pill-dot {
+  background: var(--ops-bad);
+  box-shadow: 0 0 4px var(--ops-bad);
+}
+
+.ops-network__pill span {
+  color: var(--ops-faint);
+  font-weight: 650;
+}
+
+.ops-network__pill strong {
+  color: var(--ops-ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .ops-network__eyebrow {
   display: block;
   margin-bottom: 4px;
@@ -1923,13 +1984,6 @@ body.mode-expanded[data-color-mode='light'] {
   font-weight: 650;
 }
 
-.ops-network__telemetry-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 214px;
-  gap: 12px;
-  align-items: stretch;
-}
-
 .ops-network__chart {
   min-width: 0;
   height: 214px;
@@ -1947,68 +2001,6 @@ body.mode-expanded[data-color-mode='light'] {
 .ops-network__chart .telemetry-wave {
   width: 100%;
   height: 100%;
-}
-
-.ops-network__signal-list {
-  display: grid;
-  grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.ops-network__signal {
-  position: relative;
-  display: grid;
-  align-content: center;
-  gap: 5px;
-  min-width: 0;
-  padding: 9px 10px 9px 13px;
-  border: 1px solid var(--ops-border);
-  border-radius: 7px;
-  background: var(--ops-panel-soft);
-}
-
-.ops-network__signal::before {
-  content: '';
-  position: absolute;
-  left: 6px;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 999px;
-  background: #94a3b8;
-}
-
-.ops-network__signal[data-tone='ok']::before {
-  background: var(--ops-ok);
-}
-
-.ops-network__signal[data-tone='warn']::before {
-  background: var(--ops-warn);
-}
-
-.ops-network__signal[data-tone='bad']::before {
-  background: var(--ops-bad);
-}
-
-.ops-network__signal span {
-  overflow: hidden;
-  color: var(--ops-faint);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.12em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.ops-network__signal strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ops-ink);
-  font-size: var(--type-sm);
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .ops-network__placeholder {
@@ -2299,13 +2291,8 @@ body.mode-expanded[data-color-mode='light'] {
 }
 
 @media (max-width: 1040px) {
-  .ops-network__telemetry-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .ops-network__signal-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: none;
+  .ops-network__chart {
+    height: 180px;
   }
 }
 
@@ -2321,15 +2308,15 @@ body.mode-expanded[data-color-mode='light'] {
   .ex.ex--network-ops .ops-network .node-table__grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .ops-network__pills {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
   .ex.ex--network-ops .ex__main {
     padding: 12px;
-  }
-
-  .ops-network__signal-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ex.ex--network-ops .ops-network .node-table__grid {
@@ -2366,7 +2353,6 @@ body.mode-expanded[data-color-mode='light'] {
     align-items: stretch;
   }
 
-  .ops-network__signal-list,
   .ex.ex--network-ops .ops-network .node-table__grid {
     grid-template-columns: 1fr;
   }
