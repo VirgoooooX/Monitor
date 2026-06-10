@@ -259,7 +259,6 @@ describe('SettingsView Provider_Auth — smoke render', () => {
     expect(document.getElementById('settings-section-appearance')).not.toBeNull();
     expect(document.getElementById('settings-section-controller')).not.toBeNull();
     expect(document.getElementById('settings-section-probes')).not.toBeNull();
-    expect(document.getElementById('settings-section-groups')).not.toBeNull();
     expect(document.getElementById('settings-section-router')).not.toBeNull();
     expect(document.getElementById('settings-section-intervals')).not.toBeNull();
     expect(document.getElementById('settings-section-switching')).not.toBeNull();

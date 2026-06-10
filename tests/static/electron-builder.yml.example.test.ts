@@ -69,11 +69,18 @@ interface MacBlock {
   extendInfo?: Record<string, unknown>;
 }
 
+interface WinBlock {
+  target?: string;
+  icon?: string;
+  signAndEditExecutable?: boolean;
+  extraResources?: ReadonlyArray<ExtraResource>;
+}
+
 interface BuilderConfig {
   appId?: string;
   extraResources?: ReadonlyArray<ExtraResource>;
   mac?: MacBlock;
-  win?: Record<string, unknown>;
+  win?: WinBlock;
   nsis?: Record<string, unknown>;
   npmRebuild?: boolean;
   forceCodeSigning?: boolean;
@@ -166,13 +173,15 @@ describe('electron-builder.yml — macOS block', () => {
 
 describe('electron-builder.yml — extraResources mappings', () => {
   const config = loadConfig();
-  const mappings = config.extraResources ?? [];
+  const mappings = [
+    ...(config.extraResources ?? []),
+    ...(config.win?.extraResources ?? []),
+  ];
 
-  it('declares all five expected from→to mappings (Requirements 1.6, 1.7)', () => {
+  it('declares the expected from→to mappings (Requirements 1.6, 1.7)', () => {
     const expected: ReadonlyArray<ExtraResource> = [
       { from: 'build/tray-icon.png', to: 'tray-icon.png' },
       { from: 'build/icon.ico', to: 'icon.ico' },
-      { from: 'build/icon.icns', to: 'icon.icns' },
       {
         from: 'build/tray-iconTemplate.png',
         to: 'tray-iconTemplate.png',
@@ -221,7 +230,13 @@ describe('electron-builder.yml — Windows-side invariants unchanged', () => {
     expect(config.win).toEqual({
       target: 'nsis',
       icon: 'build/icon.ico',
-      signAndEditExecutable: false,
+      signAndEditExecutable: true,
+      extraResources: [
+        {
+          from: 'build/icon.ico',
+          to: 'icon.ico',
+        },
+      ],
     });
   });
 

@@ -50,13 +50,13 @@ describe('package.json — packaging script entries', () => {
 
   it('preserves the Windows `package` script verbatim (Requirement 1.4)', () => {
     expect(scripts['package']).toBe(
-      'npm run build && electron-builder --win',
+      'npm run build && electron-builder --win --publish never',
     );
   });
 
   it('declares the `package:mac` script with the documented command (Requirement 1.3)', () => {
     expect(scripts['package:mac']).toBe(
-      'npm run prepackage:mac && npm run build && electron-builder --mac --x64 --arm64',
+      'npm run prepackage:mac && npm run build && electron-builder --mac --x64 --arm64 --publish never',
     );
   });
 
