@@ -29,6 +29,7 @@ import {
   mkdirSync,
   unlinkSync,
   renameSync,
+  realpathSync,
 } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -883,8 +884,14 @@ async function main() {
 // Run main() only when the script is the process entry point — not
 // when imported by a test (so the property test can pull in
 // `buildSevenOutputs` / `atomicWriteAll` without spawning the build).
-const _isEntry =
-  import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+const _isEntry = (() => {
+  try {
+    const entryPath = process.argv[1] ? realpathSync(process.argv[1]) : '';
+    return realpathSync(fileURLToPath(import.meta.url)) === entryPath;
+  } catch {
+    return false;
+  }
+})();
 if (_isEntry) {
   main().catch((err) => {
     console.error(err);

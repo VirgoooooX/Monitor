@@ -67,7 +67,7 @@ describe.skipIf(!canRun)('retention task', () => {
 
     // Insert old and recent samples
     const insert = db.prepare(
-      'INSERT INTO network_samples (timestamp, layer, reachable, latency_ms) VALUES (?, ?, ?, ?)',
+      'INSERT INTO network_samples (timestamp, layer, ok, latency_ms) VALUES (?, ?, ?, ?)',
     );
     insert.run(old, 'router', 1, 10);
     insert.run(recent, 'router', 1, 5);
@@ -116,7 +116,7 @@ describe.skipIf(!canRun)('retention task', () => {
     const within = now - 15 * DAY_MS;
 
     const insert = db.prepare(
-      'INSERT INTO network_samples (timestamp, layer, reachable, latency_ms) VALUES (?, ?, ?, ?)',
+      'INSERT INTO network_samples (timestamp, layer, ok, latency_ms) VALUES (?, ?, ?, ?)',
     );
     insert.run(within, 'openclash_tcp', 1, 20);
 
