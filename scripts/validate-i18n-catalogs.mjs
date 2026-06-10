@@ -55,8 +55,8 @@ const EXEMPT_RE = /^[\u0021-\u002f\u0030-\u0039\u003a-\u0040\u005b-\u0060\u007b-
 
 const SOURCE_ZH = path.join(ROOT, 'src', 'i18n', 'catalogs', 'zh-CN.ts');
 const SOURCE_EN = path.join(ROOT, 'src', 'i18n', 'catalogs', 'en-US.ts');
-const DIST_MAIN_ZH = path.join(ROOT, 'dist', 'main', 'i18n', 'catalogs', 'zh-CN.js');
-const DIST_MAIN_EN = path.join(ROOT, 'dist', 'main', 'i18n', 'catalogs', 'en-US.js');
+const DIST_MAIN_ZH = path.join(ROOT, 'dist', 'i18n', 'catalogs', 'zh-CN.js');
+const DIST_MAIN_EN = path.join(ROOT, 'dist', 'i18n', 'catalogs', 'en-US.js');
 const DIST_RENDERER_ASSETS = path.join(ROOT, 'dist', 'renderer', 'assets');
 
 /** @type {{ locale: string, key: string, message: string }[]} */
