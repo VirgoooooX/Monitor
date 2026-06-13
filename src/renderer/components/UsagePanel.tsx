@@ -289,7 +289,7 @@ function apiBucketsToTimeseries(
 
 export function UsagePanel(): JSX.Element {
   const t = useT();
-  const [range, setRange] = useState<UsageRange>('today');
+  const [range, setRange] = useState<UsageRange>('month');
   const [usageData, setUsageData] = useState<UsageSummary | null>(null);
   const [quotaData, setQuotaData] = useState<QuotaStatus | null>(null);
   const [providerAuths, setProviderAuths] = useState<ProviderAuthMetadata[]>([]);

@@ -29,7 +29,7 @@ function makeSnapshot(overrides: Partial<QuotaSnapshot> = {}): QuotaSnapshot {
   };
 }
 
-function installDesktopBridge(quotaStatus: QuotaStatus, usage: UsageSummary = { range: 'today', perProvider: [] }): void {
+function installDesktopBridge(quotaStatus: QuotaStatus, usage: UsageSummary = { range: 'month', perProvider: [] }): void {
   vi.stubGlobal('desktop', {
     getUsageSummary: vi.fn(async () => usage),
     getQuotaStatus: vi.fn(async () => quotaStatus),
@@ -47,6 +47,18 @@ afterEach(() => {
 });
 
 describe('UsagePanel quota overview', () => {
+  it('defaults token consumption to the current month view', async () => {
+    installDesktopBridge({ snapshots: [] });
+
+    render(<UsagePanel />);
+
+    const desktop = window.desktop;
+    await waitFor(() => {
+      expect(desktop?.getUsageSummary).toHaveBeenCalledWith({ range: 'month' });
+    });
+    expect(screen.getByRole('tab', { name: '本月' }).getAttribute('aria-selected')).toBe('true');
+  });
+
   it('renders CPA-style account cards with multiple quota rows', async () => {
     installDesktopBridge({
       snapshots: [
