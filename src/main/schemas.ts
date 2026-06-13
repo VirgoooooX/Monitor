@@ -428,6 +428,7 @@ const dailyUsagePointSchema = z
     totalTokens: z.number().nonnegative(),
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
+    cacheTokens: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -882,6 +883,9 @@ const apiUsageProviderSchema = z
   .object({
     provider: z.string(),
     totalTokens: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    cacheTokens: z.number().int().nonnegative(),
     cost: z.number().nullable(),
     costEstimated: z.boolean().optional(),
     currency: z.string().nullable(),
@@ -902,7 +906,6 @@ const apiUsageNoticeSchema = z
     code: z.enum([
       'daily_usage_unavailable',
       'deepseek_user_token_required',
-      'xiaomi_cost_estimated',
     ]),
     message: z.string(),
   })

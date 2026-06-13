@@ -1,6 +1,6 @@
 {
   "name": "desktop-monitor-widget",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Windows desktop floating widget that monitors OpenClash node connectivity and AI usage.",
   "main": "dist/main/index.js",

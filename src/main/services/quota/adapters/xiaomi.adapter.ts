@@ -710,6 +710,7 @@ function parseDailyUsageResponse(
             date,
             cost: '0', // new API no longer returns cost amounts
             totalTokens: agg.totalTokens,
+            cacheTokens: 0,
             inputTokens: agg.inputTokens,
             outputTokens: agg.outputTokens,
           }));

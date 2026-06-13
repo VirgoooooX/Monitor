@@ -408,12 +408,16 @@ function normaliseDailyUsagePoint(point: DailyUsagePoint): DailyUsagePoint {
   const outputTokens = point.outputTokens !== undefined && Number.isFinite(point.outputTokens)
     ? Math.max(0, Math.round(point.outputTokens))
     : undefined;
+  const cacheTokens = point.cacheTokens !== undefined && Number.isFinite(point.cacheTokens)
+    ? Math.max(0, Math.round(point.cacheTokens))
+    : undefined;
 
   return {
     date: point.date,
     cost: point.cost,
     ...(point.costEstimated === true ? { costEstimated: true } : {}),
     totalTokens,
+    ...(cacheTokens !== undefined ? { cacheTokens } : {}),
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
   };
@@ -530,6 +534,7 @@ function mergeDailyUsageCost(
       date,
       cost: formatCostDecimal(cost),
       totalTokens: current?.totalTokens ?? 0,
+      ...(current?.cacheTokens !== undefined ? { cacheTokens: current.cacheTokens } : {}),
       ...(current?.inputTokens !== undefined ? { inputTokens: current.inputTokens } : {}),
       ...(current?.outputTokens !== undefined ? { outputTokens: current.outputTokens } : {}),
     });

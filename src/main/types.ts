@@ -383,6 +383,8 @@ export interface DailyUsagePoint {
   readonly inputTokens?: number;
   /** Auxiliary completion/output token count when the upstream exposes it. */
   readonly outputTokens?: number;
+  /** Auxiliary cached-input token count when the upstream exposes it. */
+  readonly cacheTokens?: number;
 }
 
 /**
@@ -849,6 +851,9 @@ export interface ApiUsageBucket {
   readonly perProvider: ReadonlyArray<{
     readonly provider: string;
     readonly totalTokens: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly cacheTokens: number;
     readonly cost: number | null;
     readonly costEstimated?: boolean;
     readonly currency: string | null;
@@ -859,8 +864,7 @@ export interface ApiUsageNotice {
   readonly provider: string;
   readonly code:
     | 'daily_usage_unavailable'
-    | 'deepseek_user_token_required'
-    | 'xiaomi_cost_estimated';
+    | 'deepseek_user_token_required';
   readonly message: string;
 }
 

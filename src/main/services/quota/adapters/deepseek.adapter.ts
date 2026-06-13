@@ -540,6 +540,7 @@ function parseConsoleUsageAmount(
   if (series.length === 0) return [];
 
   const byDate = new Map<string, {
+    cacheTokens: number;
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
@@ -556,6 +557,7 @@ function parseConsoleUsageAmount(
       if (dateStr === null) continue;
       const isoOnly = dateStr.length >= 10 ? dateStr.slice(0, 10) : dateStr;
 
+      let cacheTokens = 0;
       let inputTokens = 0;
       let outputTokens = 0;
       let totalTokens = 0;
@@ -575,8 +577,9 @@ function parseConsoleUsageAmount(
             if (type === 'REQUEST') continue;
             if (type === 'RESPONSE_TOKEN') {
               outputTokens += amount;
+            } else if (type === 'PROMPT_CACHE_HIT_TOKEN') {
+              cacheTokens += amount;
             } else if (
-              type === 'PROMPT_CACHE_HIT_TOKEN' ||
               type === 'PROMPT_CACHE_MISS_TOKEN' ||
               type === 'PROMPT_TOKEN'
             ) {
@@ -597,14 +600,16 @@ function parseConsoleUsageAmount(
         totalTokens += flatTokens;
       }
 
-      totalTokens += inputTokens + outputTokens;
+      totalTokens += cacheTokens + inputTokens + outputTokens;
       if (totalTokens === 0) continue;
 
       const agg = byDate.get(isoOnly) ?? {
+        cacheTokens: 0,
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
       };
+      agg.cacheTokens += cacheTokens;
       agg.inputTokens += inputTokens;
       agg.outputTokens += outputTokens;
       agg.totalTokens += totalTokens;
@@ -618,6 +623,7 @@ function parseConsoleUsageAmount(
       date,
       cost: '0',
       totalTokens: Math.round(agg.totalTokens),
+      cacheTokens: Math.round(agg.cacheTokens),
       inputTokens: Math.round(agg.inputTokens),
       outputTokens: Math.round(agg.outputTokens),
     }));
@@ -639,6 +645,7 @@ function mergeConsoleDailyUsage(
       date: point.date,
       cost: current?.cost ?? '0',
       totalTokens: point.totalTokens,
+      ...(point.cacheTokens !== undefined ? { cacheTokens: point.cacheTokens } : {}),
       ...(point.inputTokens !== undefined ? { inputTokens: point.inputTokens } : {}),
       ...(point.outputTokens !== undefined ? { outputTokens: point.outputTokens } : {}),
     });

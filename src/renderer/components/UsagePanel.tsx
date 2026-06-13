@@ -247,9 +247,11 @@ function providerPriority(provider: string): number {
 /**
  * Convert API usage buckets (ApiUsageBucket[]) to the same
  * UsageTimeseriesBucket[] shape consumed by UsageBarChart.
- * API data has totalTokens → maps to inputTokens.
+ * API data uses the provider-supplied input/output/cache split when
+ * available; service-side fallback maps total-only rows to input.
  * API data has cost + currency → maps to costUsd + currency.
- * outputTokens / cacheTokens / eventCount are always zero.
+ * eventCount is always zero because provider billing APIs expose
+ * daily aggregates, not individual local events.
  */
 function apiBucketsToTimeseries(
   apiBuckets: ApiUsageBucket[],
@@ -272,9 +274,9 @@ function apiBucketsToTimeseries(
     startTs: b.startTs,
     perProvider: b.perProvider.map((row) => ({
       provider: row.provider,
-      inputTokens: row.totalTokens,
-      outputTokens: 0,
-      cacheTokens: 0,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheTokens: row.cacheTokens,
       costUsd: row.cost,
       ...(row.costEstimated === true ? { costEstimated: true } : {}),
       eventCount: 0,

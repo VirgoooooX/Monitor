@@ -140,6 +140,9 @@ describe('UsagePanel quota overview', () => {
                 {
                   provider: 'xiaomi',
                   totalTokens: 2400,
+                  inputTokens: 800,
+                  outputTokens: 1600,
+                  cacheTokens: 0,
                   cost: 0.12,
                   currency: 'CNY',
                 },

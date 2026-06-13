@@ -42,6 +42,9 @@ import { readCapabilityResults } from '../collectors/usage/Collector';
 type MutableApiUsageProviderRow = {
   provider: string;
   totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
   cost: number | null;
   costEstimated?: boolean;
   currency: string | null;
@@ -359,7 +362,6 @@ function buildApiUsage(
     }
 
     const currency = currencyFromSnapshot(snap);
-    let hasEstimatedCost = false;
     for (const point of dailyUsage) {
       const ts = parseLocalYMD(point.date);
       if (ts < start || ts > end) continue;
@@ -367,9 +369,22 @@ function buildApiUsage(
       const totalTokens = Number.isFinite(point.totalTokens)
         ? Math.max(0, Math.round(point.totalTokens))
         : 0;
+      const inputTokens = point.inputTokens !== undefined && Number.isFinite(point.inputTokens)
+        ? Math.max(0, Math.round(point.inputTokens))
+        : 0;
+      const outputTokens = point.outputTokens !== undefined && Number.isFinite(point.outputTokens)
+        ? Math.max(0, Math.round(point.outputTokens))
+        : 0;
+      const cacheTokens = point.cacheTokens !== undefined && Number.isFinite(point.cacheTokens)
+        ? Math.max(0, Math.round(point.cacheTokens))
+        : 0;
+      const splitTotal = inputTokens + outputTokens + cacheTokens;
       const row = {
         provider: snap.provider,
         totalTokens,
+        inputTokens: splitTotal > 0 ? inputTokens : totalTokens,
+        outputTokens: splitTotal > 0 ? outputTokens : 0,
+        cacheTokens: splitTotal > 0 ? cacheTokens : 0,
         cost,
         ...(point.costEstimated === true ? { costEstimated: true } : {}),
         currency,
@@ -380,16 +395,6 @@ function buildApiUsage(
       if (cost !== null && cost > 0) {
         addRemoteUsageRow(byCostKey, point.date, row);
       }
-      if (cost !== null && cost > 0 && point.costEstimated === true) {
-        hasEstimatedCost = true;
-      }
-    }
-    if (hasEstimatedCost && snap.provider === 'xiaomi') {
-      notices.push({
-        provider: snap.provider,
-        code: 'xiaomi_cost_estimated',
-        message: 'Xiaomi MiMo 未返回金额明细，部分 API 金额按 token 和当前价格估算',
-      });
     }
   }
 
@@ -410,6 +415,9 @@ function addRemoteUsageRow(
   const prev = existing.find((p) => p.provider === row.provider);
   if (prev) {
     prev.totalTokens += row.totalTokens;
+    prev.inputTokens += row.inputTokens;
+    prev.outputTokens += row.outputTokens;
+    prev.cacheTokens += row.cacheTokens;
     prev.cost =
       prev.cost === null && row.cost === null
         ? null

@@ -422,6 +422,9 @@ describe('usage service provider list', () => {
               cost: '0.1200',
               costEstimated: true,
               totalTokens: 2400,
+              inputTokens: 800,
+              outputTokens: 1600,
+              cacheTokens: 0,
             },
           ],
         },
@@ -439,6 +442,9 @@ describe('usage service provider list', () => {
         {
           provider: 'xiaomi',
           totalTokens: 2400,
+          inputTokens: 800,
+          outputTokens: 1600,
+          cacheTokens: 0,
           cost: 0.12,
           currency: 'CNY',
         },
@@ -450,16 +456,15 @@ describe('usage service provider list', () => {
         {
           provider: 'xiaomi',
           totalTokens: 2400,
+          inputTokens: 800,
+          outputTokens: 1600,
+          cacheTokens: 0,
           cost: 0.12,
           currency: 'CNY',
         },
       ],
     });
-    expect(summary.apiUsage?.notices).toContainEqual({
-      provider: 'xiaomi',
-      code: 'xiaomi_cost_estimated',
-      message: 'Xiaomi MiMo 未返回金额明细，部分 API 金额按 token 和当前价格估算',
-    });
+    expect(summary.apiUsage?.notices).toEqual([]);
   });
 
   it('builds remote cost buckets without mixing cost-only usage into token buckets', () => {
