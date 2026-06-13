@@ -81,7 +81,11 @@ const ENCRYPTION_MASK = 0xaa;
  * Mirrors the `NATURAL_CONTENT_BLOCKLIST` pattern in
  * `no-secret-leakage.pbt.test.ts`. The list is deliberately
  * over-inclusive — it is cheaper to skip a slightly-too-restrictive
- * input than to chase down a false-positive shrink.
+ * input than to chase down a false-positive shrink. In addition to
+ * this static list, `shouldSkipSecret` compares candidates against a
+ * baseline diagnostics JSON string for the target platform so small
+ * substrings in fixed report keys (for example `is`) are filtered
+ * without continually extending this list by hand.
  */
 const NATURAL_CONTENT_BLOCKLIST = [
   // Closed-set platform / arch values (Requirement 11.1).
@@ -227,7 +231,17 @@ function withFakedPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
  * See the "Pragmatic filtering" note at the file header for the
  * rationale.
  */
-function shouldSkipSecret(value: string): boolean {
+function buildNaturalDiagnosticsJson(platform: NodeJS.Platform): string {
+  const service = createDiagnosticsService({
+    settings: buildSettingsStub(),
+    collectorHealth: buildCollectorHealthStub(),
+    getSecretValues: () => [],
+  });
+  const report = withFakedPlatform(platform, () => service.export());
+  return JSON.stringify(report);
+}
+
+function shouldSkipSecret(platform: NodeJS.Platform, value: string): boolean {
   if (value.length === 0) {
     return true;
   }
@@ -247,6 +261,9 @@ function shouldSkipSecret(value: string): boolean {
       return true;
     }
   }
+  if (buildNaturalDiagnosticsJson(platform).includes(value)) {
+    return true;
+  }
   return false;
 }
 
@@ -255,6 +272,10 @@ function shouldSkipSecret(value: string): boolean {
 // ---------------------------------------------------------------------------
 
 describe('diagnostics — Property 10: no platform-induced secret leak (win32 / darwin)', () => {
+  it('skips candidates already present in natural diagnostics content', () => {
+    expect(shouldSkipSecret('win32', 'is')).toBe(true);
+  });
+
   it('JSON.stringify(report) never contains a stored secret plaintext as a substring', () => {
     fc.assert(
       fc.property(
@@ -263,7 +284,7 @@ describe('diagnostics — Property 10: no platform-induced secret leak (win32 / 
         (platform, secretValue) => {
           // Skip degenerate inputs that would trigger natural-content
           // false positives (see file header).
-          fc.pre(!shouldSkipSecret(secretValue));
+          fc.pre(!shouldSkipSecret(platform, secretValue));
 
           // Build a fresh secrets module + diagnostics service per
           // iteration so the in-memory state is isolated.
