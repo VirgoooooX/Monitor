@@ -154,7 +154,7 @@ describe('UsagePanel quota overview', () => {
             {
               provider: 'deepseek',
               code: 'deepseek_user_token_required',
-              message: 'API key 只能取余额，用量明细需配置 userToken',
+              message: 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
             },
           ],
         },
@@ -166,7 +166,7 @@ describe('UsagePanel quota overview', () => {
     expect(await screen.findByText('API 用量明细')).toBeTruthy();
     expect(screen.getByText('本地 Token 用量')).toBeTruthy();
     expect(screen.getByText('小米 Mimo')).toBeTruthy();
-    expect(screen.getByText('API key 只能取余额，用量明细需配置 userToken')).toBeTruthy();
+    expect(screen.getByText('DeepSeek API key 只能取余额，用量明细需配置 userToken')).toBeTruthy();
   });
 });
 

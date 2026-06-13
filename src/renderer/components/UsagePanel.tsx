@@ -170,6 +170,17 @@ function isParserPlaceholderLabel(cleaned: string): boolean {
   return /^[a-z0-9-]+:imported$/i.test(cleaned.trim());
 }
 
+function resolveNoticeMessage(t: Translator, code: string, fallback: string): string {
+  switch (code) {
+    case 'deepseek_user_token_required':
+      return t('usage.notice.deepseekUserTokenRequired');
+    case 'daily_usage_unavailable':
+      return t('usage.notice.xiaomiDailyUnavailable');
+    default:
+      return fallback;
+  }
+}
+
 function snapshotTitle(snapshot: QuotaSnapshot): string {
   const rawTitle = (
     snapshot.accountLabel?.trim() ||
@@ -442,18 +453,34 @@ export function UsagePanel(): JSX.Element {
       <div className="usage-panel-v2__header">
         <h2 className="usage-panel-v2__title">{t('usage.panel.title')}</h2>
         <div className="usage-panel-v2__tabs" role="tablist" aria-label={t('usage.panel.rangeAria')}>
-          {RANGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              role="tab"
-              aria-selected={range === opt.value}
-              className={`usage-panel-v2__tab${range === opt.value ? ' usage-panel-v2__tab--active' : ''}`}
-              onClick={() => setRange(opt.value)}
-              type="button"
-            >
-              {t(opt.labelKey)}
-            </button>
-          ))}
+          {RANGE_OPTIONS.map((opt) => {
+            if (range === opt.value) {
+              return (
+                <button
+                  key={opt.value}
+                  role="tab"
+                  aria-selected="true"
+                  className="usage-panel-v2__tab usage-panel-v2__tab--active"
+                  onClick={() => setRange(opt.value)}
+                  type="button"
+                >
+                  {t(opt.labelKey)}
+                </button>
+              );
+            }
+            return (
+              <button
+                key={opt.value}
+                role="tab"
+                aria-selected="false"
+                className="usage-panel-v2__tab"
+                onClick={() => setRange(opt.value)}
+                type="button"
+              >
+                {t(opt.labelKey)}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -495,7 +522,7 @@ export function UsagePanel(): JSX.Element {
                 {PROVIDER_LABELS[notice.provider as ProviderId]
                   ?? providerDisplayName(notice.provider)}
               </strong>
-              <span>{notice.message}</span>
+              <span>{resolveNoticeMessage(t, notice.code, notice.message)}</span>
             </p>
           ))}
         </div>
@@ -686,7 +713,7 @@ function QuotaAccountCard({
       // time-range labels, quota window names, snapshot status
       // badges, source labels, kind labels, and empty-state
       // sentences. The visible catalog already covers all of those.
-      aria-label={`${providerLabel} ${uniqueIdAriaText} 配额`}
+      aria-label={t('usage.card.ariaQuota', { provider: providerLabel, identity: uniqueIdAriaText })}
     >
       {/* 1. 顶部身份区 */}
       <header className="quota-account-card__header">
@@ -802,7 +829,7 @@ function QuotaAccountCard({
                 status badges, source labels, kind labels, empty-state
                 sentences" and the catalog does not yet expose a key
                 for it. */}
-            <span className="quota-account-card__health-text">暂无额度数据</span>
+            <span className="quota-account-card__health-text">{t('usage.card.noQuotaData')}</span>
           </div>
         )}
       </div>
@@ -834,25 +861,25 @@ function QuotaWindowRow({
   const displayName = translateQuotaWindowDisplayName(t, w.name, provider) ?? w.name;
 
   return (
-    <div className={`quota-window-row ${rowClass}`} aria-label={`${displayName} 剩余 ${formatPercent(remaining)}`}>
+    <div className={`quota-window-row ${rowClass}`} aria-label={t('usage.window.ariaRemaining', { name: displayName, remaining: formatPercent(remaining) })}>
       <div className="quota-window-row__header-line">
         <span className="quota-window-row__label" title={displayName}>{displayName}</span>
         <span className="quota-window-row__meta">
           <strong className="quota-window-row__percent">{formatPercent(remaining)}</strong>
           {w.resetAt !== null && (
-            <span className="quota-window-row__reset"> · {formatClock(w.resetAt)} 重置</span>
+            <span className="quota-window-row__reset">{t('usage.window.resetSuffix', { time: formatClock(w.resetAt) })}</span>
           )}
         </span>
       </div>
       <div className="quota-window-row__track">
-        <div
+        <progress
           className="quota-window-row__fill"
-          style={{ width: `${clampPercent(remaining)}%` }}
-          aria-valuenow={remaining ?? 0}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          role="progressbar"
-        />
+          value={clampPercent(remaining)}
+          max={100}
+          aria-label={displayName}
+        >
+          {formatPercent(remaining)}
+        </progress>
       </div>
     </div>
   );

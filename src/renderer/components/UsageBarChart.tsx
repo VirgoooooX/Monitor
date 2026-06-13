@@ -26,8 +26,7 @@
 //   - junhoyeo/tokscale        (TUI contribution graph + stacked rows)
 //   - ccusage `daily` command  (one row per local day, models stacked)
 
-import { useMemo, useId, useState, useEffect } from 'react';
-import type { CSSProperties } from 'react';
+import { useMemo, useId, useState, useEffect, useInsertionEffect } from 'react';
 import type { UsageTimeseriesBucket } from '../lib/types';
 import type { TranslationKey } from '../../i18n';
 import { formatTokens, formatCurrencyAmount } from '../lib/format';
@@ -128,11 +127,6 @@ function kindColor(provider: string, kind: TokenKind): string {
   }
 }
 
-/** Provider swatch in the legend uses the "input" mid-tone. */
-function providerColor(provider: string): string {
-  return kindColor(provider, 'input');
-}
-
 // ---------------------------------------------------------------------------
 // Tick formatting
 // ---------------------------------------------------------------------------
@@ -184,6 +178,7 @@ export function UsageBarChart({
 }: UsageBarChartProps): JSX.Element {
   const t = useT();
   const uid = useId().replace(/:/g, '');
+  const chartScopeClass = `usage-chart--${uid}`;
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   // Pre-compute per-bucket totals + the global max for y-axis scaling.
@@ -303,10 +298,10 @@ export function UsageBarChart({
   // labels are readable (1.2M instead of 1.21M).
   const yMax = niceCeiling(layout.maxTotal || 1);
   const valueUnit = valueMode === 'cost' ? '' : 'tok';
-  const metricName = valueMode === 'cost' ? 'API 金额' : 'Token 消耗';
+  const metricName = valueMode === 'cost' ? t('usage.chart.metricCost') : t('usage.chart.metricTokens');
   const emptyLabel = valueMode === 'cost'
-    ? '尚无 API 金额数据'
-    : '尚无 Token 用量数据';
+    ? t('usage.chart.emptyCost')
+    : t('usage.chart.emptyTokens');
   const formatValue = (value: number, currency: string | null = null): string =>
     valueMode === 'cost'
       ? formatCurrencyAmount(value, currency ?? layout.primaryCurrency ?? null)
@@ -317,7 +312,7 @@ export function UsageBarChart({
     estimated = false,
   ): string => {
     const formatted = formatValue(value, currency);
-    return valueMode === 'cost' && estimated ? `估算 ${formatted}` : formatted;
+    return valueMode === 'cost' && estimated ? t('usage.chart.estimatedValue', { value: formatted }) : formatted;
   };
 
   // Right-axis scale for the events line. Capped at 1 so the polyline
@@ -354,15 +349,81 @@ export function UsageBarChart({
   }, [granularity, columnCount]);
 
   const hovered = hoverIdx !== null ? layout.columns[hoverIdx] ?? null : null;
+  const providerStyleIndex = useMemo(
+    () => new Map(layout.providersInOrder.map((provider, idx) => [provider, idx])),
+    [layout.providersInOrder],
+  );
+  const dynamicStyleText = useMemo(() => {
+    const rules: string[] = [
+      `.${chartScopeClass} .usage-chart__canvas { --rail-max-width: calc(${columnCount} * var(--col-max-w) + ${Math.max(columnCount - 1, 0)} * var(--col-gap)); }`,
+    ];
+
+    for (let idx = 0; idx < layout.columns.length; idx += 1) {
+      const col = layout.columns[idx]!;
+      const heightPct = yMax > 0 ? (col.total / yMax) * 100 : 0;
+      rules.push(
+        `.${chartScopeClass} .usage-chart__stack--c${idx} { height: ${heightPct.toFixed(3)}%; animation-delay: ${Math.min(idx * 18, 600)}ms; }`,
+        `.${chartScopeClass} .usage-chart__crown--c${idx} { bottom: calc(${heightPct.toFixed(3)}% + 4px); }`,
+      );
+
+      for (let segIdx = 0; segIdx < col.stack.length; segIdx += 1) {
+        const seg = col.stack[segIdx]!;
+        const segPct = col.total > 0 ? (seg.tokens / col.total) * 100 : 0;
+        rules.push(
+          `.${chartScopeClass} .usage-chart__seg--c${idx}-s${segIdx} { flex-basis: ${segPct.toFixed(3)}%; }`,
+        );
+
+        for (const { kind, tokens } of seg.kinds) {
+          if (tokens === 0) continue;
+          const kindPct = seg.tokens > 0 ? (tokens / seg.tokens) * 100 : 0;
+          rules.push(
+            `.${chartScopeClass} .usage-chart__kind--c${idx}-s${segIdx}-${kind} { flex-basis: ${kindPct.toFixed(3)}%; background: ${kindColor(seg.provider, kind)}; }`,
+          );
+        }
+      }
+
+      if (hasEvents && col.totalEvents > 0) {
+        const xPct = ((idx + 0.5) / columnCount) * 100;
+        const yPx = 12 + (1 - col.totalEvents / eMax) * 182;
+        rules.push(
+          `.${chartScopeClass} .usage-chart__events-dot--c${idx} { left: calc(${xPct.toFixed(3)}%); top: ${yPx.toFixed(2)}px; }`,
+        );
+      }
+    }
+
+    for (let idx = 0; idx < layout.providersInOrder.length; idx += 1) {
+      const provider = layout.providersInOrder[idx]!;
+      rules.push(
+        `.${chartScopeClass} .usage-chart__legend-swatch--p${idx} { background: linear-gradient(to right, ${kindColor(provider, 'output')} 0% 33%, ${kindColor(provider, 'input')} 33% 66%, ${kindColor(provider, 'cache')} 66% 100%); }`,
+      );
+    }
+
+    return rules.join('\n');
+  }, [chartScopeClass, columnCount, eMax, hasEvents, layout.columns, layout.providersInOrder, yMax]);
+
+  useInsertionEffect(() => {
+    if (typeof document === 'undefined') return;
+    const styleEl = document.createElement('style');
+    styleEl.dataset.usageChartId = uid;
+    styleEl.textContent = dynamicStyleText;
+    document.head.appendChild(styleEl);
+    return () => {
+      styleEl.remove();
+    };
+  }, [dynamicStyleText, uid]);
 
   return (
     <div
-      className="usage-chart"
+      className={`usage-chart ${chartScopeClass}`}
       role="figure"
       aria-label={
         emptyData
           ? emptyLabel
-          : `${metricName} · ${granularity === 'hour' ? '小时' : '天'}级 · 峰值 ${formatValue(layout.maxTotal)}`
+          : t('usage.chart.ariaLabel', {
+              metricName,
+              scale: granularity === 'hour' ? t('usage.chart.granularityHourScale') : t('usage.chart.granularityDayScale'),
+              peak: formatValue(layout.maxTotal),
+            })
       }
     >
       {/* Header: peak summary + window subtitle. Lives above the
@@ -370,17 +431,17 @@ export function UsageBarChart({
       <header className="usage-chart__header">
         <div className="usage-chart__heading">
           <span className="usage-chart__eyebrow">
-            {granularity === 'hour' ? 'PER HOUR' : 'PER DAY'}
+            {granularity === 'hour' ? t('usage.chart.perHour') : t('usage.chart.perDay')}
           </span>
           <span className="usage-chart__rule" aria-hidden />
           <span className="usage-chart__columns-meta">
-            {emptyData ? '—' : `${columnCount} 个时段`}
+            {emptyData ? '—' : t('usage.chart.periodCount', { columnCount })}
           </span>
         </div>
 
         <dl className="usage-chart__stats">
           <div className="usage-chart__stat">
-            <dt>峰值</dt>
+            <dt>{t('usage.chart.peak')}</dt>
             <dd>
               {emptyData ? '—' : formatValue(layout.maxTotal)}
               {valueUnit !== '' && (
@@ -389,7 +450,7 @@ export function UsageBarChart({
             </dd>
           </div>
           <div className="usage-chart__stat">
-            <dt>区间合计</dt>
+            <dt>{t('usage.chart.rangeTotal')}</dt>
             <dd>
               {formatValue(
                 layout.columns.reduce((s, c) => s + c.total, 0),
@@ -455,14 +516,7 @@ export function UsageBarChart({
             width and centering them keeps the polyline
             x-coordinates aligned with bar centres regardless of
             how many columns the current range is showing. */}
-        <div
-          className="usage-chart__canvas"
-          style={
-            {
-              '--rail-max-width': `calc(${columnCount} * var(--col-max-w) + ${Math.max(columnCount - 1, 0)} * var(--col-gap))`,
-            } as CSSProperties
-          }
-        >
+        <div className="usage-chart__canvas">
           {/*
             Kind-tone key — floats in the top-right corner of the
             plot canvas. Anchored to the chart itself (not header /
@@ -546,12 +600,11 @@ export function UsageBarChart({
                   <div
                     key={i}
                     className="usage-chart__col usage-chart__col--placeholder"
+                    role="listitem"
                     aria-hidden
                   />
                 ))
               : layout.columns.map((col, idx) => {
-                  const heightPct =
-                    yMax > 0 ? (col.total / yMax) * 100 : 0;
                   const isHover = hoverIdx === idx;
                   const isPeak =
                     idx === layout.peakIdx && col.total > 0;
@@ -565,33 +618,30 @@ export function UsageBarChart({
                       onMouseEnter={() => setHoverIdx(idx)}
                       onFocus={() => setHoverIdx(idx)}
                       onBlur={() => setHoverIdx(null)}
-                      aria-label={`${formatBucketTitle(col.key, granularity)}：${formatPrimaryValue(col.total, col.totalCurrency, col.totalCostEstimated)}${valueMode === 'tokens' ? ' tokens' : ''}${col.totalEvents > 0 ? `，${col.totalEvents} 次请求` : ''}`}
-                      style={{
-                        // Stagger the entrance — feels like data
-                        // is being printed in. Capped at 600ms
-                        // total even at 30 columns so the chart
-                        // never feels laggy.
-                        animationDelay: `${Math.min(idx * 18, 600)}ms`,
-                      }}
+                      aria-label={(() => {
+                        const timeStr = formatBucketTitle(col.key, granularity);
+                        const valStr = formatPrimaryValue(col.total, col.totalCurrency, col.totalCostEstimated);
+                        let label = valueMode === 'tokens'
+                          ? t('usage.chart.colAriaTokens', { time: timeStr, value: valStr })
+                          : t('usage.chart.colAriaCost', { time: timeStr, value: valStr });
+                        if (col.totalEvents > 0) {
+                          label += t('usage.chart.colAriaEventsSuffix', { count: col.totalEvents });
+                        }
+                        return label;
+                      })()}
                     >
                       {/* Inner clip — the stack can't paint
                           outside the column box, which keeps the
                           gradient sheen contained on hover. */}
                       <span className="usage-chart__col-track" aria-hidden>
                         <span
-                          className="usage-chart__stack"
-                          style={{ height: `${heightPct}%` }}
+                          className={`usage-chart__stack usage-chart__stack--c${idx}`}
                         >
-                          {col.stack.map((seg) => {
-                            const segPct =
-                              col.total > 0
-                                ? (seg.tokens / col.total) * 100
-                                : 0;
+                          {col.stack.map((seg, segIdx) => {
                             return (
                               <span
                                 key={seg.provider}
-                                className="usage-chart__seg"
-                                style={{ flexBasis: `${segPct}%` }}
+                                className={`usage-chart__seg usage-chart__seg--c${idx}-s${segIdx}`}
                                 data-provider={seg.provider}
                               >
                                 {/*
@@ -605,21 +655,10 @@ export function UsageBarChart({
                                 */}
                                 {seg.kinds.map(({ kind, tokens }) => {
                                   if (tokens === 0) return null;
-                                  const kindPct =
-                                    seg.tokens > 0
-                                      ? (tokens / seg.tokens) * 100
-                                      : 0;
                                   return (
                                     <span
                                       key={kind}
-                                      className="usage-chart__kind"
-                                      style={{
-                                        flexBasis: `${kindPct}%`,
-                                        background: kindColor(
-                                          seg.provider,
-                                          kind,
-                                        ),
-                                      }}
+                                      className={`usage-chart__kind usage-chart__kind--c${idx}-s${segIdx}-${kind}`}
                                       data-kind={kind}
                                     />
                                   );
@@ -630,8 +669,7 @@ export function UsageBarChart({
                         </span>
                         {isPeak && (
                           <span
-                            className="usage-chart__crown"
-                            style={{ bottom: `calc(${heightPct}% + 4px)` }}
+                            className={`usage-chart__crown usage-chart__crown--c${idx}`}
                             aria-hidden
                           />
                         )}
@@ -716,18 +754,12 @@ export function UsageBarChart({
           {!emptyData && hasEvents && hoverIdx !== null && (() => {
             const col = layout.columns[hoverIdx];
             if (!col || col.totalEvents === 0) return null;
-            const xPct = ((hoverIdx + 0.5) / columnCount) * 100;
             // Same y-scale as the polyline (12..194 — see the
             // curve build above for the rationale on the 4px
             // offset from the bar baseline at canvas-y = 198).
-            const yPx = 12 + (1 - col.totalEvents / eMax) * 182;
             return (
               <span
-                className="usage-chart__events-dot"
-                style={{
-                  left: `calc(${xPct.toFixed(3)}% )`,
-                  top: `${yPx.toFixed(2)}px`,
-                }}
+                className={`usage-chart__events-dot usage-chart__events-dot--c${hoverIdx}`}
                 aria-hidden
               />
             );
@@ -836,16 +868,7 @@ export function UsageBarChart({
                   removes the need for a separate kind legend.
                 */}
                 <span
-                  className="usage-chart__legend-swatch"
-                  style={{
-                    background: `linear-gradient(to right, ${kindColor(
-                      provider,
-                      'output',
-                    )} 0% 33%, ${kindColor(
-                      provider,
-                      'input',
-                    )} 33% 66%, ${kindColor(provider, 'cache')} 66% 100%)`,
-                  }}
+                  className={`usage-chart__legend-swatch usage-chart__legend-swatch--p${providerStyleIndex.get(provider) ?? 0}`}
                 />
                 <span className="usage-chart__legend-label">
                   {providerLabel(provider)}
@@ -877,7 +900,7 @@ export function UsageBarChart({
                 />
                 <circle cx={7} cy={4} r={2} fill="currentColor" />
               </svg>
-              <span className="usage-chart__legend-label">请求次数</span>
+              <span className="usage-chart__legend-label">{t('usage.chart.requestSeries')}</span>
             </span>
           )}
         </div>
@@ -933,7 +956,7 @@ export function UsageBarChart({
                 <>
                   <span className="usage-chart__detail-sep" aria-hidden>·</span>
                   <span className="usage-chart__detail-value">
-                    {hovered.totalEvents} 次
+                    {t('usage.chart.eventCount', { count: hovered.totalEvents })}
                   </span>
                 </>
               )}
@@ -954,10 +977,6 @@ export function UsageBarChart({
         </div>
       </footer>
 
-      {/* Render `uid` so each chart instance has a unique CSS scope
-          if we ever want to namespace it. Currently unused but keeps
-          the hook signature stable for future per-instance gradients. */}
-      <span hidden data-uid={uid} />
     </div>
   );
 }

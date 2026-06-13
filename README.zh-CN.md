@@ -6,7 +6,7 @@
 
 **桌面悬浮小组件，实时监控 OpenClash 连通性与 AI 用量。**
 
-<sub>跨平台 · Electron 33 · Better-SQLite3 · React 18 · 属性测试覆盖</sub>
+<sub>跨平台 · Electron 33 · Better-SQLite3 · React 18 · 属性测试覆盖 · 中英双语 (zh-CN / en-US)</sub>
 
 [功能](#功能) · [截图](#截图) · [安装](#安装) · [使用指南](#使用指南) · [开发](#开发) · [打包](#打包) · [架构](#架构)
 
@@ -21,12 +21,13 @@
 | | |
 |---|---|
 | 🌐 **OpenClash 实时状态** | 持续探测控制器、当前节点、延迟曲线、节点组健康度。托盘"关闭即隐藏"，macOS 上悬浮窗跨 Spaces 工作。 |
-| 🧠 **AI 用量聚合** | 按账号统计 Codex (ChatGPT)、Gemini CLI、Antigravity、Claude Code、Kiro IDE、OpenCode Go、DeepSeek、小米 Mimo、OpenAI 兼容服务、Gemini API 的 quota 与 token 用量；密钥通过 Keychain (macOS) / DPAPI (Windows) 加密落盘。 |
+| 🧠 **AI 用量聚合** | 按账号统计 Codex (ChatGPT)、Gemini CLI、Antigravity、Claude Code、Kiro IDE、OpenCode Go、DeepSeek、小米 Mimo、Gemini API、OpenAI 兼容服务的 quota 与 token 用量；密钥通过 Keychain (macOS) / DPAPI (Windows) 加密落盘。 |
+| 🌍 **中英双语界面** | 完整国际化支持，实时切换语言无需重启。首次启动自动检测系统语言，用户选择持久化。覆盖所有渲染器界面、托盘菜单和原生对话框。 |
 | 🪟 **悬浮置顶窗口** | 透明无边框、可拖拽。macOS 下使用 `screen-saver` 层级跨全屏 Spaces 显示，配合 `LSUIElement = true` 隐藏 Dock 图标与 Cmd+Tab 项。 |
 | 🎨 **11 种紧凑主题** | 液态玻璃、Material You、柔和拟态、纸感仪表、薄荷监控、硬件 OLED、黑曜玻璃、极光环、全息网格、液态金属、信号脉冲；深浅模式独立切换。 |
 | 📊 **展开式仪表盘** | 网络快捷动作（节点切换 + 配置切换）、连通性历史、AI 月度用量、节点扫描列表、设置面板。 |
 | 🔐 **密钥本地保存** | 所有敏感值通过 `safeStorage` 加密；诊断导出走属性测试覆盖的脱敏过滤器，每平台 100+ 随机用例验证不泄漏。 |
-| 🧪 **规范驱动 + 属性测试** | 每次提交跑 514 项测试（约 10s），其中 ~13 个 fast-check 属性测试覆盖跨平台路径解析、构建产物原子性与生命周期不变量。 |
+| 🧪 **规范驱动 + 属性测试** | 每次提交跑 530 项测试（约 11s），其中 ~13 个 fast-check 属性测试覆盖跨平台路径解析、构建产物原子性与生命周期不变量。 |
 
 ## 截图
 
@@ -158,7 +159,7 @@ macOS 上托盘图标使用模板图（`tray-iconTemplate.png` 24×24 + `@2x.png
 
 | 分组 | 配置内容 |
 |---|---|
-| 🎨 **外观** | 深浅色、紧凑窗口主题、字体缩放、紧凑窗口缩放 |
+| 🎨 **外观** | 深浅色、紧凑窗口主题、字体缩放、紧凑窗口缩放、**界面语言** |
 | 🖥 **控制器** | OpenClash 主控 URL 与密钥 |
 | 🛰 **探测目标** | 外网连通性 URL 列表 |
 | 📑 **主分组** | 展示与切换的 OpenClash 节点组 |
@@ -168,12 +169,36 @@ macOS 上托盘图标使用模板图（`tray-iconTemplate.png` 24×24 + `@2x.png
 | 🔌 **管理接口** | OpenClash LuCI 地址、超时、白名单配置文件 |
 | ✨ **AI 账号** | 添加 / 启用 / 刷新 / 删除 AI 凭据 |
 
+### 语言切换
+
+在「设置 → 外观」中可选择界面语言：
+
+- **中文（简体）** — 简体中文界面
+- **English** — 英文界面
+
+切换立即生效，无需重启。首次启动时根据系统语言自动选择。选项始终以各自的原文显示（中文用户看到「English」，英文用户看到「中文（简体）」），以便误选语言时也能找到切换入口。
+
 ### 添加 AI 账号
 
 「AI 账号」分组支持两种凭据形式：
 
 - **认证文件导入**：适用于 Codex (ChatGPT)、Gemini CLI、Antigravity、Claude Code、Kiro IDE、OpenCode Go——选择 CLI 工具生成的 `auth.json` / `credentials.json`，应用会原文加密入库
 - **手动 API Key**：适用于 DeepSeek、小米 Mimo、Gemini API、OpenAI 兼容服务——填入 base URL 与 API key
+
+### 支持的 AI 服务
+
+| 服务 | 能力 | 凭据来源 |
+|---|---|---|
+| Codex (ChatGPT) | 官方 Quota | 认证文件导入 |
+| Gemini CLI | 官方 Quota | 认证文件导入 |
+| Antigravity | 官方 Quota | 认证文件导入 |
+| Claude Code | 官方 Quota | 认证文件导入 |
+| Kiro IDE | 官方 Quota（支持自动刷新 token） | 认证文件导入 |
+| OpenCode Go | 官方 Quota | 手动（auth cookie + workspace URL） |
+| DeepSeek | 官方 Quota（多钱包 + 每日用量） | 手动 API Key（+ 可选 userToken） |
+| 小米 Mimo | 官方 Quota | 手动（passToken + userId） |
+| Gemini API | 仅可用性检查 | 手动 API Key |
+| OpenAI 兼容服务 | 仅可用性检查 | 手动 API Key + base URL |
 
 凭据加密策略：
 
@@ -240,12 +265,21 @@ macOS 上托盘图标使用模板图（`tray-iconTemplate.png` 24×24 + `@2x.png
 ```bash
 npm install
 npm run dev          # Electron 主进程 + Vite 渲染进程，watch 模式
-npm run typecheck    # tsc --noEmit，主进程与渲染进程分别校验
-npm test             # vitest run，514 项测试，约 10 秒
+npm run typecheck    # i18n 目录校验 + tsc --noEmit，主进程与渲染进程分别校验
+npm test             # vitest run，530 项测试，约 11 秒
 npm run icons        # 重新生成 build/icon.{svg,ico,icns,png} 与托盘资源
 ```
 
 仓库采用**规范驱动**工作流，所有特性都落在 `.kiro/specs/<feature-name>/` 下，含 `requirements.md`、`design.md`、`tasks.md` 三联文件；属性测试与实现并列存放，命名为 `*.pbt.test.ts`。
+
+### 国际化
+
+代码库使用共享的 `src/i18n/` 运行时，主进程与渲染进程均可消费。翻译目录（`zh-CN` 和 `en-US`）在构建时静态编入 bundle，无运行时加载。构建时校验器（`scripts/validate-i18n-catalogs.mjs`）在每次构建中强制检查目录对称性、值约束和 CJK 未翻译规则。
+
+```bash
+npm run i18n:validate         # 校验目录键对称性 + 值约束
+npm run i18n:validate:bundle  # 校验编译后 bundle 字节一致性（构建后）
+```
 
 ## 打包
 
@@ -300,11 +334,12 @@ flowchart LR
     PATHS[platform/paths.ts<br/>跨平台路径解析]
     SECRETS[security/secrets.ts<br/>safeStorage 包装]
     DIAG[services/diagnostics<br/>脱敏过滤器]
+    I18N[i18n<br/>共享目录 + 运行时]
   end
 
   subgraph Collectors["采集器"]
     NET[network · openclash<br/>nodeScan · usage]
-    AI[Codex · Gemini · Antigravity<br/>OpenCode · Claude · Kiro · DeepSeek]
+    AI[Codex · Gemini · Antigravity<br/>OpenCode · Claude · Kiro<br/>DeepSeek · Xiaomi · Gemini API]
   end
 
   subgraph Store["SQLite 存储 (better-sqlite3)"]
@@ -320,6 +355,7 @@ flowchart LR
   APP --> SCHED
   APP --> SECRETS
   APP --> DIAG
+  APP --> I18N
   SCHED --> NET
   SCHED --> AI
   PATHS --> AI
@@ -327,6 +363,7 @@ flowchart LR
   AI --> DB
   MIGS --> DB
   APP --> Render
+  I18N --> Render
   DIAG --> EXPANDED
   SECRETS -. 加密 .-> DB
 ```
@@ -350,14 +387,16 @@ flowchart LR
 ├── compact-theme-system/
 ├── cpa-quota-import/
 ├── desktop-monitor-widget/
-├── macos-platform-support/        ← macOS 支持落点
+├── i18n-multilingual-support/       ← 最新落地特性
 │   ├── requirements.md            # EARS 格式验收标准
 │   ├── design.md                  # 实现方案 + 正确性属性
-│   └── tasks.md                   # 71 个可执行任务，含依赖图
+│   └── tasks.md                   # 18 个任务组，含依赖图
+├── macos-platform-support/
+│   ├── requirements.md
+│   ├── design.md
+│   └── tasks.md
 └── network-quick-actions/
 ```
-
-`macos-platform-support` 规范分 10 个 wave 落地，覆盖路径解析模块、采集器重构、运行时姿态、构建产物、配置、文档与集成测试。71 项任务全部完成，13 个属性测试钉住跨平台不变量。
 
 ## 许可
 

@@ -895,11 +895,11 @@ export function createProviderAuthService(
       case 'deepseek':
         return 'DeepSeek API key';
       case 'xiaomi':
-        return '小米 Mimo';
+        return 'Xiaomi MiMo';
       case 'opencode':
         return 'OpenCode Go';
       case 'openai-compatible':
-        return 'OpenAI 兼容 API key';
+        return 'OpenAI Compatible API Key';
     }
   }
 

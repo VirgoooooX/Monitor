@@ -6,9 +6,11 @@
 
 **A floating-widget desktop monitor for OpenClash connectivity and AI usage.**
 
-<sub>Cross-platform · Electron 33 · Better-SQLite3 · React 18 · Property-tested</sub>
+<sub>Cross-platform · Electron 33 · Better-SQLite3 · React 18 · Property-tested · i18n (en-US / zh-CN)</sub>
 
 [Features](#features) · [Gallery](#gallery) · [Supported Platforms](#supported-platforms) · [Installation](#installation) · [Themes](#themes) · [Development](#development) · [Packaging](#packaging) · [Architecture](#architecture)
+
+[中文文档](README.zh-CN.md)
 
 </div>
 
@@ -37,11 +39,12 @@
 | | |
 |---|---|
 | 🌐 **OpenClash live status** | Continuous probe of the controller, current node, latency sparklines, and node-group health. Hide-instead-of-quit tray, Spaces-aware floating widget on macOS. |
-| 🧠 **AI usage aggregation** | Per-account quota and token counters for Codex, Gemini CLI, Antigravity, OpenCode, DeepSeek, Claude Code, and Kiro IDE — credentials encrypted at rest via Keychain (macOS) / DPAPI (Windows). |
+| 🧠 **AI usage aggregation** | Per-account quota and token counters for Codex, Gemini CLI, Antigravity, OpenCode, DeepSeek, Claude Code, Kiro IDE, Xiaomi MiMo, Gemini API, and OpenAI-compatible services — credentials encrypted at rest via Keychain (macOS) / DPAPI (Windows). |
+| 🌍 **Bilingual UI (en-US / zh-CN)** | Full internationalization with live language switching — no restart required. OS locale auto-detected on first launch; user choice persisted across sessions. Covers all renderer surfaces, tray menu, and native dialogs. |
 | 🪟 **Always-on-top widget** | Transparent, frameless, draggable. On macOS the widget floats above full-screen Spaces (`screen-saver` level) and `LSUIElement = true` keeps it out of the Dock and Cmd+Tab. |
-| 📊 **Expanded dashboard** | Connectivity history, AI quota, per-collector capability, and a redacted diagnostics export bundle for support tickets. |
+| 📊 **Expanded dashboard** | Network quick actions (node switching + config switching), connectivity history, AI quota, per-collector capability, and a redacted diagnostics export bundle for support tickets. |
 | 🔐 **Secrets stay local** | All secret values flow through `safeStorage`. The diagnostics export is value-redacted and runs through a property-based "no-leak" sieve covering 100+ generated cases per platform. |
-| 🧪 **Spec-driven, property-tested** | 514 tests pass on every commit, including ~13 fast-check property suites that exercise per-platform path resolution, atomic build artefacts, and lifecycle invariants. |
+| 🧪 **Spec-driven, property-tested** | 530 tests pass on every commit, including ~13 fast-check property suites that exercise per-platform path resolution, atomic build artefacts, and lifecycle invariants. |
 
 ### Network panel
 
@@ -103,7 +106,9 @@ The macOS build uses Hardened Runtime entitlements (`com.apple.security.cs.allow
 
 The macOS distribution is **unsigned** — it ships without an Apple Developer ID signature and without notarization. Gatekeeper will refuse to launch the app on first run with a "无法打开" / "cannot be opened" dialog. Bypass this once with the following gesture:
 
-> 首次运行：右键（Ctrl+click）.app → 打开 → 在弹出的 Gatekeeper 对话框中确认打开
+> First launch: right-click (Ctrl+click) `Monitor.app` → Open → confirm in the Gatekeeper dialog
+>
+> (Verbatim Chinese: 首次运行：右键（Ctrl+click）.app → 打开 → 在弹出的 Gatekeeper 对话框中确认打开)
 
 After the first successful launch macOS remembers the user-confirmed exception and subsequent launches behave like any signed app. Replacing `Monitor.app` in `/Applications` during an update may require repeating the gesture once.
 
@@ -124,12 +129,21 @@ If you would prefer a signed build, the `electron-builder.yml#mac.identity` fiel
 ```bash
 npm install
 npm run dev          # Electron main + Vite renderer in watch mode
-npm run typecheck    # tsc --noEmit for both main and renderer projects
-npm test             # vitest run — 514 tests, ~10s
+npm run typecheck    # i18n catalog validation + tsc --noEmit for both main and renderer projects
+npm test             # vitest run — 530 tests, ~11s
 npm run icons        # regenerate build/icon.{svg,ico,icns,png} + tray assets
 ```
 
 The repo follows a **spec-driven** workflow under `.kiro/specs/`. Each feature directory contains `requirements.md`, `design.md`, and `tasks.md`; property-based tests live alongside their implementation as `*.pbt.test.ts` files.
+
+### i18n
+
+The codebase is fully internationalized with a shared `src/i18n/` runtime consumed by both the main process and the renderer. Translation catalogs (`zh-CN` and `en-US`) are statically compiled into the bundle — no runtime fetching. A build-time validator (`scripts/validate-i18n-catalogs.mjs`) enforces catalog symmetry, value invariants, and CJK-untranslated rules at every build.
+
+```bash
+npm run i18n:validate         # validate catalog key symmetry + value invariants
+npm run i18n:validate:bundle  # validate compiled bundle byte-equality (post-build)
+```
 
 ## Packaging
 
@@ -158,6 +172,22 @@ RUN_PACKAGING_INTEGRATION=1 npx vitest run tests/integration/package-mac.integra
 
 They are skipped under a normal `npm test` so the suite stays fast.
 
+### Releasing
+
+Releases go through [GitHub Actions](.github/workflows/release.yml) with two trigger modes:
+
+- **Tag push** (`v*.*.*`): parallel builds on Windows + macOS runners, then a GitHub Release with dmg / exe / blockmap / `latest*.yml` attached automatically.
+- **Manual** (`workflow_dispatch`): dual-platform smoke build, artefacts uploaded to the run only — no Release created. Useful for regression testing after dependency upgrades.
+
+Example release of `v0.2.0`:
+
+```bash
+npm version 0.2.0 -m "Release v%s"
+git push origin main --follow-tags
+```
+
+The macOS job runs on `macos-14` (Apple Silicon), producing both `arm64` and `x64` dmgs in one pass; the Windows job runs on `windows-latest`, outputting the NSIS installer.
+
 ## Architecture
 
 ```mermaid
@@ -168,11 +198,12 @@ flowchart LR
     PATHS[platform/paths.ts<br/>per-platform resolvers]
     SECRETS[security/secrets.ts<br/>safeStorage wrapper]
     DIAG[services/diagnostics<br/>redaction sieve]
+    I18N[i18n<br/>shared catalogs + runtime]
   end
 
   subgraph Collectors["Collectors"]
     NET[network · openclash<br/>nodeScan · usage]
-    AI[Codex · Gemini · Antigravity<br/>OpenCode · Claude · Kiro · DeepSeek]
+    AI[Codex · Gemini · Antigravity<br/>OpenCode · Claude · Kiro<br/>DeepSeek · Xiaomi · Gemini API]
   end
 
   subgraph Store["SQLite store (better-sqlite3)"]
@@ -188,6 +219,7 @@ flowchart LR
   APP --> SCHED
   APP --> SECRETS
   APP --> DIAG
+  APP --> I18N
   SCHED --> NET
   SCHED --> AI
   PATHS --> AI
@@ -195,6 +227,7 @@ flowchart LR
   AI --> DB
   MIGS --> DB
   APP --> Render
+  I18N --> Render
   DIAG --> EXPANDED
   SECRETS -. encrypts .-> DB
 ```
@@ -208,6 +241,21 @@ flowchart LR
 - **fast-check 3** for property-based testing
 - **electron-builder 25** with two arch-specific dmgs and a single NSIS installer
 
+### Supported AI providers
+
+| Provider | Capability | Credential Source |
+|---|---|---|
+| Codex (ChatGPT) | Official quota | Auth file import |
+| Gemini CLI | Official quota | Auth file import |
+| Antigravity | Official quota | Auth file import |
+| Claude Code | Official quota | Auth file import |
+| Kiro IDE | Official quota (with auto token refresh) | Auth file import |
+| OpenCode Go | Official quota | Manual (auth cookie + workspace URL) |
+| DeepSeek | Official quota (multi-wallet + daily usage) | Manual API key (+ optional userToken) |
+| Xiaomi MiMo | Official quota | Manual (passToken + userId) |
+| Gemini API | Health check only | Manual API key |
+| OpenAI-compatible | Health check only | Manual API key + base URL |
+
 ## Spec workflow
 
 Every feature in this repo lands as a spec triple under `.kiro/specs/<feature-name>/`:
@@ -218,14 +266,16 @@ Every feature in this repo lands as a spec triple under `.kiro/specs/<feature-na
 ├── compact-theme-system/
 ├── cpa-quota-import/
 ├── desktop-monitor-widget/
-├── macos-platform-support/        ← latest landed feature
+├── i18n-multilingual-support/       ← latest landed feature
 │   ├── requirements.md            # EARS-formatted acceptance criteria
 │   ├── design.md                  # implementation plan + correctness properties
-│   └── tasks.md                   # 71 actionable tasks, dependency-graphed
+│   └── tasks.md                   # 18 task groups, dependency-graphed
+├── macos-platform-support/
+│   ├── requirements.md
+│   ├── design.md
+│   └── tasks.md
 └── network-quick-actions/
 ```
-
-The `macos-platform-support` spec landed in 10 waves spanning resolver modules, collector refactors, runtime posture, build artefacts, configuration, documentation, and integration tests. All 71 tasks are checked off and 13 property-based tests pin the per-platform invariants.
 
 ## License
 

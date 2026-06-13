@@ -339,13 +339,13 @@ function buildApiUsage(
         notices.push({
           provider: snap.provider,
           code: 'deepseek_user_token_required',
-          message: 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
+          message: 'DeepSeek API key can only fetch balance; daily usage details require configuring userToken',
         });
       } else if (snap.provider === 'xiaomi') {
         notices.push({
           provider: snap.provider,
           code: 'daily_usage_unavailable',
-          message: 'Xiaomi MiMo 未返回 API 用量明细，余额仍可正常显示',
+          message: 'Xiaomi MiMo did not return daily API usage details; balance is still displayed correctly',
         });
       }
       continue;
@@ -355,7 +355,7 @@ function buildApiUsage(
         notices.push({
           provider: snap.provider,
           code: 'deepseek_user_token_required',
-          message: 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
+          message: 'DeepSeek API key can only fetch balance; daily usage details require configuring userToken',
         });
       }
       continue;

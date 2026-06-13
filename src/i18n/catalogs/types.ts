@@ -534,6 +534,37 @@ export interface TranslationCatalog {
   'usage.account.typeApiKey': string;         // 手动 API Key
 
   // -------------------------------------------------------------------
+  // UsageBarChart / UsagePanel i18n fixes
+  // -------------------------------------------------------------------
+  'usage.chart.metricCost': string;
+  'usage.chart.metricTokens': string;
+  'usage.chart.emptyCost': string;
+  'usage.chart.emptyTokens': string;
+  'usage.chart.estimatedValue': string;
+  'usage.chart.ariaLabel': string;
+  'usage.chart.granularityHourScale': string;
+  'usage.chart.granularityDayScale': string;
+  'usage.chart.perHour': string;
+  'usage.chart.perDay': string;
+  'usage.chart.periodCount': string;
+  'usage.chart.peak': string;
+  'usage.chart.rangeTotal': string;
+  'usage.chart.colAriaCost': string;
+  'usage.chart.colAriaTokens': string;
+  'usage.chart.colAriaEventsSuffix': string;
+  'usage.chart.requestSeries': string;
+  'usage.chart.eventCount': string;
+
+  'usage.card.ariaQuota': string;
+  'usage.card.noQuotaData': string;
+  'usage.window.ariaRemaining': string;
+  'usage.window.resetSuffix': string;
+
+  'usage.notice.deepseekUserTokenRequired': string;
+  'usage.notice.xiaomiDailyUnavailable': string;
+
+
+  // -------------------------------------------------------------------
   // ProviderAuthList — capability + error labels
   // -------------------------------------------------------------------
   'providerAuth.capability.official': string;     // 官方 Quota

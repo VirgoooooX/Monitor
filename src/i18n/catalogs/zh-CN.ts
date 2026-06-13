@@ -515,6 +515,35 @@ export const zhCN: TranslationCatalog = {
   'usage.account.typeAuth': 'auth 认证',
   'usage.account.typeApiKey': '手动 API Key',
 
+  // ── UsageBarChart / UsagePanel i18n fixes ─────────────────────
+  'usage.chart.metricCost': 'API 金额',
+  'usage.chart.metricTokens': 'Token 消耗',
+  'usage.chart.emptyCost': '尚无 API 金额数据',
+  'usage.chart.emptyTokens': '尚无 Token 用量数据',
+  'usage.chart.estimatedValue': '估算 {value}',
+  'usage.chart.ariaLabel': '{metricName} · {scale} · 峰值 {peak}',
+  'usage.chart.granularityHourScale': '小时级',
+  'usage.chart.granularityDayScale': '天级',
+  'usage.chart.perHour': 'PER HOUR',
+  'usage.chart.perDay': 'PER DAY',
+  'usage.chart.periodCount': '{columnCount} 个时段',
+  'usage.chart.peak': '峰值',
+  'usage.chart.rangeTotal': '区间合计',
+  'usage.chart.colAriaCost': '{time}：{value}',
+  'usage.chart.colAriaTokens': '{time}：{value} tokens',
+  'usage.chart.colAriaEventsSuffix': '，{count} 次请求',
+  'usage.chart.requestSeries': '请求次数',
+  'usage.chart.eventCount': '{count} 次',
+
+  'usage.card.ariaQuota': '{provider} {identity} 配额',
+  'usage.card.noQuotaData': '暂无额度数据',
+  'usage.window.ariaRemaining': '{name} 剩余 {remaining}',
+  'usage.window.resetSuffix': ' · {time} 重置',
+
+  'usage.notice.deepseekUserTokenRequired': 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
+  'usage.notice.xiaomiDailyUnavailable': 'Xiaomi MiMo 未返回 API 用量明细，余额仍可正常显示',
+
+
   // ── ProviderAuthList — capability + error labels ──────────────
   // Source: CAPABILITY_LABELS / PROVIDER_AUTH_ERROR_LABELS in
   // src/renderer/components/ProviderAuthList.tsx.

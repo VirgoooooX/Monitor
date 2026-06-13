@@ -578,6 +578,37 @@ export const enUS: TranslationCatalog = {
   'usage.account.typeApiKey': 'Manual API key',
 
   // --------------------------------------------------------------------
+  // UsageBarChart / UsagePanel i18n fixes
+  // --------------------------------------------------------------------
+  'usage.chart.metricCost': 'API Cost',
+  'usage.chart.metricTokens': 'Token Consumption',
+  'usage.chart.emptyCost': 'No API cost data available',
+  'usage.chart.emptyTokens': 'No token usage data available',
+  'usage.chart.estimatedValue': 'Est. {value}',
+  'usage.chart.ariaLabel': '{metricName} · {scale} · Peak {peak}',
+  'usage.chart.granularityHourScale': 'Hourly',
+  'usage.chart.granularityDayScale': 'Daily',
+  'usage.chart.perHour': 'PER HOUR',
+  'usage.chart.perDay': 'PER DAY',
+  'usage.chart.periodCount': '{columnCount} periods',
+  'usage.chart.peak': 'Peak',
+  'usage.chart.rangeTotal': 'Range Total',
+  'usage.chart.colAriaCost': '{time}: {value}',
+  'usage.chart.colAriaTokens': '{time}: {value} tokens',
+  'usage.chart.colAriaEventsSuffix': ', {count} requests',
+  'usage.chart.requestSeries': 'Requests',
+  'usage.chart.eventCount': '{count} requests',
+
+  'usage.card.ariaQuota': '{provider} {identity} Quota',
+  'usage.card.noQuotaData': 'No quota data available',
+  'usage.window.ariaRemaining': '{name}: {remaining} remaining',
+  'usage.window.resetSuffix': ' · resets at {time}',
+
+  'usage.notice.deepseekUserTokenRequired': 'DeepSeek API key can only fetch balance; daily usage details require configuring userToken',
+  'usage.notice.xiaomiDailyUnavailable': 'Xiaomi MiMo did not return daily API usage details; balance is still displayed correctly',
+
+
+  // --------------------------------------------------------------------
   // ProviderAuthList — capability and error labels
   // --------------------------------------------------------------------
   'providerAuth.capability.official': 'Official quota',
