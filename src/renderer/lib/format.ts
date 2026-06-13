@@ -71,6 +71,7 @@ export function formatLatency(latencyMs: number | null): string {
 
 import type { Translator, TranslationKey } from '../../i18n';
 import type { ManagementErrorCode } from './types';
+import { currencySymbol } from './quota-display';
 
 /**
  * Closed-set Translation_Key map for every management /
@@ -117,4 +118,23 @@ export function formatManagementError(
   code: ManagementErrorCode | 'switch_in_progress',
 ): string {
   return t(MANAGEMENT_ERROR_KEYS[code]);
+}
+
+// ---------------------------------------------------------------------------
+// Currency formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a monetary value with optional currency symbol and code.
+ * Used by both the main UsageBarChart tooltip and the API usage chart.
+ *
+ * @example `formatCurrencyAmount(12.34, 'CNY')` → `"¥12.34 CNY"`
+ * @example `formatCurrencyAmount(5.00, null)`  → `"5.00"`
+ */
+export function formatCurrencyAmount(value: number, currency: string | null): string {
+  const code = currency ?? '';
+  const symbol = code.length > 0 ? currencySymbol(code) : '';
+  const amount = value.toFixed(2);
+  if (symbol.length > 0) return `${symbol}${amount}${code.length > 0 ? ` ${code}` : ''}`;
+  return code.length > 0 ? `${amount} ${code}` : amount;
 }

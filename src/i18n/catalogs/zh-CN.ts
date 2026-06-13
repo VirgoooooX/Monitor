@@ -508,6 +508,8 @@ export const zhCN: TranslationCatalog = {
   'usage.panel.title': 'Token 消耗',
   'usage.panel.rangeAria': '时间范围',
   'usage.panel.loading': '加载中…',
+  'usage.chart.localToken': '本地 Token 用量',
+  'usage.chart.apiUsage': 'API 用量明细',
   'usage.overview.title': '配额状态',
   'usage.overview.accountSuffix': '{count} 个账号',
   'usage.account.typeAuth': 'auth 认证',

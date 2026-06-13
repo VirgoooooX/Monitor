@@ -23,7 +23,7 @@ import { UsageSparkline } from './QuotaStrip';
 import { ProviderIcon } from './ProviderIcon';
 import { PROVIDER_LABELS, providerIconKey, maskedEmailLabel } from './ProviderAuthList';
 import { UsageBarChart } from './UsageBarChart';
-import { formatTokens } from '../lib/format';
+import { formatTokens, formatCurrencyAmount } from '../lib/format';
 import { useT } from '../lib/i18n';
 import type { Translator, TranslationKey } from '../../i18n';
 import type {
@@ -244,25 +244,41 @@ function providerPriority(provider: string): number {
   }
 }
 
-function hasApiUsageData(apiUsage: ApiUsageSummary | undefined): boolean {
-  if (apiUsage === undefined) return false;
-  return (
-    apiUsage.tokenBuckets.some((bucket) =>
-      bucket.perProvider.some((row) => row.totalTokens > 0),
-    ) ||
-    apiUsage.costBuckets.some((bucket) =>
-      bucket.perProvider.some((row) => (row.cost ?? 0) > 0),
-    ) ||
-    apiUsage.notices.length > 0
-  );
-}
-
-function formatCurrencyAmount(value: number, currency: string | null): string {
-  const code = currency ?? '';
-  const symbol = code.length > 0 ? currencySymbol(code) : '';
-  const amount = value.toFixed(2);
-  if (symbol.length > 0) return `${symbol}${amount}${code.length > 0 ? ` ${code}` : ''}`;
-  return code.length > 0 ? `${amount} ${code}` : amount;
+/**
+ * Convert API usage buckets (ApiUsageBucket[]) to the same
+ * UsageTimeseriesBucket[] shape consumed by UsageBarChart.
+ * API data has totalTokens → maps to inputTokens.
+ * API data has cost + currency → maps to costUsd + currency.
+ * outputTokens / cacheTokens / eventCount are always zero.
+ */
+function apiBucketsToTimeseries(
+  apiBuckets: ApiUsageBucket[],
+): Array<{
+  key: string;
+  startTs: number;
+  perProvider: Array<{
+    provider: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheTokens: number;
+    costUsd: number | null;
+    eventCount: number;
+    currency?: string | null;
+  }>;
+}> {
+  return apiBuckets.map((b) => ({
+    key: b.key,
+    startTs: b.startTs,
+    perProvider: b.perProvider.map((row) => ({
+      provider: row.provider,
+      inputTokens: row.totalTokens,
+      outputTokens: 0,
+      cacheTokens: 0,
+      costUsd: row.cost,
+      eventCount: 0,
+      currency: row.currency,
+    })),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -437,29 +453,46 @@ export function UsagePanel(): JSX.Element {
         </div>
       </div>
 
-      {/* Stacked bar chart — primary visualisation. We render the
-          chart frame even when there is no data so the page height
-          stays stable across data ticks (no layout shift when the
-          first event arrives) and the user knows where future data
-          will appear. */}
-      {usageData && (
-        <UsageBarChart
-          buckets={usageData.buckets ?? []}
-          granularity={usageData.bucketGranularity ?? (range === 'today' ? 'hour' : 'day')}
-          providerLabel={(p) =>
-            (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
-          }
-        />
+      {/* ── Local token chart ── */}
+      <h3 className="usage-panel-v2__chart-title">{t('usage.chart.localToken')}</h3>
+      <UsageBarChart
+        buckets={usageData?.buckets ?? []}
+        granularity={usageData?.bucketGranularity ?? (range === 'today' ? 'hour' : 'day')}
+        providerLabel={(p) =>
+          (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
+        }
+      />
+
+      {/* ── API usage chart (mirrors local token chart) ── */}
+      {usageData?.apiUsage && (
+        <>
+          <h3 className="usage-panel-v2__chart-title">{t('usage.chart.apiUsage')}</h3>
+          <UsageBarChart
+            buckets={apiBucketsToTimeseries(usageData.apiUsage.tokenBuckets)}
+            granularity="day"
+            providerLabel={(p) =>
+              (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
+            }
+          />
+        </>
       )}
 
-      {usageData && hasApiUsageData(usageData.apiUsage) && (
-        <ApiUsageDetail
-          apiUsage={usageData.apiUsage!}
-          range={range}
-          providerLabel={(p) =>
-            (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
-          }
-        />
+      {/* ── API usage notices ── */}
+      {usageData?.apiUsage && usageData.apiUsage.notices.length > 0 && (
+        <div className="api-usage-notices" role="status">
+          {usageData.apiUsage.notices.map((notice) => (
+            <p
+              key={`${notice.provider}-${notice.code}`}
+              className="api-usage-notice"
+            >
+              <strong>
+                {PROVIDER_LABELS[notice.provider as ProviderId]
+                  ?? providerDisplayName(notice.provider)}
+              </strong>
+              <span>{notice.message}</span>
+            </p>
+          ))}
+        </div>
       )}
 
       {/* Loading state */}
@@ -470,224 +503,6 @@ export function UsagePanel(): JSX.Element {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Remote API usage detail
-// ---------------------------------------------------------------------------
-
-function ApiUsageDetail({
-  apiUsage,
-  range,
-  providerLabel,
-}: {
-  apiUsage: ApiUsageSummary;
-  range: UsageRange;
-  providerLabel: (provider: string) => string;
-}): JSX.Element {
-  const tokenBuckets = apiUsage.tokenBuckets;
-  const costBuckets = apiUsage.costBuckets;
-  const hasTokenUsage = tokenBuckets.some((bucket) =>
-    bucket.perProvider.some((row) => row.totalTokens > 0),
-  );
-  const hasCostUsage = costBuckets.some((bucket) =>
-    bucket.perProvider.some((row) => (row.cost ?? 0) > 0),
-  );
-
-  return (
-    <section className="api-usage-detail" aria-label="API 用量明细">
-      <header className="api-usage-detail__header">
-        <div>
-          <h3 className="api-usage-detail__title">API 用量明细</h3>
-          <p className="api-usage-detail__subtitle">
-            DeepSeek / Xiaomi 直接 API 调用按日汇总
-          </p>
-        </div>
-        <span className="api-usage-detail__badge">
-          {range === 'today' ? '今日合计' : '按天'}
-        </span>
-      </header>
-
-      <div className="api-usage-detail__grid">
-        {hasTokenUsage && (
-          <ApiUsageMetricChart
-            title="Token"
-            buckets={tokenBuckets}
-            metric="tokens"
-            range={range}
-            providerLabel={providerLabel}
-          />
-        )}
-        {hasCostUsage && (
-          <ApiUsageMetricChart
-            title="消费金额"
-            buckets={costBuckets}
-            metric="cost"
-            range={range}
-            providerLabel={providerLabel}
-          />
-        )}
-      </div>
-
-      {apiUsage.notices.length > 0 && (
-        <div className="api-usage-detail__notices" role="status">
-          {apiUsage.notices.map((notice) => (
-            <p
-              key={`${notice.provider}-${notice.code}-${notice.message}`}
-              className="api-usage-detail__notice"
-            >
-              <strong>{providerLabel(notice.provider)}</strong>
-              <span>{notice.message}</span>
-            </p>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ApiUsageMetricChart({
-  title,
-  buckets,
-  metric,
-  range,
-  providerLabel,
-}: {
-  title: string;
-  buckets: ApiUsageBucket[];
-  metric: 'tokens' | 'cost';
-  range: UsageRange;
-  providerLabel: (provider: string) => string;
-}): JSX.Element {
-  const layout = useMemo(() => {
-    const providerTotals = new Map<string, number>();
-    const columns = buckets.map((bucket) => {
-      const rows = bucket.perProvider
-        .map((row) => {
-          const value = metric === 'tokens' ? row.totalTokens : (row.cost ?? 0);
-          if (value <= 0) return null;
-          providerTotals.set(row.provider, (providerTotals.get(row.provider) ?? 0) + value);
-          return {
-            provider: row.provider,
-            value,
-            currency: row.currency,
-          };
-        })
-        .filter((row): row is { provider: string; value: number; currency: string | null } => row !== null);
-      const total = rows.reduce((sum, row) => sum + row.value, 0);
-      const currency = rows.find((row) => row.currency !== null)?.currency ?? null;
-      return {
-        key: bucket.key,
-        total,
-        currency,
-        rows,
-      };
-    });
-
-    const maxTotal = Math.max(0, ...columns.map((column) => column.total));
-    const providers = Array.from(providerTotals.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([provider]) => provider);
-
-    return { columns, maxTotal, providers };
-  }, [buckets, metric]);
-
-  const total = layout.columns.reduce((sum, column) => sum + column.total, 0);
-  const displayTotal =
-    metric === 'tokens'
-      ? `${formatTokens(total)} tok`
-      : formatCurrencyAmount(total, firstCurrency(layout.columns));
-
-  return (
-    <article className="api-usage-metric" data-metric={metric}>
-      <header className="api-usage-metric__header">
-        <div>
-          <h4 className="api-usage-metric__title">{title}</h4>
-          <span className="api-usage-metric__meta">
-            {range === 'today' ? '今日合计' : `${layout.columns.length} 天`}
-          </span>
-        </div>
-        <span className="api-usage-metric__total">{displayTotal}</span>
-      </header>
-
-      <div
-        className="api-usage-metric__bars"
-        role="list"
-        aria-label={`${title} API 用量`}
-      >
-        {layout.columns.map((column) => {
-          const heightPct =
-            layout.maxTotal > 0 ? Math.max((column.total / layout.maxTotal) * 100, 2) : 0;
-          const valueLabel =
-            metric === 'tokens'
-              ? `${formatTokens(column.total)} tok`
-              : formatCurrencyAmount(column.total, column.currency);
-          const titleText = `${formatApiBucketLabel(column.key, range)} · ${valueLabel}`;
-          return (
-            <div
-              key={column.key}
-              className="api-usage-metric__bar-col"
-              role="listitem"
-              title={titleText}
-              aria-label={titleText}
-            >
-              <span className="api-usage-metric__bar-track" aria-hidden>
-                <span
-                  className="api-usage-metric__bar"
-                  style={{ height: `${heightPct}%` }}
-                >
-                  {column.rows.map((row) => {
-                    const rowPct = column.total > 0 ? (row.value / column.total) * 100 : 0;
-                    return (
-                      <span
-                        key={row.provider}
-                        className="api-usage-metric__bar-seg"
-                        data-provider={providerTone(row.provider)}
-                        style={{ flexBasis: `${rowPct}%` }}
-                      />
-                    );
-                  })}
-                </span>
-              </span>
-              <span className="api-usage-metric__x">
-                {formatApiBucketTick(column.key, range)}
-              </span>
-              <span className="api-usage-metric__value">{valueLabel}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="api-usage-metric__legend" aria-hidden>
-        {layout.providers.map((provider) => (
-          <span key={provider} className="api-usage-metric__legend-item">
-            <span
-              className="api-usage-metric__legend-swatch"
-              data-provider={providerTone(provider)}
-            />
-            <span>{providerLabel(provider)}</span>
-          </span>
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function firstCurrency(
-  columns: ReadonlyArray<{ readonly currency: string | null }>,
-): string | null {
-  return columns.find((column) => column.currency !== null)?.currency ?? null;
-}
-
-function formatApiBucketLabel(key: string, range: UsageRange): string {
-  if (range === 'today') return '今日合计';
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
-  return m ? `${m[1]}/${m[2]}/${m[3]}` : key;
-}
-
-function formatApiBucketTick(key: string, range: UsageRange): string {
-  if (range === 'today') return '今';
-  const m = /-(\d{2})-(\d{2})$/.exec(key);
-  return m ? m[2]! : key;
-}
 
 // ---------------------------------------------------------------------------
 // Quota Overview

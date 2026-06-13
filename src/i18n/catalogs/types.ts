@@ -526,6 +526,8 @@ export interface TranslationCatalog {
   'usage.panel.title': string;                // Token 消耗
   'usage.panel.rangeAria': string;            // 时间范围
   'usage.panel.loading': string;              // 加载中…
+  'usage.chart.localToken': string;           // 本地 Token 用量
+  'usage.chart.apiUsage': string;             // API 用量明细
   'usage.overview.title': string;             // 配额状态
   'usage.overview.accountSuffix': string;     // {count} 个账号
   'usage.account.typeAuth': string;           // auth 认证

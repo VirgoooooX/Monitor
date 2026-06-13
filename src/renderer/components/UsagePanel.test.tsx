@@ -162,12 +162,8 @@ describe('UsagePanel quota overview', () => {
     render(<UsagePanel />);
 
     expect(await screen.findByText('API 用量明细')).toBeTruthy();
-    expect(screen.getByText('Token')).toBeTruthy();
-    expect(screen.getByText('消费金额')).toBeTruthy();
+    expect(screen.getByText('本地 Token 用量')).toBeTruthy();
     expect(screen.getByText('小米 Mimo')).toBeTruthy();
-    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('2.4k tok').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('¥0.42 CNY').length).toBeGreaterThan(0);
     expect(screen.getByText('API key 只能取余额，用量明细需配置 userToken')).toBeTruthy();
   });
 });

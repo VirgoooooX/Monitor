@@ -869,6 +869,9 @@ export interface UsageTimeseriesBucket {
     readonly cacheTokens: number;
     readonly costUsd: number | null;
     readonly eventCount: number;
+    /** Non-USD currency code (e.g. "CNY") when the cost originates
+     *  from API daily usage snapshots rather than local events. */
+    readonly currency?: string | null;
   }>;
 }
 

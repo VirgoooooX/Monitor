@@ -30,7 +30,7 @@ import { useMemo, useId, useState, useEffect } from 'react';
 import type { CSSProperties } from 'react';
 import type { UsageTimeseriesBucket } from '../lib/types';
 import type { TranslationKey } from '../../i18n';
-import { formatTokens } from '../lib/format';
+import { formatTokens, formatCurrencyAmount } from '../lib/format';
 import { useT } from '../lib/i18n';
 
 // ---------------------------------------------------------------------------
@@ -222,6 +222,7 @@ export function UsageBarChart({
       }> = [];
       let total = 0;
       let totalCost = 0;
+      let totalCurrency: string | null = null;
       let totalEvents = 0;
       // Per-kind totals across the whole hovered column. Used by the
       // detail panel below so users can read a clean
@@ -253,7 +254,10 @@ export function UsageBarChart({
           kinds,
         });
         total += tokens;
-        if (row.costUsd !== null) totalCost += row.costUsd;
+        if (row.costUsd !== null) {
+          totalCost += row.costUsd;
+          if (row.currency && !totalCurrency) totalCurrency = row.currency;
+        }
         totalEvents += row.eventCount;
       }
       if (total > maxTotal) {
@@ -269,6 +273,7 @@ export function UsageBarChart({
         total,
         kindTotals,
         totalCost,
+        totalCurrency,
         totalEvents,
         stack,
       };
@@ -903,7 +908,7 @@ export function UsageBarChart({
                 <>
                   <span className="usage-chart__detail-sep" aria-hidden>·</span>
                   <span className="usage-chart__detail-value">
-                    ${hovered.totalCost.toFixed(2)}
+                    {formatCurrencyAmount(hovered.totalCost, hovered.totalCurrency ?? null)}
                   </span>
                 </>
               )}

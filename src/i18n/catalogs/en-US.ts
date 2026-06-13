@@ -570,6 +570,8 @@ export const enUS: TranslationCatalog = {
   'usage.panel.title': 'Token consumption',
   'usage.panel.rangeAria': 'Time range',
   'usage.panel.loading': 'Loading…',
+  'usage.chart.localToken': 'Local Token Usage',
+  'usage.chart.apiUsage': 'API Usage Detail',
   'usage.overview.title': 'Quota status',
   'usage.overview.accountSuffix': '{count} accounts',
   'usage.account.typeAuth': 'Auth file',
