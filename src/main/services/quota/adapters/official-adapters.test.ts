@@ -685,6 +685,109 @@ describe('official quota adapters — DeepSeek', () => {
     ]);
   });
 
+  it('merges DeepSeek console usage amount token counts with cost data', async () => {
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      if (input.url.includes('/api/v0/users/get_user_summary')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: {
+              normal_wallets: [
+                { balance: 4.25, currency: 'CNY' },
+              ],
+              bonus_wallets: [],
+            },
+          },
+        } as T;
+      }
+      if (input.url.includes('/api/v0/usage/cost')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: [
+              {
+                currency: 'CNY',
+                days: [
+                  {
+                    date: '2026-06-08',
+                    data: [
+                      {
+                        model: 'deepseek-v4-pro',
+                        usage: [
+                          { type: 'PROMPT_CACHE_HIT_TOKEN', amount: '0.01' },
+                          { type: 'PROMPT_CACHE_MISS_TOKEN', amount: '0.12' },
+                          { type: 'RESPONSE_TOKEN', amount: '0.34' },
+                          { type: 'REQUEST', amount: '0.05' },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        } as T;
+      }
+      if (input.url.includes('/api/v0/usage/amount')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: {
+              total: [
+                {
+                  model: 'deepseek-v4-pro',
+                  usage: [
+                    { type: 'REQUEST', amount: '26' },
+                    { type: 'PROMPT_CACHE_HIT_TOKEN', amount: '1536' },
+                    { type: 'PROMPT_CACHE_MISS_TOKEN', amount: '3759' },
+                    { type: 'RESPONSE_TOKEN', amount: '13653' },
+                  ],
+                },
+              ],
+              days: [
+                {
+                  date: '2026-06-08',
+                  data: [
+                    {
+                      model: 'deepseek-v4-pro',
+                      usage: [
+                        { type: 'REQUEST', amount: '26' },
+                        { type: 'PROMPT_CACHE_HIT_TOKEN', amount: '1536' },
+                        { type: 'PROMPT_CACHE_MISS_TOKEN', amount: '3759' },
+                        { type: 'RESPONSE_TOKEN', amount: '13653' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        } as T;
+      }
+      throw new Error(`unexpected url: ${input.url}`);
+    };
+    const adapter = createDeepSeekAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('deepseek'),
+      getSecret: () => ({
+        apiKey: 'sk-deepseek',
+        deepseekUserToken: 'eyJhbGc-fake-token',
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.dailyUsage).toEqual([
+      {
+        date: '2026-06-08',
+        cost: '0.52',
+        totalTokens: 18948,
+        inputTokens: 5295,
+        outputTokens: 13653,
+      },
+    ]);
+  });
+
   it('falls back to the public balance path when the console call fails', async () => {
     const calls: RequestJsonInput[] = [];
     const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {

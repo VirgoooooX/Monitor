@@ -21,6 +21,9 @@
 //             wallets, monthly usage, etc.)
 //        - `GET /api/v0/usage/cost?year=YYYY&month=M`
 //          → per-day spend, used to feed the sparkline.
+//        - `GET /api/v0/usage/amount?year=YYYY&month=M`
+//          → per-day model/token counts, used as the API chart
+//             value when available.
 //
 // The adapter prefers (B) when `secret.deepseekUserToken` is
 // present so the renderer surfaces strictly more data; on any
@@ -52,6 +55,8 @@ const CONSOLE_USER_SUMMARY_URL =
   'https://platform.deepseek.com/api/v0/users/get_user_summary';
 const CONSOLE_USAGE_COST_URL =
   'https://platform.deepseek.com/api/v0/usage/cost';
+const CONSOLE_USAGE_AMOUNT_URL =
+  'https://platform.deepseek.com/api/v0/usage/amount';
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -253,7 +258,7 @@ async function tryConsolePath(
 
   // Daily-usage call is best-effort — if it fails we still return
   // the balance windows from the summary call.
-  let dailyUsage: ReadonlyArray<DailyUsagePoint> | null = null;
+  let costUsage: ReadonlyArray<DailyUsagePoint> | null = null;
   try {
     const d = new Date(now);
     const usage = await doRequest<unknown>({
@@ -267,15 +272,37 @@ async function tryConsolePath(
         Authorization: `Bearer ${userToken}`,
       },
     });
-    dailyUsage = parseConsoleUsageCost(usage);
+    costUsage = parseConsoleUsageCost(usage);
   } catch {
-    // Ignore — daily usage stays null.
+    // Ignore — cost usage stays null.
+  }
+
+  // Token counts are served by a separate console endpoint. This is
+  // also best-effort: token detail drives the usage chart, while
+  // cost remains monetary spend detail.
+  let amountUsage: ReadonlyArray<DailyUsagePoint> | null = null;
+  try {
+    const d = new Date(now);
+    const usage = await doRequest<unknown>({
+      url:
+        CONSOLE_USAGE_AMOUNT_URL +
+        `?year=${d.getUTCFullYear()}&month=${d.getUTCMonth() + 1}`,
+      method: 'GET',
+      ...(signal !== undefined ? { signal } : {}),
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${userToken}`,
+      },
+    });
+    amountUsage = parseConsoleUsageAmount(usage);
+  } catch {
+    // Ignore — token usage stays null.
   }
 
   return {
     windows: parsed.windows,
     rawPlanLabel: parsed.rawPlanLabel,
-    dailyUsage,
+    dailyUsage: mergeConsoleDailyUsage(costUsage, amountUsage),
   };
 }
 
@@ -408,17 +435,7 @@ function parseConsoleSummary(response: unknown): ConsoleSummaryParseResult {
 function parseConsoleUsageCost(
   response: unknown,
 ): ReadonlyArray<DailyUsagePoint> {
-  const root = asRecord(response);
-  if (root === null) return [];
-  const dataField = root['data'];
-  let series: readonly unknown[];
-  if (Array.isArray(dataField)) {
-    series = dataField;
-  } else {
-    const dataRecord = asRecord(dataField);
-    const biz = dataRecord === null ? null : dataRecord['biz_data'];
-    series = Array.isArray(biz) ? biz : [];
-  }
+  const series = consoleUsageSeries(response);
   if (series.length === 0) return [];
 
   // date -> aggregated cost (numeric) and tokens
@@ -443,6 +460,7 @@ function parseConsoleUsageCost(
       // NOTE: In this format, `amount` is **monetary cost** (e.g. CNY),
       // NOT a token count. The API no longer returns raw token counts —
       // only spend amounts per type (PROMPT_TOKEN, RESPONSE_TOKEN, etc.).
+      // Raw token counts are fetched separately from `usage/amount`.
       // We accumulate into `dayCost`; `dayTokens` stays 0.
       const dataArr = Array.isArray(d['data']) ? d['data'] : null;
       if (dataArr !== null) {
@@ -454,9 +472,9 @@ function parseConsoleUsageCost(
             const usageEntry = asRecord(u);
             if (usageEntry === null) continue;
             const amount = numericValue(usageEntry['amount']) ?? 0;
-            // All entries (TOKEN and REQUEST types) carry a spend
-            // amount. Sum everything — the chart will render it on
-            // the cost axis.
+            // All entries (TOKEN and REQUEST types) carry spend.
+            // Sum everything as monetary detail; token chart data
+            // comes from `usage/amount`.
             dayCost += amount;
           }
         }
@@ -496,6 +514,156 @@ function parseConsoleUsageCost(
       cost: formatBalance(agg.cost),
       totalTokens: agg.tokens,
     }));
+}
+
+/**
+ * Aggregate the `usage/amount` envelope into date-keyed token counts.
+ * The current platform page uses this endpoint for the per-model
+ * token chart. Its structure mirrors `usage/cost`, but `amount` is a
+ * raw count:
+ *
+ *   { data: { biz_data: {
+ *       total: [{model, usage: [{type, amount}]}],
+ *       days: [{ date, data: [{model, usage: [{type, amount}]}] }]
+ *   } } }
+ *
+ * Relevant token types observed in the frontend bundle:
+ *   - PROMPT_CACHE_HIT_TOKEN
+ *   - PROMPT_CACHE_MISS_TOKEN
+ *   - RESPONSE_TOKEN
+ *   - REQUEST (count, excluded from token totals)
+ */
+function parseConsoleUsageAmount(
+  response: unknown,
+): ReadonlyArray<DailyUsagePoint> {
+  const series = consoleUsageSeries(response);
+  if (series.length === 0) return [];
+
+  const byDate = new Map<string, {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  }>();
+
+  for (const entry of series) {
+    const r = asRecord(entry);
+    if (r === null) continue;
+    const days = Array.isArray(r['days']) ? r['days'] : [];
+    for (const dayEntry of days) {
+      const d = asRecord(dayEntry);
+      if (d === null) continue;
+      const dateStr = stringValue(d['day']) ?? stringValue(d['date']);
+      if (dateStr === null) continue;
+      const isoOnly = dateStr.length >= 10 ? dateStr.slice(0, 10) : dateStr;
+
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let totalTokens = 0;
+
+      const dataArr = Array.isArray(d['data']) ? d['data'] : null;
+      if (dataArr !== null) {
+        for (const modelEntry of dataArr) {
+          const m = asRecord(modelEntry);
+          if (m === null) continue;
+          const usageArr = Array.isArray(m['usage']) ? m['usage'] : [];
+          for (const u of usageArr) {
+            const usageEntry = asRecord(u);
+            if (usageEntry === null) continue;
+            const amount = numericValue(usageEntry['amount']) ?? 0;
+            if (amount <= 0) continue;
+            const type = stringValue(usageEntry['type']) ?? '';
+            if (type === 'REQUEST') continue;
+            if (type === 'RESPONSE_TOKEN') {
+              outputTokens += amount;
+            } else if (
+              type === 'PROMPT_CACHE_HIT_TOKEN' ||
+              type === 'PROMPT_CACHE_MISS_TOKEN' ||
+              type === 'PROMPT_TOKEN'
+            ) {
+              inputTokens += amount;
+            } else if (type.endsWith('_TOKEN')) {
+              totalTokens += amount;
+            }
+          }
+        }
+      } else {
+        const flatTokens =
+          numericValue(d['tokens']) ??
+          numericValue(d['totalToken']) ??
+          numericValue(d['totalTokens']) ??
+          numericValue(d['total_token']) ??
+          numericValue(d['total_tokens']) ??
+          0;
+        totalTokens += flatTokens;
+      }
+
+      totalTokens += inputTokens + outputTokens;
+      if (totalTokens === 0) continue;
+
+      const agg = byDate.get(isoOnly) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      };
+      agg.inputTokens += inputTokens;
+      agg.outputTokens += outputTokens;
+      agg.totalTokens += totalTokens;
+      byDate.set(isoOnly, agg);
+    }
+  }
+
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, agg]) => ({
+      date,
+      cost: '0',
+      totalTokens: Math.round(agg.totalTokens),
+      inputTokens: Math.round(agg.inputTokens),
+      outputTokens: Math.round(agg.outputTokens),
+    }));
+}
+
+function mergeConsoleDailyUsage(
+  costUsage: ReadonlyArray<DailyUsagePoint> | null,
+  amountUsage: ReadonlyArray<DailyUsagePoint> | null,
+): ReadonlyArray<DailyUsagePoint> | null {
+  if (costUsage === null && amountUsage === null) return null;
+
+  const byDate = new Map<string, DailyUsagePoint>();
+  for (const point of costUsage ?? []) {
+    byDate.set(point.date, point);
+  }
+  for (const point of amountUsage ?? []) {
+    const current = byDate.get(point.date);
+    byDate.set(point.date, {
+      date: point.date,
+      cost: current?.cost ?? '0',
+      totalTokens: point.totalTokens,
+      ...(point.inputTokens !== undefined ? { inputTokens: point.inputTokens } : {}),
+      ...(point.outputTokens !== undefined ? { outputTokens: point.outputTokens } : {}),
+    });
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function consoleUsageSeries(response: unknown): readonly unknown[] {
+  const root = asRecord(response);
+  if (root === null) return [];
+  const dataField = root['data'];
+  if (Array.isArray(dataField)) {
+    return dataField;
+  }
+
+  const dataRecord = asRecord(dataField);
+  const biz = dataRecord === null ? null : dataRecord['biz_data'];
+  if (Array.isArray(biz)) {
+    return biz;
+  }
+  if (asRecord(biz) !== null) {
+    return [biz];
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------

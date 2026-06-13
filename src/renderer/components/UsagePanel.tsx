@@ -471,9 +471,9 @@ export function UsagePanel(): JSX.Element {
         <>
           <h3 className="usage-panel-v2__chart-title">{t('usage.chart.apiUsage')}</h3>
           <UsageBarChart
-            buckets={apiBucketsToTimeseries(usageData.apiUsage.costBuckets)}
+            buckets={apiBucketsToTimeseries(usageData.apiUsage.tokenBuckets)}
             granularity="day"
-            valueMode="cost"
+            valueMode="tokens"
             providerLabel={(p) =>
               (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
             }

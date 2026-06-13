@@ -134,20 +134,7 @@ describe('UsagePanel quota overview', () => {
               ],
             },
           ],
-          costBuckets: [
-            {
-              key: '2026-06-13',
-              startTs: new Date('2026-06-13T00:00:00+08:00').getTime(),
-              perProvider: [
-                {
-                  provider: 'xiaomi',
-                  totalTokens: 2400,
-                  cost: 0.12,
-                  currency: 'CNY',
-                },
-              ],
-            },
-          ],
+          costBuckets: [],
           notices: [
             {
               provider: 'deepseek',

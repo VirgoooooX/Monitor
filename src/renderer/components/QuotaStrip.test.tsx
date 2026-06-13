@@ -186,7 +186,7 @@ describe('UsageSparkline', () => {
     expect(screen.getByText('2026-06-13 · 2.4k tok')).toBeTruthy();
   });
 
-  it('falls back to cost when token usage is unavailable', () => {
+  it('does not render cost-only daily usage as token bars', () => {
     render(
       <UsageSparkline
         dailyUsage={[
@@ -197,7 +197,7 @@ describe('UsageSparkline', () => {
       />,
     );
 
-    expect(document.querySelector('.quota-strip__sparkline')?.getAttribute('data-has-data')).toBe('true');
-    expect(screen.getByText('2026-06-12 · ¥0.18 CNY')).toBeTruthy();
+    expect(document.querySelector('.quota-strip__sparkline')?.getAttribute('data-has-data')).toBe('false');
+    expect(screen.getByText('2026-06-12 · 0 tok')).toBeTruthy();
   });
 });

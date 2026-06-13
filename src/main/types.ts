@@ -348,9 +348,9 @@ export interface QuotaSnapshot {
   /**
    * Optional daily-usage history surfaced by per-account adapters
    * that have access to it. Each entry is one day of aggregate spend
-   * / consumption; `cost` is the canonical API-usage chart value,
-   * while `totalTokens` is retained as auxiliary detail when an
-   * upstream exposes it.
+   * / consumption; `totalTokens` is the canonical API-usage chart
+   * value when an upstream exposes it, while `cost` is retained as
+   * monetary spend detail.
    *
    * `null` / undefined means the adapter did not collect this data
    * (most adapters don't); an empty array means it tried but the
@@ -369,7 +369,7 @@ export interface QuotaSnapshot {
 export interface DailyUsagePoint {
   /** ISO date string `YYYY-MM-DD`. */
   readonly date: string;
-  /** Canonical API-usage cost for that day, decimal string preserving precision. */
+  /** Monetary API spend for that day, decimal string preserving precision. */
   readonly cost: string;
   /**
    * True when `cost` was estimated from token counts because the
@@ -377,7 +377,7 @@ export interface DailyUsagePoint {
    * visibility fallback, not an authoritative billing figure.
    */
   readonly costEstimated?: boolean;
-  /** Auxiliary token count when the upstream exposes it. */
+  /** Primary API-usage chart value when the upstream exposes it. */
   readonly totalTokens: number;
   /** Auxiliary prompt/input token count when the upstream exposes it. */
   readonly inputTokens?: number;

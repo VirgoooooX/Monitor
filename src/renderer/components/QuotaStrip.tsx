@@ -230,7 +230,7 @@ function isLocalBrowserPreview(): boolean {
 // Fixed display order for the quota strip. Lower number = higher up.
 // Order is intentionally hard-coded — the strip does not auto-sort by
 // urgency. Codex sits at the top so the 5h / weekly windows stay in
-// the user's primary line of sight; cost-style adapters (DeepSeek,
+// the user's primary line of sight; API-credit adapters (DeepSeek,
 // Xiaomi MiMo) sit at the bottom; health-only adapters last.
 function providerPriority(provider: string): number {
   switch (provider) {
@@ -594,10 +594,7 @@ export function UsageSparkline({
   // the adapter response skips days with no usage.
   const filled = fillMissingDays(dailyUsage ?? [], MAX_BARS);
 
-  const usesTokens = filled.some((p) => p.totalTokens > 0);
-  const values = usesTokens
-    ? filled.map((p) => p.totalTokens)
-    : filled.map((p) => Number(p.cost));
+  const values = filled.map((p) => p.totalTokens);
   const max = values.reduce((m, v) => (v > m ? v : m), 0);
   const barWidth = (VIEW_W - GAP * (MAX_BARS - 1)) / MAX_BARS;
   const hasData = values.some((v) => Number.isFinite(v) && v > 0);
@@ -626,11 +623,11 @@ export function UsageSparkline({
         {filled.map((point, idx) => {
           const value = Number.isFinite(values[idx]) ? values[idx]! : 0;
           const x = idx * (barWidth + GAP);
-          const tip = usesTokens
-            ? `${point.date} · ${formatTokens(point.totalTokens)} tok`
-            : `${point.date} · ${symbol}${point.cost}${
-                currencyCode ? ` ${currencyCode}` : ''
-              }`;
+          const cost = Number(point.cost);
+          const costSuffix = Number.isFinite(cost) && cost > 0
+            ? ` · ${symbol}${point.cost}${currencyCode ? ` ${currencyCode}` : ''}`
+            : '';
+          const tip = `${point.date} · ${formatTokens(point.totalTokens)} tok${costSuffix}`;
 
           // Recency fade: most recent RECENT_BARS days at 100%,
           // older days drop off linearly toward 35%. Total span
@@ -657,12 +654,10 @@ export function UsageSparkline({
                 y={VIEW_H - 1}
                 width={barWidth}
                 height={1}
-              className="quota-strip__sparkline-zero"
-            >
+                className="quota-strip__sparkline-zero"
+              >
                 <title>
-                  {usesTokens
-                    ? `${point.date} · 0 tok`
-                    : `${point.date} · ${symbol}0`}
+                  {`${point.date} · 0 tok`}
                 </title>
               </rect>
             );
