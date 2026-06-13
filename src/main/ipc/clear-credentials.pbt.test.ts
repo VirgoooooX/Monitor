@@ -9,7 +9,8 @@
 //      `secrets.set('openclash.management.password', password)`.
 //   2. A first `client.readActiveConfigPath()` priming the in-memory
 //      LuCI session cookie. The fake fetch must have seen exactly
-//      one login (`POST /cgi-bin/luci`) and at least one ubus call.
+//      one login (`POST /cgi-bin/luci`) and at least one OpenClash
+//      config read.
 //   3. Performing the orchestration steps the
 //      `clearManagementCredentials` IPC handler runs:
 //        - `removeSecret('openclash.management.username')`
@@ -23,10 +24,10 @@
 //   A) `secrets.get('openclash.management.username') === null`
 //   B) `secrets.get('openclash.management.password') === null`
 //   C) `collectorHealth.get('openclash.management')?.lastError === 'credentials_cleared'`
-//   D) The next `client.readActiveConfigPath()` call performs a
-//      FRESH login attempt (the fake fetch sees ANOTHER
-//      `POST /cgi-bin/luci`) — proves the cached cookie was
-//      invalidated.
+//   D) The next `client.readActiveConfigPath()` call performs no
+//      fetches: `loadCredentials()` rejects before the cached-cookie
+//      path can be used, which proves the cached cookie was
+//      invalidated and the cleared credentials are authoritative.
 //   E) That second call FAILS with `code: 'auth_error'` because the
 //      credentials have been cleared. (LoadCredentials in the
 //      management client throws `auth_error` when either secret
@@ -189,18 +190,19 @@ function makeInMemoryStore(): SecretsStore {
 // ---------------------------------------------------------------------------
 //
 // Two endpoints suffice for this property:
-//   * `POST /cgi-bin/luci`         — the LuCI form login.
-//   * `POST /cgi-bin/luci/ubus/`   — the ubus JSON-RPC mount.
+//   * `POST /cgi-bin/luci` — the LuCI form login.
+//   * `GET /cgi-bin/luci/admin/services/openclash/config_name`
+//                         — the OpenClash plugin read endpoint.
 //
-// The fake counts both so the property can assert
-// "the second readActiveConfigPath issued ANOTHER login" (proves
-// cookie invalidation) and "the priming readActiveConfigPath issued
-// at least one ubus call" (proves the session was actually used
-// before clearing).
+// The fake counts both so the property can assert "cleared credentials
+// trigger no fetches" and "re-setting credentials issues another
+// login" (proves cookie invalidation), while the priming
+// readActiveConfigPath issued at least one config read (proves the
+// session was actually used before clearing).
 
 interface FetchCounters {
   loginCalls: number;
-  ubusCalls: number;
+  configReadCalls: number;
 }
 
 interface FakeFetchHandle {
@@ -209,16 +211,12 @@ interface FakeFetchHandle {
 }
 
 function buildFakeFetch(): FakeFetchHandle {
-  const counters: FetchCounters = { loginCalls: 0, ubusCalls: 0 };
+  const counters: FetchCounters = { loginCalls: 0, configReadCalls: 0 };
   let cookieCounter = 0;
 
-  // ubus reply body for `uci.get openclash.config.config_path`. The
-  // priming read just needs to succeed; the property does not depend
-  // on the value beyond "it parsed".
-  const ubusGetReply = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    result: [0, { value: '/etc/openclash/config/foo.yaml' }],
+  const configNameReply = JSON.stringify({
+    config_name: [{ name: 'foo.yaml' }],
+    config_path: 'foo.yaml',
   });
 
   const fakeFetch: typeof fetch = async (input) => {
@@ -248,13 +246,10 @@ function buildFakeFetch(): FakeFetchHandle {
       });
     }
 
-    // ---- LuCI ubus endpoints -------------------------------------------
-    if (
-      path === '/cgi-bin/luci/ubus/' ||
-      path === '/cgi-bin/luci/admin/ubus/'
-    ) {
-      counters.ubusCalls += 1;
-      return new Response(ubusGetReply, {
+    // ---- OpenClash plugin read endpoint --------------------------------
+    if (path === '/cgi-bin/luci/admin/services/openclash/config_name') {
+      counters.configReadCalls += 1;
+      return new Response(configNameReply, {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -336,14 +331,14 @@ describe.skipIf(!canRun)(
                 }
 
                 // The fake fetch must have observed exactly one
-                // login + at least one ubus call during priming.
+                // login + at least one config read during priming.
                 if (fakeFetchHandle.counters.loginCalls !== 1) return false;
-                if (fakeFetchHandle.counters.ubusCalls < 1) return false;
+                if (fakeFetchHandle.counters.configReadCalls < 1) return false;
 
                 const loginCallsAfterPriming =
                   fakeFetchHandle.counters.loginCalls;
-                const ubusCallsAfterPriming =
-                  fakeFetchHandle.counters.ubusCalls;
+                const configReadCallsAfterPriming =
+                  fakeFetchHandle.counters.configReadCalls;
 
                 // ---- Step 3: orchestration steps from the IPC handler ----
                 //
@@ -433,10 +428,11 @@ describe.skipIf(!canRun)(
                 ) {
                   return false;
                 }
-                // The ubus counter must also be unchanged for the
+                // The config-read counter must also be unchanged for the
                 // same reason.
                 if (
-                  fakeFetchHandle.counters.ubusCalls !== ubusCallsAfterPriming
+                  fakeFetchHandle.counters.configReadCalls !==
+                  configReadCallsAfterPriming
                 ) {
                   return false;
                 }
@@ -467,8 +463,8 @@ describe.skipIf(!canRun)(
                   return false;
                 }
                 if (
-                  fakeFetchHandle.counters.ubusCalls <=
-                  ubusCallsAfterPriming
+                  fakeFetchHandle.counters.configReadCalls <=
+                  configReadCallsAfterPriming
                 ) {
                   return false;
                 }
@@ -528,7 +524,7 @@ describe.skipIf(!canRun)(
             '/etc/openclash/config/foo.yaml',
           );
           expect(fakeFetchHandle.counters.loginCalls).toBe(1);
-          expect(fakeFetchHandle.counters.ubusCalls).toBeGreaterThanOrEqual(1);
+          expect(fakeFetchHandle.counters.configReadCalls).toBeGreaterThanOrEqual(1);
 
           // 3. Clear creds via the four orchestration steps.
           currentNow = baseTs + 2;

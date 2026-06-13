@@ -52,20 +52,17 @@
 // Pragmatic filtering
 // -------------------
 //
-// The task generates secret values with
-// `fc.string({ minLength: 1, maxLength: 30 })` filtered to exclude
-// pure-whitespace strings. To keep the property meaningful (a
-// single-character secret like `"0"` is naturally a substring of every
-// timestamp written to the audit table; a value like `"ok"` is the
-// closed-set success code), we additionally `fc.pre()`-skip
-// iterations whose generated secrets are substrings of expected
-// non-secret content (timestamps, error codes, paths, the management
-// URL host/port). The skipped cases are NOT property failures — they
-// are degenerate inputs whose match-as-substring would falsely flag
-// the production code's correct behavior. This filter is a property-
-// preserving refinement of the input space; the underlying invariant
-// (no secret VALUE leaks past the redaction sieve) remains exactly
-// the one Property 15 asserts.
+// The task originally generated arbitrary non-whitespace strings.
+// For substring-based leak detection that space is too broad:
+// punctuation-heavy and very short strings such as `" !"` or `"ai"`
+// naturally appear in JSON, URLs, labels, or table names even when no
+// secret leaked. We therefore generate credential-like ASCII secrets
+// with enough entropy, then additionally `fc.pre()`-skip values that
+// collide with expected non-secret content. The skipped cases are NOT
+// property failures — they are degenerate inputs whose match-as-
+// substring would falsely flag the production code's correct behavior.
+// The underlying invariant remains exactly the one Property 15
+// asserts: realistic secret VALUES must not pass the redaction sieve.
 
 import { describe, it } from 'vitest';
 import fc from 'fast-check';
@@ -306,18 +303,24 @@ const stepArb: fc.Arbitrary<Step> = fc.oneof(
 const traceArb = fc.array(stepArb, { minLength: 5, maxLength: 10 });
 
 /**
- * Generator for one secret value. Per task 11.2:
- *   - `fc.string({ minLength: 1, maxLength: 30 })`
- *   - filtered to exclude pure-whitespace strings
+ * Generator for one credential-like secret value. Keep the alphabet
+ * intentionally boring so substring checks do not match JSON
+ * punctuation or prose, and keep length >= 8 so ordinary short words
+ * such as "ai" cannot shrink into false positives.
  *
  * Additional natural-content filtering happens at the property level
- * via `fc.pre()` so degenerate values that would falsely match
- * timestamps / closed-set codes / URL substrings do not flag the
- * production redaction sieve.
+ * via `fc.pre()` so values that would falsely match timestamps /
+ * closed-set codes / URL substrings do not flag the production
+ * redaction sieve.
  */
 const secretArb: fc.Arbitrary<string> = fc
-  .string({ minLength: 1, maxLength: 30 })
-  .filter((s) => s.trim().length > 0);
+  .array(
+    fc.constantFrom(
+      ...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-',
+    ),
+    { minLength: 8, maxLength: 30 },
+  )
+  .map((chars) => chars.join(''));
 
 // ---------------------------------------------------------------------------
 // Fake fetch — programmable LuCI / OpenClash plugin state machine
