@@ -28,8 +28,22 @@
 //      persist the serviceToken — it is short-lived and treated as a
 //      derived secret.
 //
-//   4. GET https://platform.xiaomimimo.com/api/v1/balance
+//   4. GET https://platform.xiaomimimo.com/api/v1/usage/detail
+//        ?year=YYYY&month=M
 //        Cookie: api-platform_serviceToken=...; userId=...
+//      Response (dense array format, verified June 2026):
+//        {
+//          "code": 0,
+//          "data": {
+//            "tokenUsage": [
+//              ["MM-DD", promptTokens, completionTokens, totalTokens, cumPromptTokens, cumCompletionTokens],
+//              ...
+//            ],
+//            "requests": [["MM-DD", count], ...]
+//          }
+//        }
+//      tokenUsage columns: date (MM-DD), total prompt, total completion,
+//      total tokens, cumulative prompt, cumulative completion.
 //      Response:
 //        {
 //          "code": 0,
@@ -77,8 +91,8 @@ const SERVICE_LOGIN_URL =
   'https://account.xiaomi.com/pass/serviceLogin?sid=api-platform&_json=true';
 const BALANCE_URL =
   'https://platform.xiaomimimo.com/api/v1/balance';
-const USAGE_DETAIL_LIST_URL =
-  'https://platform.xiaomimimo.com/api/v1/usage/detail/list';
+const USAGE_DETAIL_URL =
+  'https://platform.xiaomimimo.com/api/v1/usage/detail';
 
 /** The platform gateway uses this prefixed cookie name; older
  *  documentation might refer to a plain `serviceToken`. */
@@ -420,12 +434,15 @@ export function createXiaomiAdapter(
 
   /**
    * Pull this calendar month's per-day usage from
-   * `/api/v1/usage/detail/list`. Failures are non-fatal — the
+   * `/api/v1/usage/detail`. Failures are non-fatal — the
    * adapter logs nothing and the snapshot keeps going without a
    * `dailyUsage` field. We deliberately fetch only the current
-   * month (`{ year, month }`) so the response stays small enough
+   * month (`?year=&month=`) so the response stays small enough
    * for the platform's pagination contract; the renderer then
    * trims to the most recent ~30 days for the sparkline.
+   *
+   * Endpoint changed June 2026: was POST /api/v1/usage/detail/list
+   * with JSON body; now GET /api/v1/usage/detail?year=YYYY&month=M.
    */
   async function fetchDailyUsage(
     accountId: string,
@@ -435,17 +452,15 @@ export function createXiaomiAdapter(
     signal: AbortSignal | undefined,
   ): Promise<readonly { date: string; cost: string; totalTokens: number }[]> {
     const d = new Date(nowMs);
-    const body = {
-      year: d.getUTCFullYear(),
-      month: d.getUTCMonth() + 1,
-    };
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth() + 1;
+    const url = `${USAGE_DETAIL_URL}?year=${year}&month=${month}`;
     const response = await callWithCookie(accountId, passToken, userId, signal, {
-      url: USAGE_DETAIL_LIST_URL,
-      method: 'POST',
-      body,
-      label: 'usage/detail/list',
+      url,
+      method: 'GET',
+      label: 'usage/detail',
     });
-    return parseDailyUsageResponse(response);
+    return parseDailyUsageResponse(response, year);
   }
 
   return {
@@ -626,27 +641,69 @@ export const xiaomiAdapter: ProviderAdapter = createXiaomiAdapter();
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregate the rows returned by `/api/v1/usage/detail/list` into a
- * date-keyed `DailyUsagePoint` array. The platform returns one row
- * per (date, model, apiKey) tuple, so we sum across model/apiKey
- * for each calendar day. Entries with non-numeric / missing
- * `consumedAmount` are skipped silently — the response sometimes
- * carries placeholder rows for plugin usage that we don't surface.
+ * Aggregate the response from `/api/v1/usage/detail` into a
+ * date-keyed `DailyUsagePoint` array.
  *
- * Output is sorted by ascending `date` so the renderer can iterate
- * left-to-right without re-sorting.
+ * NEW format (June 2026):
+ *   { code: 0, data: { tokenUsage: [["MM-DD", prompt, completion,
+ *     total, cumPrompt, cumCompletion], ...], requests: [...] } }
+ *   Dates are "MM-DD" strings; we reconstruct "YYYY-MM-DD" from
+ *   the query params. The platform no longer returns cost amounts
+ *   — only token counts.
  *
- * The `code === 0` envelope check is loose because the platform
- * sometimes wraps the array with `{ code, data: [...] }` and
- * sometimes returns the array directly; we accept both shapes.
+ * OLD format (for backward compatibility if the platform rolls back):
+ *   [{ date, model, apiKey, totalToken, consumedAmount }, ...]
+ *   or { code: 0, data: [...] }
+ *   or { code: 0, data: { list/rows/records: [...] } }
  */
 function parseDailyUsageResponse(
   response: unknown,
+  year: number,
 ): readonly DailyUsagePoint[] {
+
+  // Try NEW dense-array format first
+  const root = asRecord(response);
+  if (root !== null && root['code'] === 0) {
+    const data = asRecord(root['data']);
+    if (data !== null) {
+      const tokenUsage = Array.isArray(data['tokenUsage'])
+        ? (data['tokenUsage'] as readonly unknown[])
+        : null;
+
+      if (tokenUsage !== null && tokenUsage.length > 0) {
+        // date -> { cost, totalTokens }
+        const byDate = new Map<string, { cost: number; totalTokens: number }>();
+
+        for (const raw of tokenUsage) {
+          if (!Array.isArray(raw)) continue;
+          const arr = raw as readonly unknown[];
+          // Columns: [0]=date(MM-DD), [1]=prompt, [2]=completion, [3]=total, ...
+          if (arr.length < 4) continue;
+          const dateStr = typeof arr[0] === 'string' ? arr[0].trim() : '';
+          if (dateStr.length === 0) continue;
+          const fullDate = `${year}-${dateStr}`; // dateStr is "MM-DD"
+          const totalTokens = parseInteger(arr[3]); // column [3] = total tokens
+
+          const existing = byDate.get(fullDate) ?? { cost: 0, totalTokens: 0 };
+          if (totalTokens !== null) existing.totalTokens += totalTokens;
+          byDate.set(fullDate, existing);
+        }
+
+        return Array.from(byDate.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, agg]) => ({
+            date,
+            cost: '0', // new API no longer returns cost amounts
+            totalTokens: agg.totalTokens,
+          }));
+      }
+    }
+  }
+
+  // Fall back to OLD format: array of { date, model, totalToken, consumedAmount }
   const rows = extractUsageRows(response);
   if (rows === null) return [];
 
-  // date -> { costSum, totalTokenSum }
   const byDate = new Map<string, { cost: number; totalTokens: number }>();
 
   for (const raw of rows) {

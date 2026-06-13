@@ -744,22 +744,13 @@ describe('official quota adapters — Xiaomi MiMo', () => {
 
   const SUCCESS_USAGE_BODY = JSON.stringify({
     code: 0,
-    data: [
-      {
-        date: '2026-05-26',
-        model: 'mimo-v2.5-pro',
-        apiKey: 'sk-x',
-        totalToken: 1234,
-        consumedAmount: '0.42',
-      },
-      {
-        date: '2026-05-27',
-        model: 'mimo-v2.5-pro',
-        apiKey: 'sk-x',
-        totalToken: 800,
-        consumedAmount: '0.10',
-      },
-    ],
+    data: {
+      tokenUsage: [
+        ['05-26', 800, 434, 1234, 800, 434],
+        ['05-27', 500, 300, 800, 500, 300],
+      ],
+      requests: [['05-26', 5], ['05-27', 3]],
+    },
   });
 
   const SERVICE_LOGIN_BODY = '&&&START&&&' + JSON.stringify({
@@ -793,7 +784,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);
@@ -821,8 +812,8 @@ describe('official quota adapters — Xiaomi MiMo', () => {
     expect(snapshot.windows[0]!.percentLeft).toBeNull();
     // Daily-usage points are aggregated by date, ascending order.
     expect(snapshot.dailyUsage).toEqual([
-      { date: '2026-05-26', cost: '0.4200', totalTokens: 1234 },
-      { date: '2026-05-27', cost: '0.1000', totalTokens: 800 },
+      { date: '2027-05-26', cost: '0', totalTokens: 1234 },
+      { date: '2027-05-27', cost: '0', totalTokens: 800 },
     ]);
 
     // Verify the request order and the cookie headers. The fourth call
@@ -840,9 +831,9 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       `api-platform_serviceToken=${FAKE_SERVICE_TOKEN}; userId=${FAKE_USER_ID}`,
     );
     expect(calls[3]!.url).toBe(
-      'https://platform.xiaomimimo.com/api/v1/usage/detail/list',
+      'https://platform.xiaomimimo.com/api/v1/usage/detail?year=2027&month=1',
     );
-    expect(calls[3]!.method).toBe('POST');
+    expect(calls[3]!.method).toBe('GET');
   });
 
   it('parses usage detail rows from a nested data.list envelope', async () => {
@@ -881,7 +872,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: nestedUsageBody }),
       },
     ]);
@@ -946,7 +937,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
       // Second refresh: balance + usage (cached token reused, no
@@ -956,7 +947,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);
@@ -991,7 +982,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       'https://platform.xiaomimimo.com/api/v1/balance',
     );
     expect(calls[5]!.url).toBe(
-      'https://platform.xiaomimimo.com/api/v1/usage/detail/list',
+      'https://platform.xiaomimimo.com/api/v1/usage/detail?year=2027&month=1',
     );
     expect(cache.get(account.id)).toBe(FAKE_SERVICE_TOKEN);
   });
@@ -1029,7 +1020,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       },
       // Daily usage POST follows.
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);
@@ -1117,7 +1108,7 @@ describe('official quota adapters — Xiaomi MiMo', () => {
         respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
       },
       {
-        urlContains: '/api/v1/usage/detail/list',
+        urlContains: '/api/v1/usage/detail?year=',
         respond: () => ({ status: 200, body: SUCCESS_USAGE_BODY }),
       },
     ]);

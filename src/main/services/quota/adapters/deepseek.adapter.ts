@@ -391,20 +391,19 @@ function parseConsoleSummary(response: unknown): ConsoleSummaryParseResult {
 
 /**
  * Aggregate the `usage/cost` envelope into a date-keyed
- * `DailyUsagePoint` array. Shape in the wild (extracted from the
- * platform bundle's destructure pattern):
+ * `DailyUsagePoint` array.
  *
- *   { data: { biz_data: [{ currency, total, days: [{day, cost}, ...] }] } }
- *      or
- *   { data:           [{ currency, total, days: [{day, cost}, ...] }]    }
+ * NEW format (June 2026):
+ *   { data: { biz_data: [{ currency, total: [{model, usage: [{type, amount}]}],
+ *       days: [{ date, data: [{model, usage: [{type, amount}]}] }] }] } }
+ *   Each day carries a per-model breakdown in `data[].usage[]` where
+ *   each entry has a `type` (PROMPT_TOKEN, RESPONSE_TOKEN, etc.) and
+ *   an `amount` string. Total is also a model array.
+ *   The API no longer returns monetary cost — only token counts.
  *
- * The bundle treats both shapes; we follow the same logic. The
- * `day`-side field name for the date and amount is not surfaced
- * verbatim in the bundle, so we accept several common spellings
- * (`day`/`date` for the date, `cost`/`amount`/`fee` for the
- * value). Multiple currency rows are summed per-day; if multiple
- * currencies coexist we still produce one bar series — the
- * renderer's tooltip format is currency-agnostic.
+ * OLD format (kept for backward compatibility):
+ *   { data: { biz_data: [{ currency, total, days: [{day, cost, tokens}] }] } }
+ *   or { data: [{ currency, total, days: [{day, cost, tokens}] }] }
  */
 function parseConsoleUsageCost(
   response: unknown,
@@ -422,7 +421,7 @@ function parseConsoleUsageCost(
   }
   if (series.length === 0) return [];
 
-  // date -> aggregated cost
+  // date -> aggregated cost (numeric) and tokens
   const byDate = new Map<string, { cost: number; tokens: number }>();
   for (const entry of series) {
     const r = asRecord(entry);
@@ -436,21 +435,51 @@ function parseConsoleUsageCost(
       // Normalise to YYYY-MM-DD; some envelopes return a Date-ish
       // ISO string with a time component.
       const isoOnly = dateStr.length >= 10 ? dateStr.slice(0, 10) : dateStr;
-      const cost =
-        numericValue(d['cost']) ??
-        numericValue(d['amount']) ??
-        numericValue(d['fee']);
-      const tokens =
-        numericValue(d['tokens']) ??
-        numericValue(d['totalToken']) ??
-        numericValue(d['totalTokens']) ??
-        numericValue(d['total_token']) ??
-        numericValue(d['total_tokens']) ??
-        0;
-      if (cost === null) continue;
+
+      let dayCost = 0;
+      let dayTokens = 0;
+
+      // Try NEW format: data[{model, usage[{type, amount}]}]
+      const dataArr = Array.isArray(d['data']) ? d['data'] : null;
+      if (dataArr !== null) {
+        for (const modelEntry of dataArr) {
+          const m = asRecord(modelEntry);
+          if (m === null) continue;
+          const usageArr = Array.isArray(m['usage']) ? m['usage'] : [];
+          for (const u of usageArr) {
+            const usageEntry = asRecord(u);
+            if (usageEntry === null) continue;
+            const amount = numericValue(usageEntry['amount']) ?? 0;
+            const type = stringValue(usageEntry['type']) ?? '';
+            if (type.includes('TOKEN')) {
+              dayTokens += amount;
+            }
+            // REQUEST entries don't carry token counts, skip.
+          }
+        }
+      } else {
+        // Fall back to OLD format: flat cost / tokens on day entry
+        const cost =
+          numericValue(d['cost']) ??
+          numericValue(d['amount']) ??
+          numericValue(d['fee']);
+        const tokens =
+          numericValue(d['tokens']) ??
+          numericValue(d['totalToken']) ??
+          numericValue(d['totalTokens']) ??
+          numericValue(d['total_token']) ??
+          numericValue(d['total_tokens']) ??
+          0;
+        if (cost !== null) dayCost = cost;
+        dayTokens = tokens;
+      }
+
+      // Skip days with zero usage
+      if (dayCost === 0 && dayTokens === 0) continue;
+
       const agg = byDate.get(isoOnly) ?? { cost: 0, tokens: 0 };
-      agg.cost += cost;
-      agg.tokens += tokens;
+      agg.cost += dayCost;
+      agg.tokens += dayTokens;
       byDate.set(isoOnly, agg);
     }
   }
