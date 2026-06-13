@@ -43,6 +43,7 @@ type MutableApiUsageProviderRow = {
   provider: string;
   totalTokens: number;
   cost: number | null;
+  costEstimated?: boolean;
   currency: string | null;
 };
 
@@ -358,6 +359,7 @@ function buildApiUsage(
     }
 
     const currency = currencyFromSnapshot(snap);
+    let hasEstimatedCost = false;
     for (const point of dailyUsage) {
       const ts = parseLocalYMD(point.date);
       if (ts < start || ts > end) continue;
@@ -369,27 +371,25 @@ function buildApiUsage(
         provider: snap.provider,
         totalTokens,
         cost,
+        ...(point.costEstimated === true ? { costEstimated: true } : {}),
         currency,
       };
-      const target =
-        totalTokens > 0
-          ? byTokenKey
-          : cost !== null && cost > 0
-            ? byCostKey
-            : null;
-      if (target === null) continue;
-      const existing = target.get(point.date) ?? [];
-      const prev = existing.find((p) => p.provider === snap.provider);
-      if (prev) {
-        prev.totalTokens += totalTokens;
-        prev.cost =
-          prev.cost === null && cost === null
-            ? null
-            : (prev.cost ?? 0) + (cost ?? 0);
-      } else {
-        existing.push(row);
+      if (totalTokens > 0) {
+        addRemoteUsageRow(byTokenKey, point.date, row);
       }
-      target.set(point.date, existing);
+      if (cost !== null && cost > 0) {
+        addRemoteUsageRow(byCostKey, point.date, row);
+      }
+      if (cost !== null && cost > 0 && point.costEstimated === true) {
+        hasEstimatedCost = true;
+      }
+    }
+    if (hasEstimatedCost && snap.provider === 'xiaomi') {
+      notices.push({
+        provider: snap.provider,
+        code: 'xiaomi_cost_estimated',
+        message: 'Xiaomi MiMo 未返回金额明细，部分 API 金额按 token 和当前价格估算',
+      });
     }
   }
 
@@ -399,6 +399,28 @@ function buildApiUsage(
     costBuckets: bucketsFromRemoteMap(byCostKey, range, start, end),
     notices,
   };
+}
+
+function addRemoteUsageRow(
+  byKey: Map<string, MutableApiUsageProviderRow[]>,
+  key: string,
+  row: MutableApiUsageProviderRow,
+): void {
+  const existing = byKey.get(key) ?? [];
+  const prev = existing.find((p) => p.provider === row.provider);
+  if (prev) {
+    prev.totalTokens += row.totalTokens;
+    prev.cost =
+      prev.cost === null && row.cost === null
+        ? null
+        : (prev.cost ?? 0) + (row.cost ?? 0);
+    if (row.costEstimated === true) {
+      prev.costEstimated = true;
+    }
+  } else {
+    existing.push({ ...row });
+  }
+  byKey.set(key, existing);
 }
 
 function bucketsFromRemoteMap(

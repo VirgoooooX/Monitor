@@ -140,9 +140,9 @@ describe('UsagePanel quota overview', () => {
               startTs: new Date('2026-06-13T00:00:00+08:00').getTime(),
               perProvider: [
                 {
-                  provider: 'deepseek',
-                  totalTokens: 0,
-                  cost: 0.42,
+                  provider: 'xiaomi',
+                  totalTokens: 2400,
+                  cost: 0.12,
                   currency: 'CNY',
                 },
               ],

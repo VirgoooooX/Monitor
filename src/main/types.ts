@@ -347,9 +347,10 @@ export interface QuotaSnapshot {
   lastErrorMessage: string | null;
   /**
    * Optional daily-usage history surfaced by per-account adapters
-   * that have access to it (currently Xiaomi MiMo). Each entry is one
-   * day of aggregate spend / consumption; renderers turn this into
-   * the inline sparkline that sits next to the credits amount.
+   * that have access to it. Each entry is one day of aggregate spend
+   * / consumption; `cost` is the canonical API-usage chart value,
+   * while `totalTokens` is retained as auxiliary detail when an
+   * upstream exposes it.
    *
    * `null` / undefined means the adapter did not collect this data
    * (most adapters don't); an empty array means it tried but the
@@ -362,16 +363,26 @@ export interface QuotaSnapshot {
 
 /**
  * One day of aggregated AI usage. Produced by adapters that expose
- * a per-day usage endpoint (Xiaomi MiMo `/api/v1/usage/detail/list`)
- * and consumed by the QuotaStrip sparkline.
+ * a per-day usage endpoint, or by the quota service from balance
+ * deltas when the upstream exposes only current credits.
  */
 export interface DailyUsagePoint {
   /** ISO date string `YYYY-MM-DD`. */
   readonly date: string;
-  /** Total cost spent that day, decimal string preserving precision. */
+  /** Canonical API-usage cost for that day, decimal string preserving precision. */
   readonly cost: string;
-  /** Total tokens consumed that day. */
+  /**
+   * True when `cost` was estimated from token counts because the
+   * provider did not expose a monetary amount. Estimated costs are a
+   * visibility fallback, not an authoritative billing figure.
+   */
+  readonly costEstimated?: boolean;
+  /** Auxiliary token count when the upstream exposes it. */
   readonly totalTokens: number;
+  /** Auxiliary prompt/input token count when the upstream exposes it. */
+  readonly inputTokens?: number;
+  /** Auxiliary completion/output token count when the upstream exposes it. */
+  readonly outputTokens?: number;
 }
 
 /**
@@ -839,6 +850,7 @@ export interface ApiUsageBucket {
     readonly provider: string;
     readonly totalTokens: number;
     readonly cost: number | null;
+    readonly costEstimated?: boolean;
     readonly currency: string | null;
   }>;
 }
@@ -847,7 +859,8 @@ export interface ApiUsageNotice {
   readonly provider: string;
   readonly code:
     | 'daily_usage_unavailable'
-    | 'deepseek_user_token_required';
+    | 'deepseek_user_token_required'
+    | 'xiaomi_cost_estimated';
   readonly message: string;
 }
 
@@ -868,6 +881,7 @@ export interface UsageTimeseriesBucket {
     readonly outputTokens: number;
     readonly cacheTokens: number;
     readonly costUsd: number | null;
+    readonly costEstimated?: boolean;
     readonly eventCount: number;
     /** Non-USD currency code (e.g. "CNY") when the cost originates
      *  from API daily usage snapshots rather than local events. */

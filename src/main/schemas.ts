@@ -420,6 +420,17 @@ export const quotaSnapshotStatusSchema = z.enum([
   'unsupported',
 ]);
 
+const dailyUsagePointSchema = z
+  .object({
+    date: z.string(),
+    cost: z.string(),
+    costEstimated: z.boolean().optional(),
+    totalTokens: z.number().nonnegative(),
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
 /**
  * Full `QuotaSnapshot` shape with the per-account fields added by
  * cpa-quota-import. Mirrors the TypeScript interface in
@@ -443,6 +454,7 @@ export const quotaSnapshotSchema = z.object({
   modelGroup: z.string().nullable(),
   lastErrorCode: providerAuthErrorCodeSchema.nullable(),
   lastErrorMessage: z.string().max(80).nullable(),
+  dailyUsage: z.array(dailyUsagePointSchema).nullable().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -840,6 +852,68 @@ export const usageProviderSummarySchema = z
     costUsd: z.number().nullable(),
     eventCount: z.number().int().nonnegative(),
     reason: z.string().optional(),
+    source: z.enum(['events', 'quotaDailyUsage', 'none']),
+    hasTokenBreakdown: z.boolean(),
+  })
+  .strict();
+
+const usageTimeseriesProviderSchema = z
+  .object({
+    provider: z.string(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    cacheTokens: z.number().int().nonnegative(),
+    costUsd: z.number().nullable(),
+    costEstimated: z.boolean().optional(),
+    eventCount: z.number().int().nonnegative(),
+    currency: z.string().nullable().optional(),
+  })
+  .strict();
+
+const usageTimeseriesBucketSchema = z
+  .object({
+    key: z.string(),
+    startTs: z.number().int(),
+    perProvider: z.array(usageTimeseriesProviderSchema),
+  })
+  .strict();
+
+const apiUsageProviderSchema = z
+  .object({
+    provider: z.string(),
+    totalTokens: z.number().int().nonnegative(),
+    cost: z.number().nullable(),
+    costEstimated: z.boolean().optional(),
+    currency: z.string().nullable(),
+  })
+  .strict();
+
+const apiUsageBucketSchema = z
+  .object({
+    key: z.string(),
+    startTs: z.number().int(),
+    perProvider: z.array(apiUsageProviderSchema),
+  })
+  .strict();
+
+const apiUsageNoticeSchema = z
+  .object({
+    provider: z.string(),
+    code: z.enum([
+      'daily_usage_unavailable',
+      'deepseek_user_token_required',
+      'xiaomi_cost_estimated',
+    ]),
+    message: z.string(),
+  })
+  .strict();
+
+const apiUsageSummarySchema = z
+  .object({
+    granularity: z.literal('day'),
+    tokenBuckets: z.array(apiUsageBucketSchema),
+    costBuckets: z.array(apiUsageBucketSchema),
+    notices: z.array(apiUsageNoticeSchema),
   })
   .strict();
 
@@ -847,31 +921,11 @@ export const usageSummarySchema = z
   .object({
     range: usageRangeSchema,
     perProvider: z.array(usageProviderSummarySchema),
-    buckets: z
-      .array(
-        z
-          .object({
-            key: z.string(),
-            startTs: z.number().int(),
-            perProvider: z.array(
-              z
-                .object({
-                  provider: z.string(),
-                  inputTokens: z.number().int().nonnegative(),
-                  outputTokens: z.number().int().nonnegative(),
-                  cacheTokens: z.number().int().nonnegative(),
-                  costUsd: z.number().nullable(),
-                  eventCount: z.number().int().nonnegative(),
-                })
-                .strict(),
-            ),
-          })
-          .strict(),
-      )
-      .optional(),
+    buckets: z.array(usageTimeseriesBucketSchema).optional(),
     bucketGranularity: z.enum(['hour', 'day']).optional(),
     bucketRangeStartTs: z.number().int().optional(),
     bucketRangeEndTs: z.number().int().optional(),
+    apiUsage: apiUsageSummarySchema.optional(),
   })
   .strict();
 

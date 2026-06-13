@@ -39,6 +39,7 @@
 // =============================================================================
 
 import type {
+  DailyUsagePoint,
   ProviderAuthErrorCode,
   ProviderAuthSecretPayload,
   ProviderId,
@@ -64,6 +65,9 @@ import { isProviderAuthErrorCode } from './quota/adapters/common';
 /** Settings key used to hydrate the in-memory cache on boot. */
 const SETTINGS_KEY = 'quota.snapshots';
 
+/** Settings key for derived API-cost observations from balance deltas. */
+const API_BALANCE_LEDGER_KEY = 'apiUsage.balanceLedger.v1';
+
 /**
  * Sentinel cache key used for the Codex local-JSONL fallback path
  * (Requirement 11.6). Distinct from any UUID so it can coexist with
@@ -73,6 +77,23 @@ const CODEX_LOCAL_KEY = '__codex_local__';
 
 /** Per-account 5-minute throttle. */
 const REMOTE_THROTTLE_MS = 5 * 60 * 1000;
+
+/** Keep enough observations to cover the 30-day chart plus clock skew. */
+const BALANCE_LEDGER_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
+
+/**
+ * Xiaomi token-only usage/detail omits model and cache-hit billing
+ * dimensions. Use current V2.5-Pro cache-miss rates only as a
+ * last-resort visibility estimate; upstream consumedAmount and
+ * balance deltas override it.
+ */
+const XIAOMI_TOKEN_ESTIMATE_RATES_PER_MILLION: Record<
+  string,
+  { inputMiss: number; output: number }
+> = {
+  CNY: { inputMiss: 3.00, output: 6.00 },
+  USD: { inputMiss: 0.435, output: 0.87 },
+};
 
 /** Maximum length of a redacted error message (mirror of `bound()` in `provider_auth.service`). */
 const MAX_ERROR_MESSAGE_LEN = 80;
@@ -135,6 +156,18 @@ interface CacheEntry {
   lastSuccessSnapshot: QuotaSnapshot | undefined;
   /** Last time the entry was successfully refreshed (epoch ms). */
   lastFetchedAt: number;
+}
+
+interface BalanceLedgerEntry {
+  readonly providerAuthId: string;
+  readonly currency: string;
+  readonly observedAt: number;
+  readonly balance: number;
+}
+
+interface BalanceLedger {
+  readonly version: 1;
+  readonly entries: BalanceLedgerEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +279,300 @@ function loadPersistedSnapshots(
   } catch {
     return [];
   }
+}
+
+function readBalanceLedger(settings: SettingsRepository): BalanceLedger {
+  try {
+    const stored = settings.get<BalanceLedger>(API_BALANCE_LEDGER_KEY);
+    if (
+      stored !== undefined &&
+      stored.version === 1 &&
+      Array.isArray(stored.entries)
+    ) {
+      const entries = stored.entries.flatMap((entry) => {
+        if (
+          typeof entry.providerAuthId !== 'string' ||
+          typeof entry.currency !== 'string' ||
+          typeof entry.observedAt !== 'number' ||
+          typeof entry.balance !== 'number' ||
+          !Number.isFinite(entry.observedAt) ||
+          !Number.isFinite(entry.balance)
+        ) {
+          return [];
+        }
+        return [{
+          providerAuthId: entry.providerAuthId,
+          currency: entry.currency,
+          observedAt: entry.observedAt,
+          balance: entry.balance,
+        }];
+      });
+      return { version: 1, entries };
+    }
+  } catch {
+    // Ignore malformed settings; the next successful balance read will reseed.
+  }
+  return { version: 1, entries: [] };
+}
+
+function writeBalanceLedger(
+  settings: SettingsRepository,
+  ledger: BalanceLedger,
+): void {
+  try {
+    settings.set(API_BALANCE_LEDGER_KEY, ledger);
+  } catch {
+    // Best-effort cache; quota snapshots remain authoritative.
+  }
+}
+
+function localDateKey(ts: number): string {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function ledgerKey(entry: Pick<BalanceLedgerEntry, 'providerAuthId' | 'currency'>): string {
+  return `${entry.providerAuthId}\u0000${entry.currency}`;
+}
+
+function trimLedgerEntries(
+  entries: readonly BalanceLedgerEntry[],
+  now: number,
+): BalanceLedgerEntry[] {
+  const cutoff = now - BALANCE_LEDGER_RETENTION_MS;
+  const grouped = new Map<string, BalanceLedgerEntry[]>();
+  for (const entry of entries) {
+    const key = ledgerKey(entry);
+    const list = grouped.get(key) ?? [];
+    list.push(entry);
+    grouped.set(key, list);
+  }
+
+  const out: BalanceLedgerEntry[] = [];
+  for (const list of grouped.values()) {
+    list.sort((a, b) => a.observedAt - b.observedAt);
+    const recent = list.filter((entry) => entry.observedAt >= cutoff);
+    const carry = [...list]
+      .reverse()
+      .find((entry) => entry.observedAt < cutoff);
+    if (carry !== undefined) out.push(carry);
+    out.push(...recent);
+  }
+  return out.sort((a, b) => a.observedAt - b.observedAt);
+}
+
+function derivedCostsByDate(
+  entries: readonly BalanceLedgerEntry[],
+  providerAuthId: string,
+): Map<string, number> {
+  const grouped = new Map<string, BalanceLedgerEntry[]>();
+  for (const entry of entries) {
+    if (entry.providerAuthId !== providerAuthId) continue;
+    const key = ledgerKey(entry);
+    const list = grouped.get(key) ?? [];
+    list.push(entry);
+    grouped.set(key, list);
+  }
+
+  const byDate = new Map<string, number>();
+  for (const list of grouped.values()) {
+    list.sort((a, b) => a.observedAt - b.observedAt);
+    for (let i = 1; i < list.length; i += 1) {
+      const prev = list[i - 1]!;
+      const curr = list[i]!;
+      if (curr.balance >= prev.balance) continue;
+      const delta = Math.round((prev.balance - curr.balance) * 1_000_000) / 1_000_000;
+      if (delta <= 0) continue;
+      const date = localDateKey(curr.observedAt);
+      byDate.set(date, (byDate.get(date) ?? 0) + delta);
+    }
+  }
+  return byDate;
+}
+
+function formatCostDecimal(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  return value.toFixed(4).replace(/\.?0+$/, '');
+}
+
+function normaliseDailyUsagePoint(point: DailyUsagePoint): DailyUsagePoint {
+  const totalTokens = Number.isFinite(point.totalTokens)
+    ? Math.max(0, Math.round(point.totalTokens))
+    : 0;
+  const inputTokens = point.inputTokens !== undefined && Number.isFinite(point.inputTokens)
+    ? Math.max(0, Math.round(point.inputTokens))
+    : undefined;
+  const outputTokens = point.outputTokens !== undefined && Number.isFinite(point.outputTokens)
+    ? Math.max(0, Math.round(point.outputTokens))
+    : undefined;
+
+  return {
+    date: point.date,
+    cost: point.cost,
+    ...(point.costEstimated === true ? { costEstimated: true } : {}),
+    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+  };
+}
+
+function dailyUsagePointCost(point: DailyUsagePoint): number {
+  const parsed = Number(point.cost);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function estimateXiaomiTokenCost(
+  point: DailyUsagePoint,
+  currency: string,
+): number | null {
+  const rates = XIAOMI_TOKEN_ESTIMATE_RATES_PER_MILLION[currency.toUpperCase()];
+  if (rates === undefined) return null;
+
+  const inputTokens = point.inputTokens !== undefined && Number.isFinite(point.inputTokens)
+    ? Math.max(0, Math.round(point.inputTokens))
+    : null;
+  const outputTokens = point.outputTokens !== undefined && Number.isFinite(point.outputTokens)
+    ? Math.max(0, Math.round(point.outputTokens))
+    : null;
+  if (inputTokens === null || outputTokens === null) return null;
+
+  const estimated =
+    (inputTokens * rates.inputMiss + outputTokens * rates.output) / 1_000_000;
+  return estimated > 0 ? estimated : null;
+}
+
+function withXiaomiTokenCostEstimates(
+  existing: ReadonlyArray<DailyUsagePoint> | null | undefined,
+  currency: string | null,
+): ReadonlyArray<DailyUsagePoint> | null | undefined {
+  if (existing === undefined || existing === null || currency === null) {
+    return existing;
+  }
+
+  let changed = false;
+  const next = existing.map((point) => {
+    const normalised = normaliseDailyUsagePoint(point);
+    if (dailyUsagePointCost(normalised) > 0) return normalised;
+
+    const estimated = estimateXiaomiTokenCost(normalised, currency);
+    if (estimated === null) return normalised;
+    changed = true;
+    return {
+      ...normalised,
+      cost: formatCostDecimal(estimated),
+      costEstimated: true,
+    };
+  });
+
+  return changed ? next : existing;
+}
+
+function parseCreditsBalance(windowName: string): {
+  readonly currency: string;
+  readonly balance: number;
+} | null {
+  const match = /^credits:([A-Z]{3,})\b(.*)$/.exec(windowName);
+  if (match === null) return null;
+  const currency = match[1]!;
+  const body = match[2] ?? '';
+  const totalMatch = /(?:总额|total)\s+(-?\d+(?:\.\d+)?)/i.exec(body);
+  const fallbackMatch = /(-?\d+(?:\.\d+)?)/.exec(body);
+  const raw = totalMatch?.[1] ?? fallbackMatch?.[1] ?? null;
+  if (raw === null) return null;
+  const balance = Number(raw);
+  if (!Number.isFinite(balance)) return null;
+  return { currency, balance };
+}
+
+function xiaomiBalanceObservations(
+  snapshot: QuotaSnapshot,
+): BalanceLedgerEntry[] {
+  if (
+    snapshot.provider !== 'xiaomi' ||
+    snapshot.status !== 'ok' ||
+    snapshot.kind !== 'credits' ||
+    snapshot.providerAuthId === null
+  ) {
+    return [];
+  }
+
+  return snapshot.windows.flatMap((window) => {
+    const parsed = parseCreditsBalance(window.name);
+    if (parsed === null) return [];
+    return [{
+      providerAuthId: snapshot.providerAuthId as string,
+      currency: parsed.currency,
+      observedAt: snapshot.capturedAt,
+      balance: parsed.balance,
+    }];
+  });
+}
+
+function mergeDailyUsageCost(
+  existing: ReadonlyArray<DailyUsagePoint> | null | undefined,
+  derivedCosts: Map<string, number>,
+): DailyUsagePoint[] {
+  const byDate = new Map<string, DailyUsagePoint>();
+  for (const point of existing ?? []) {
+    byDate.set(point.date, normaliseDailyUsagePoint(point));
+  }
+
+  for (const [date, cost] of derivedCosts.entries()) {
+    const current = byDate.get(date);
+    const currentCost = current === undefined ? 0 : dailyUsagePointCost(current);
+    if (current !== undefined && currentCost > 0 && current.costEstimated !== true) {
+      continue;
+    }
+    byDate.set(date, {
+      date,
+      cost: formatCostDecimal(cost),
+      totalTokens: current?.totalTokens ?? 0,
+      ...(current?.inputTokens !== undefined ? { inputTokens: current.inputTokens } : {}),
+      ...(current?.outputTokens !== undefined ? { outputTokens: current.outputTokens } : {}),
+    });
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function withDerivedXiaomiCosts(
+  settings: SettingsRepository,
+  snapshot: QuotaSnapshot,
+  now: number,
+): QuotaSnapshot {
+  const observations = xiaomiBalanceObservations(snapshot);
+  if (observations.length === 0 || snapshot.providerAuthId === null) {
+    return snapshot;
+  }
+
+  const ledger = readBalanceLedger(settings);
+  const nextEntries = trimLedgerEntries([
+    ...ledger.entries,
+    ...observations,
+  ], now);
+  writeBalanceLedger(settings, { version: 1, entries: nextEntries });
+
+  const derived = derivedCostsByDate(nextEntries, snapshot.providerAuthId);
+  const currency = observations[0]?.currency ?? null;
+  const dailyUsageWithBalanceCosts = derived.size === 0
+    ? snapshot.dailyUsage
+    : mergeDailyUsageCost(snapshot.dailyUsage, derived);
+  const dailyUsage = withXiaomiTokenCostEstimates(
+    dailyUsageWithBalanceCosts,
+    currency,
+  );
+
+  if (derived.size === 0 && dailyUsage === snapshot.dailyUsage) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    ...(dailyUsage !== undefined ? { dailyUsage } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +808,11 @@ export function createQuotaService(deps: QuotaServiceDeps): QuotaService {
       const previous = cache.get(account.id);
 
       if (outcome.status === 'fulfilled') {
-        const snapshot = outcome.value;
+        const snapshot = withDerivedXiaomiCosts(
+          deps.settings,
+          outcome.value,
+          now,
+        );
         cache.set(account.id, {
           snapshot,
           // Track the last truly successful snapshot separately so

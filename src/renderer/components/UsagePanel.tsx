@@ -262,6 +262,7 @@ function apiBucketsToTimeseries(
     outputTokens: number;
     cacheTokens: number;
     costUsd: number | null;
+    costEstimated?: boolean;
     eventCount: number;
     currency?: string | null;
   }>;
@@ -275,6 +276,7 @@ function apiBucketsToTimeseries(
       outputTokens: 0,
       cacheTokens: 0,
       costUsd: row.cost,
+      ...(row.costEstimated === true ? { costEstimated: true } : {}),
       eventCount: 0,
       currency: row.currency,
     })),
@@ -458,6 +460,7 @@ export function UsagePanel(): JSX.Element {
       <UsageBarChart
         buckets={usageData?.buckets ?? []}
         granularity={usageData?.bucketGranularity ?? (range === 'today' ? 'hour' : 'day')}
+        valueMode="tokens"
         providerLabel={(p) =>
           (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
         }
@@ -468,8 +471,9 @@ export function UsagePanel(): JSX.Element {
         <>
           <h3 className="usage-panel-v2__chart-title">{t('usage.chart.apiUsage')}</h3>
           <UsageBarChart
-            buckets={apiBucketsToTimeseries(usageData.apiUsage.tokenBuckets)}
+            buckets={apiBucketsToTimeseries(usageData.apiUsage.costBuckets)}
             granularity="day"
+            valueMode="cost"
             providerLabel={(p) =>
               (PROVIDER_LABELS[p as ProviderId] ?? providerDisplayName(p))
             }

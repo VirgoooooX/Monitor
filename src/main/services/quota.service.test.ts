@@ -256,6 +256,45 @@ function makeHarness(overrides: HarnessOverrides = {}): Harness {
   return { service, repo, settings, secrets, adapters, clock };
 }
 
+function localDateForTest(ts: number): string {
+  const d = new Date(ts);
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function xiaomiCreditsSnapshot(input: ProviderAdapterRefreshInput, options: {
+  balance: number;
+  currency?: string;
+  dailyUsage?: QuotaSnapshot['dailyUsage'];
+}): QuotaSnapshot {
+  const currency = options.currency ?? 'CNY';
+  return {
+    provider: 'xiaomi',
+    capturedAt: input.now,
+    source: 'imported_auth',
+    windows: [{
+      name: `credits:${currency} 总额 ${options.balance.toFixed(2)} / 现金 ${options.balance.toFixed(2)}`,
+      percentLeft: null,
+      resetAt: null,
+      windowSeconds: null,
+    }],
+    providerAuthId: input.account.id,
+    accountLabel: input.account.label,
+    accountId: input.account.accountId,
+    projectId: input.account.projectId,
+    kind: 'credits',
+    status: 'ok',
+    rawPlanLabel: null,
+    modelGroup: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    ...(options.dailyUsage !== undefined ? { dailyUsage: options.dailyUsage } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test 1 — All-`unsupported` placeholders
 // ---------------------------------------------------------------------------
@@ -479,5 +518,197 @@ describe('createQuotaService — cache eviction on deletion', () => {
     const second = await harness.service.refresh();
     expect(second.snapshots).toHaveLength(1);
     expect(second.snapshots[0]!.providerAuthId).toBe('id-A');
+  });
+});
+
+describe('createQuotaService — Xiaomi cost ledger', () => {
+  it('estimates Xiaomi cost from token-only usage when no monetary signal exists', async () => {
+    const row = makeRow('xiaomi', { id: 'xiaomi-A' });
+    const t1 = Date.UTC(2026, 5, 13, 2, 0, 0);
+    const usageDate = localDateForTest(t1);
+    const refresh = vi.fn(async (input: ProviderAdapterRefreshInput) =>
+      xiaomiCreditsSnapshot(input, {
+        balance: 24.63,
+        dailyUsage: [{
+          date: usageDate,
+          cost: '0',
+          totalTokens: 1234,
+          inputTokens: 800,
+          outputTokens: 434,
+        }],
+      }),
+    );
+    const harness = makeHarness({
+      rows: [row],
+      startNow: t1,
+      adapters: {
+        xiaomi: { provider: 'xiaomi', capability: 'official', refresh },
+      },
+    });
+
+    const first = await harness.service.refresh();
+
+    expect(first.snapshots[0]?.dailyUsage).toEqual([{
+      date: usageDate,
+      cost: '0.005',
+      costEstimated: true,
+      totalTokens: 1234,
+      inputTokens: 800,
+      outputTokens: 434,
+    }]);
+  });
+
+  it('derives same-day cost from a Xiaomi balance decrease', async () => {
+    const row = makeRow('xiaomi', { id: 'xiaomi-A' });
+    const t1 = Date.UTC(2026, 5, 13, 2, 0, 0);
+    const t2 = t1 + 5 * 60_000 + 1;
+    const usageDate = localDateForTest(t2);
+    const refresh = vi
+      .fn()
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, {
+          balance: 24.63,
+          dailyUsage: [{
+            date: usageDate,
+            cost: '0',
+            totalTokens: 1234,
+            inputTokens: 800,
+            outputTokens: 434,
+          }],
+        }),
+      )
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, {
+          balance: 23.80,
+          dailyUsage: [{
+            date: usageDate,
+            cost: '0',
+            totalTokens: 1234,
+            inputTokens: 800,
+            outputTokens: 434,
+          }],
+        }),
+      );
+    const harness = makeHarness({
+      rows: [row],
+      startNow: t1,
+      adapters: {
+        xiaomi: { provider: 'xiaomi', capability: 'official', refresh },
+      },
+    });
+
+    await harness.service.refresh();
+    harness.clock.value = t2;
+    const second = await harness.service.refresh();
+
+    expect(second.snapshots[0]?.dailyUsage).toEqual([
+      {
+        date: usageDate,
+        cost: '0.83',
+        totalTokens: 1234,
+        inputTokens: 800,
+        outputTokens: 434,
+      },
+    ]);
+  });
+
+  it('does not emit negative cost when Xiaomi balance increases', async () => {
+    const row = makeRow('xiaomi', { id: 'xiaomi-A' });
+    const t1 = Date.UTC(2026, 5, 13, 2, 0, 0);
+    const refresh = vi
+      .fn()
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, { balance: 23.80 }),
+      )
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, { balance: 24.63 }),
+      );
+    const harness = makeHarness({
+      rows: [row],
+      startNow: t1,
+      adapters: {
+        xiaomi: { provider: 'xiaomi', capability: 'official', refresh },
+      },
+    });
+
+    await harness.service.refresh();
+    harness.clock.value = t1 + 5 * 60_000 + 1;
+    const second = await harness.service.refresh();
+
+    expect(second.snapshots[0]?.dailyUsage).toBeUndefined();
+  });
+
+  it('keeps Xiaomi balance deltas isolated by account and currency', async () => {
+    const rows = [
+      makeRow('xiaomi', { id: 'xiaomi-A', importedAt: 1 }),
+      makeRow('xiaomi', { id: 'xiaomi-B', importedAt: 2 }),
+    ];
+    const t1 = Date.UTC(2026, 5, 13, 2, 0, 0);
+    const t2 = t1 + 5 * 60_000 + 1;
+    const usageDate = localDateForTest(t2);
+    const balances: Record<string, number[]> = {
+      'xiaomi-A': [24.63, 23.80],
+      'xiaomi-B': [10.00, 9.00],
+    };
+    const refresh = vi.fn(async (input: ProviderAdapterRefreshInput) => {
+      const values = balances[input.account.id]!;
+      const balance = values.shift()!;
+      return xiaomiCreditsSnapshot(input, {
+        balance,
+        currency: input.account.id === 'xiaomi-A' ? 'CNY' : 'USD',
+      });
+    });
+    const harness = makeHarness({
+      rows,
+      startNow: t1,
+      adapters: {
+        xiaomi: { provider: 'xiaomi', capability: 'official', refresh },
+      },
+    });
+
+    await harness.service.refresh();
+    harness.clock.value = t2;
+    const second = await harness.service.refresh();
+    const byId = new Map(second.snapshots.map((s) => [s.providerAuthId, s]));
+
+    expect(byId.get('xiaomi-A')?.dailyUsage).toEqual([
+      { date: usageDate, cost: '0.83', totalTokens: 0 },
+    ]);
+    expect(byId.get('xiaomi-B')?.dailyUsage).toEqual([
+      { date: usageDate, cost: '1', totalTokens: 0 },
+    ]);
+  });
+
+  it('keeps upstream Xiaomi consumedAmount when it is already present', async () => {
+    const row = makeRow('xiaomi', { id: 'xiaomi-A' });
+    const t1 = Date.UTC(2026, 5, 13, 2, 0, 0);
+    const t2 = t1 + 5 * 60_000 + 1;
+    const usageDate = localDateForTest(t2);
+    const refresh = vi
+      .fn()
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, { balance: 24.63 }),
+      )
+      .mockImplementationOnce(async (input: ProviderAdapterRefreshInput) =>
+        xiaomiCreditsSnapshot(input, {
+          balance: 23.80,
+          dailyUsage: [{ date: usageDate, cost: '0.5000', totalTokens: 3210 }],
+        }),
+      );
+    const harness = makeHarness({
+      rows: [row],
+      startNow: t1,
+      adapters: {
+        xiaomi: { provider: 'xiaomi', capability: 'official', refresh },
+      },
+    });
+
+    await harness.service.refresh();
+    harness.clock.value = t2;
+    const second = await harness.service.refresh();
+
+    expect(second.snapshots[0]?.dailyUsage).toEqual([
+      { date: usageDate, cost: '0.5000', totalTokens: 3210 },
+    ]);
   });
 });

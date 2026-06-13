@@ -417,7 +417,12 @@ describe('usage service provider list', () => {
           lastErrorMessage: null,
           dailyUsage: [
             { date: '2026-06-12', cost: '0.0500', totalTokens: 500 },
-            { date: '2026-06-13', cost: '0.1200', totalTokens: 2400 },
+            {
+              date: '2026-06-13',
+              cost: '0.1200',
+              costEstimated: true,
+              totalTokens: 2400,
+            },
           ],
         },
       ],
@@ -439,7 +444,22 @@ describe('usage service provider list', () => {
         },
       ],
     });
-    expect(summary.apiUsage?.costBuckets).toEqual([]);
+    expect(summary.apiUsage?.costBuckets[0]).toMatchObject({
+      key: '2026-06-13',
+      perProvider: [
+        {
+          provider: 'xiaomi',
+          totalTokens: 2400,
+          cost: 0.12,
+          currency: 'CNY',
+        },
+      ],
+    });
+    expect(summary.apiUsage?.notices).toContainEqual({
+      provider: 'xiaomi',
+      code: 'xiaomi_cost_estimated',
+      message: 'Xiaomi MiMo 未返回金额明细，部分 API 金额按 token 和当前价格估算',
+    });
   });
 
   it('builds remote cost buckets without mixing cost-only usage into token buckets', () => {

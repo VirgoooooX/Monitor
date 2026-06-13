@@ -171,6 +171,7 @@ function pad2(n: number): string {
 export interface UsageBarChartProps {
   buckets: UsageTimeseriesBucket[];
   granularity: 'hour' | 'day';
+  valueMode?: 'tokens' | 'cost';
   /** Display labels for providers (Chinese / branded names). */
   providerLabel: (provider: string) => string;
 }
@@ -178,6 +179,7 @@ export interface UsageBarChartProps {
 export function UsageBarChart({
   buckets,
   granularity,
+  valueMode = 'tokens',
   providerLabel,
 }: UsageBarChartProps): JSX.Element {
   const t = useT();
@@ -192,9 +194,10 @@ export function UsageBarChart({
     for (const b of buckets) {
       for (const p of b.perProvider) {
         const tokens = p.inputTokens + p.outputTokens + p.cacheTokens;
+        const value = valueMode === 'cost' ? (p.costUsd ?? 0) : tokens;
         providerTotals.set(
           p.provider,
-          (providerTotals.get(p.provider) ?? 0) + tokens,
+          (providerTotals.get(p.provider) ?? 0) + value,
         );
       }
     }
@@ -206,12 +209,14 @@ export function UsageBarChart({
     let maxTotal = 0;
     let maxEvents = 0;
     let peakIdx = -1;
+    let primaryCurrency: string | null = null;
 
     const columns = buckets.map((b, idx) => {
       const stack: Array<{
         provider: string;
         tokens: number;
         cost: number | null;
+        costEstimated: boolean;
         eventCount: number;
         /**
          * Per-kind breakdown rendered as nested same-hue bands inside
@@ -237,7 +242,8 @@ export function UsageBarChart({
         const row = b.perProvider.find((p) => p.provider === provider);
         if (!row) continue;
         const tokens = row.inputTokens + row.outputTokens + row.cacheTokens;
-        if (tokens === 0) continue;
+        const value = valueMode === 'cost' ? (row.costUsd ?? 0) : tokens;
+        if (value === 0) continue;
         const kinds: Array<{ kind: TokenKind; tokens: number }> = [
           { kind: 'output', tokens: row.outputTokens },
           { kind: 'input',  tokens: row.inputTokens },
@@ -248,15 +254,19 @@ export function UsageBarChart({
         kindTotals.cache  += row.cacheTokens;
         stack.push({
           provider,
-          tokens,
+          tokens: value,
           cost: row.costUsd,
+          costEstimated: row.costEstimated === true,
           eventCount: row.eventCount,
-          kinds,
+          kinds: valueMode === 'cost'
+            ? [{ kind: 'input', tokens: value }]
+            : kinds,
         });
-        total += tokens;
+        total += value;
         if (row.costUsd !== null) {
           totalCost += row.costUsd;
           if (row.currency && !totalCurrency) totalCurrency = row.currency;
+          if (row.currency && !primaryCurrency) primaryCurrency = row.currency;
         }
         totalEvents += row.eventCount;
       }
@@ -274,13 +284,14 @@ export function UsageBarChart({
         kindTotals,
         totalCost,
         totalCurrency,
+        totalCostEstimated: stack.some((seg) => seg.costEstimated),
         totalEvents,
         stack,
       };
     });
 
-    return { providersInOrder, columns, maxTotal, maxEvents, peakIdx };
-  }, [buckets]);
+    return { providersInOrder, columns, maxTotal, maxEvents, peakIdx, primaryCurrency };
+  }, [buckets, valueMode]);
 
   // Empty state — render an empty grid so the user sees the chart
   // exists, just no data yet. This is friendlier than a "暂无数据"
@@ -291,6 +302,23 @@ export function UsageBarChart({
   // Y scale: round the max up to a "nice" tick so the reference line
   // labels are readable (1.2M instead of 1.21M).
   const yMax = niceCeiling(layout.maxTotal || 1);
+  const valueUnit = valueMode === 'cost' ? '' : 'tok';
+  const metricName = valueMode === 'cost' ? 'API 金额' : 'Token 消耗';
+  const emptyLabel = valueMode === 'cost'
+    ? '尚无 API 金额数据'
+    : '尚无 Token 用量数据';
+  const formatValue = (value: number, currency: string | null = null): string =>
+    valueMode === 'cost'
+      ? formatCurrencyAmount(value, currency ?? layout.primaryCurrency ?? null)
+      : formatTokens(value);
+  const formatPrimaryValue = (
+    value: number,
+    currency: string | null = null,
+    estimated = false,
+  ): string => {
+    const formatted = formatValue(value, currency);
+    return valueMode === 'cost' && estimated ? `估算 ${formatted}` : formatted;
+  };
 
   // Right-axis scale for the events line. Capped at 1 so the polyline
   // sits on the baseline when there are no events recorded yet
@@ -333,8 +361,8 @@ export function UsageBarChart({
       role="figure"
       aria-label={
         emptyData
-          ? '尚无 Token 用量数据'
-          : `Token 消耗 · ${granularity === 'hour' ? '小时' : '天'}级 · 峰值 ${formatTokens(layout.maxTotal)}`
+          ? emptyLabel
+          : `${metricName} · ${granularity === 'hour' ? '小时' : '天'}级 · 峰值 ${formatValue(layout.maxTotal)}`
       }
     >
       {/* Header: peak summary + window subtitle. Lives above the
@@ -354,17 +382,21 @@ export function UsageBarChart({
           <div className="usage-chart__stat">
             <dt>峰值</dt>
             <dd>
-              {emptyData ? '—' : formatTokens(layout.maxTotal)}
-              <span className="usage-chart__stat-unit">tok</span>
+              {emptyData ? '—' : formatValue(layout.maxTotal)}
+              {valueUnit !== '' && (
+                <span className="usage-chart__stat-unit">{valueUnit}</span>
+              )}
             </dd>
           </div>
           <div className="usage-chart__stat">
             <dt>区间合计</dt>
             <dd>
-              {formatTokens(
+              {formatValue(
                 layout.columns.reduce((s, c) => s + c.total, 0),
               )}
-              <span className="usage-chart__stat-unit">tok</span>
+              {valueUnit !== '' && (
+                <span className="usage-chart__stat-unit">{valueUnit}</span>
+              )}
             </dd>
           </div>
         </dl>
@@ -402,7 +434,7 @@ export function UsageBarChart({
                 textAnchor="end"
                 className="usage-chart__yaxis-label"
               >
-                {frac === 0 ? '0' : formatTokens(yMax * frac)}
+                {frac === 0 ? '0' : formatValue(yMax * frac)}
               </text>
             );
           })}
@@ -440,7 +472,7 @@ export function UsageBarChart({
             Hidden when there's no data so the empty-state has
             uncluttered breathing room.
           */}
-          {!emptyData && layout.providersInOrder.length > 0 && (
+          {!emptyData && valueMode === 'tokens' && layout.providersInOrder.length > 0 && (
             <span
               className="usage-chart__kind-key"
               aria-label={t('usage.kind.legendAria')}
@@ -533,7 +565,7 @@ export function UsageBarChart({
                       onMouseEnter={() => setHoverIdx(idx)}
                       onFocus={() => setHoverIdx(idx)}
                       onBlur={() => setHoverIdx(null)}
-                      aria-label={`${formatBucketTitle(col.key, granularity)}：${formatTokens(col.total)} tokens${col.totalEvents > 0 ? `，${col.totalEvents} 次请求` : ''}`}
+                      aria-label={`${formatBucketTitle(col.key, granularity)}：${formatPrimaryValue(col.total, col.totalCurrency, col.totalCostEstimated)}${valueMode === 'tokens' ? ' tokens' : ''}${col.totalEvents > 0 ? `，${col.totalEvents} 次请求` : ''}`}
                       style={{
                         // Stagger the entrance — feels like data
                         // is being printed in. Capped at 600ms
@@ -732,7 +764,7 @@ export function UsageBarChart({
                   status badges, source labels, kind labels, empty-
                   state sentences). It is left for the broader
                   empty-state pass in task 14.5. */}
-              <p className="usage-chart__empty-title">尚未采集到 Token 用量</p>
+              <p className="usage-chart__empty-title">{emptyLabel}</p>
               <p className="usage-chart__empty-desc">
                 {granularity === 'hour'
                   ? t('usage.empty.todayPlaceholder')
@@ -865,7 +897,8 @@ export function UsageBarChart({
               </span>
               <span className="usage-chart__detail-sep" aria-hidden>·</span>
               <span className="usage-chart__detail-value">
-                {formatTokens(hovered.total)} tok
+                {formatPrimaryValue(hovered.total, hovered.totalCurrency, hovered.totalCostEstimated)}
+                {valueUnit !== '' ? ` ${valueUnit}` : ''}
               </span>
               {/*
                 Per-kind totals across all visible providers in the
@@ -873,7 +906,7 @@ export function UsageBarChart({
                 a "no cache hits today" doesn't push noise onto the
                 pill.
               */}
-              {KIND_ORDER.map((kind) => {
+              {valueMode === 'tokens' && KIND_ORDER.map((kind) => {
                 const value = hovered.kindTotals[kind];
                 if (value === 0) return null;
                 return (
@@ -904,7 +937,7 @@ export function UsageBarChart({
                   </span>
                 </>
               )}
-              {hovered.totalCost > 0 && (
+              {valueMode === 'tokens' && hovered.totalCost > 0 && (
                 <>
                   <span className="usage-chart__detail-sep" aria-hidden>·</span>
                   <span className="usage-chart__detail-value">

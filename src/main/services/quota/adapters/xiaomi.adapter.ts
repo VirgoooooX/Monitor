@@ -671,8 +671,14 @@ function parseDailyUsageResponse(
         : null;
 
       if (tokenUsage !== null && tokenUsage.length > 0) {
-        // date -> { cost, totalTokens }
-        const byDate = new Map<string, { cost: number; totalTokens: number }>();
+        // date -> token totals. Monetary cost is not present in this
+        // endpoint; quota.service may derive or estimate it later.
+        const byDate = new Map<string, {
+          cost: number;
+          totalTokens: number;
+          inputTokens: number;
+          outputTokens: number;
+        }>();
 
         for (const raw of tokenUsage) {
           if (!Array.isArray(raw)) continue;
@@ -682,9 +688,18 @@ function parseDailyUsageResponse(
           const dateStr = typeof arr[0] === 'string' ? arr[0].trim() : '';
           if (dateStr.length === 0) continue;
           const fullDate = `${year}-${dateStr}`; // dateStr is "MM-DD"
+          const inputTokens = parseInteger(arr[1]); // column [1] = prompt tokens
+          const outputTokens = parseInteger(arr[2]); // column [2] = completion tokens
           const totalTokens = parseInteger(arr[3]); // column [3] = total tokens
 
-          const existing = byDate.get(fullDate) ?? { cost: 0, totalTokens: 0 };
+          const existing = byDate.get(fullDate) ?? {
+            cost: 0,
+            totalTokens: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+          };
+          if (inputTokens !== null) existing.inputTokens += inputTokens;
+          if (outputTokens !== null) existing.outputTokens += outputTokens;
           if (totalTokens !== null) existing.totalTokens += totalTokens;
           byDate.set(fullDate, existing);
         }
@@ -695,6 +710,8 @@ function parseDailyUsageResponse(
             date,
             cost: '0', // new API no longer returns cost amounts
             totalTokens: agg.totalTokens,
+            inputTokens: agg.inputTokens,
+            outputTokens: agg.outputTokens,
           }));
       }
     }

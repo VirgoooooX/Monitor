@@ -626,6 +626,65 @@ describe('official quota adapters — DeepSeek', () => {
     ]);
   });
 
+  it('treats new console usage amount fields as cost, not tokens', async () => {
+    const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
+      if (input.url.includes('/api/v0/users/get_user_summary')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: {
+              normal_wallets: [
+                { balance: 4.25, currency: 'CNY' },
+              ],
+              bonus_wallets: [],
+            },
+          },
+        } as T;
+      }
+      if (input.url.includes('/api/v0/usage/cost')) {
+        return {
+          code: 0,
+          data: {
+            biz_data: [
+              {
+                currency: 'CNY',
+                days: [
+                  {
+                    date: '2026-06-06',
+                    data: [
+                      {
+                        model: 'deepseek-chat',
+                        usage: [
+                          { type: 'PROMPT_TOKEN', amount: '0.832' },
+                          { type: 'RESPONSE_TOKEN', amount: '0.620' },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        } as T;
+      }
+      throw new Error(`unexpected url: ${input.url}`);
+    };
+    const adapter = createDeepSeekAdapter({ requestJson: request });
+
+    const snapshot = await adapter.refresh({
+      account: row('deepseek'),
+      getSecret: () => ({
+        apiKey: 'sk-deepseek',
+        deepseekUserToken: 'eyJhbGc-fake-token',
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.dailyUsage).toEqual([
+      { date: '2026-06-06', cost: '1.45', totalTokens: 0 },
+    ]);
+  });
+
   it('falls back to the public balance path when the console call fails', async () => {
     const calls: RequestJsonInput[] = [];
     const request: RequestJson = async <T>(input: RequestJsonInput): Promise<T> => {
@@ -812,8 +871,20 @@ describe('official quota adapters — Xiaomi MiMo', () => {
     expect(snapshot.windows[0]!.percentLeft).toBeNull();
     // Daily-usage points are aggregated by date, ascending order.
     expect(snapshot.dailyUsage).toEqual([
-      { date: '2027-05-26', cost: '0', totalTokens: 1234 },
-      { date: '2027-05-27', cost: '0', totalTokens: 800 },
+      {
+        date: '2027-05-26',
+        cost: '0',
+        totalTokens: 1234,
+        inputTokens: 800,
+        outputTokens: 434,
+      },
+      {
+        date: '2027-05-27',
+        cost: '0',
+        totalTokens: 800,
+        inputTokens: 500,
+        outputTokens: 300,
+      },
     ]);
 
     // Verify the request order and the cookie headers. The fourth call

@@ -398,8 +398,8 @@ function parseConsoleSummary(response: unknown): ConsoleSummaryParseResult {
  *       days: [{ date, data: [{model, usage: [{type, amount}]}] }] }] } }
  *   Each day carries a per-model breakdown in `data[].usage[]` where
  *   each entry has a `type` (PROMPT_TOKEN, RESPONSE_TOKEN, etc.) and
- *   an `amount` string. Total is also a model array.
- *   The API no longer returns monetary cost — only token counts.
+ *   an `amount` string representing **monetary cost** (e.g. CNY), NOT
+ *   a raw token count. The API no longer returns token counts.
  *
  * OLD format (kept for backward compatibility):
  *   { data: { biz_data: [{ currency, total, days: [{day, cost, tokens}] }] } }
@@ -440,6 +440,10 @@ function parseConsoleUsageCost(
       let dayTokens = 0;
 
       // Try NEW format: data[{model, usage[{type, amount}]}]
+      // NOTE: In this format, `amount` is **monetary cost** (e.g. CNY),
+      // NOT a token count. The API no longer returns raw token counts —
+      // only spend amounts per type (PROMPT_TOKEN, RESPONSE_TOKEN, etc.).
+      // We accumulate into `dayCost`; `dayTokens` stays 0.
       const dataArr = Array.isArray(d['data']) ? d['data'] : null;
       if (dataArr !== null) {
         for (const modelEntry of dataArr) {
@@ -450,11 +454,10 @@ function parseConsoleUsageCost(
             const usageEntry = asRecord(u);
             if (usageEntry === null) continue;
             const amount = numericValue(usageEntry['amount']) ?? 0;
-            const type = stringValue(usageEntry['type']) ?? '';
-            if (type.includes('TOKEN')) {
-              dayTokens += amount;
-            }
-            // REQUEST entries don't carry token counts, skip.
+            // All entries (TOKEN and REQUEST types) carry a spend
+            // amount. Sum everything — the chart will render it on
+            // the cost axis.
+            dayCost += amount;
           }
         }
       } else {
