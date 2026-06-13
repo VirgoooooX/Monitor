@@ -109,6 +109,67 @@ describe('UsagePanel quota overview', () => {
       expect(document.querySelectorAll('.quota-window-row')).toHaveLength(4);
     });
   });
+
+  it('renders remote API daily usage below the local token chart', async () => {
+    installDesktopBridge(
+      { snapshots: [] },
+      {
+        range: 'today',
+        perProvider: [],
+        buckets: [],
+        bucketGranularity: 'hour',
+        apiUsage: {
+          granularity: 'day',
+          tokenBuckets: [
+            {
+              key: '2026-06-13',
+              startTs: new Date('2026-06-13T00:00:00+08:00').getTime(),
+              perProvider: [
+                {
+                  provider: 'xiaomi',
+                  totalTokens: 2400,
+                  cost: 0.12,
+                  currency: 'CNY',
+                },
+              ],
+            },
+          ],
+          costBuckets: [
+            {
+              key: '2026-06-13',
+              startTs: new Date('2026-06-13T00:00:00+08:00').getTime(),
+              perProvider: [
+                {
+                  provider: 'deepseek',
+                  totalTokens: 0,
+                  cost: 0.42,
+                  currency: 'CNY',
+                },
+              ],
+            },
+          ],
+          notices: [
+            {
+              provider: 'deepseek',
+              code: 'deepseek_user_token_required',
+              message: 'API key 只能取余额，用量明细需配置 userToken',
+            },
+          ],
+        },
+      },
+    );
+
+    render(<UsagePanel />);
+
+    expect(await screen.findByText('API 用量明细')).toBeTruthy();
+    expect(screen.getByText('Token')).toBeTruthy();
+    expect(screen.getByText('消费金额')).toBeTruthy();
+    expect(screen.getByText('小米 Mimo')).toBeTruthy();
+    expect(screen.getAllByText('DeepSeek').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2.4k tok').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('¥0.42 CNY').length).toBeGreaterThan(0);
+    expect(screen.getByText('API key 只能取余额，用量明细需配置 userToken')).toBeTruthy();
+  });
 });
 
 describe('UsagePanel quota card kinds and states', () => {

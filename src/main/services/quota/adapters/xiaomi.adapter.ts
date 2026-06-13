@@ -678,6 +678,12 @@ function extractUsageRows(response: unknown): readonly unknown[] | null {
   const root = asRecord(response);
   if (root === null) return null;
   if (Array.isArray(root['data'])) return root['data'] as readonly unknown[];
+  const data = asRecord(root['data']);
+  if (data !== null) {
+    if (Array.isArray(data['list'])) return data['list'] as readonly unknown[];
+    if (Array.isArray(data['rows'])) return data['rows'] as readonly unknown[];
+    if (Array.isArray(data['records'])) return data['records'] as readonly unknown[];
+  }
   return null;
 }
 

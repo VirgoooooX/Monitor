@@ -27,6 +27,9 @@ import type {
   UsageSummaryInput,
   UsageTimeseriesBucket,
   QuotaSnapshot,
+  ApiUsageSummary,
+  ApiUsageBucket,
+  ApiUsageNotice,
 } from '../types';
 import type {
   ProviderAuthRepository,
@@ -35,6 +38,13 @@ import type {
 } from '../store/repositories';
 import { aggregateToProviderSummary } from '../store/repositories';
 import { readCapabilityResults } from '../collectors/usage/Collector';
+
+type MutableApiUsageProviderRow = {
+  provider: string;
+  totalTokens: number;
+  cost: number | null;
+  currency: string | null;
+};
 
 // ---------------------------------------------------------------------------
 // Known providers
@@ -296,9 +306,140 @@ export function createUsageService(deps: UsageServiceDeps): UsageService {
         range: input.range,
         perProvider,
         ...buildBuckets(deps, input.range, bounds, knownProviders),
+        apiUsage: buildApiUsage(input.range, bounds, knownProviders, snapshots),
       };
     },
   };
+}
+
+function buildApiUsage(
+  range: UsageRange,
+  bounds: { fromTs: number; toTs: number },
+  knownProviders: string[],
+  snapshots: QuotaSnapshot[],
+): ApiUsageSummary {
+  const knownProviderSet = new Set(knownProviders);
+  const byTokenKey = new Map<string, MutableApiUsageProviderRow[]>();
+  const byCostKey = new Map<string, MutableApiUsageProviderRow[]>();
+  const notices: ApiUsageNotice[] = [];
+
+  const start = startOfLocalDayMs(bounds.fromTs);
+  const end = startOfLocalDayMs(bounds.toTs);
+
+  for (const snap of snapshots) {
+    if (!knownProviderSet.has(snap.provider)) continue;
+
+    const dailyUsage = snap.dailyUsage;
+    if (!Array.isArray(dailyUsage)) {
+      if (snap.provider === 'deepseek') {
+        notices.push({
+          provider: snap.provider,
+          code: 'deepseek_user_token_required',
+          message: 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
+        });
+      } else if (snap.provider === 'xiaomi') {
+        notices.push({
+          provider: snap.provider,
+          code: 'daily_usage_unavailable',
+          message: 'Xiaomi MiMo 未返回 API 用量明细，余额仍可正常显示',
+        });
+      }
+      continue;
+    }
+    if (dailyUsage.length === 0) {
+      if (snap.provider === 'deepseek') {
+        notices.push({
+          provider: snap.provider,
+          code: 'deepseek_user_token_required',
+          message: 'DeepSeek API key 只能取余额，用量明细需配置 userToken',
+        });
+      }
+      continue;
+    }
+
+    const currency = currencyFromSnapshot(snap);
+    for (const point of dailyUsage) {
+      const ts = parseLocalYMD(point.date);
+      if (ts < start || ts > end) continue;
+      const cost = parseCost(point.cost);
+      const totalTokens = Number.isFinite(point.totalTokens)
+        ? Math.max(0, Math.round(point.totalTokens))
+        : 0;
+      const row = {
+        provider: snap.provider,
+        totalTokens,
+        cost,
+        currency,
+      };
+      const target =
+        totalTokens > 0
+          ? byTokenKey
+          : cost !== null && cost > 0
+            ? byCostKey
+            : null;
+      if (target === null) continue;
+      const existing = target.get(point.date) ?? [];
+      const prev = existing.find((p) => p.provider === snap.provider);
+      if (prev) {
+        prev.totalTokens += totalTokens;
+        prev.cost =
+          prev.cost === null && cost === null
+            ? null
+            : (prev.cost ?? 0) + (cost ?? 0);
+      } else {
+        existing.push(row);
+      }
+      target.set(point.date, existing);
+    }
+  }
+
+  return {
+    granularity: 'day',
+    tokenBuckets: bucketsFromRemoteMap(byTokenKey, range, start, end),
+    costBuckets: bucketsFromRemoteMap(byCostKey, range, start, end),
+    notices,
+  };
+}
+
+function bucketsFromRemoteMap(
+  byKey: Map<string, MutableApiUsageProviderRow[]>,
+  range: UsageRange,
+  start: number,
+  end: number,
+): ApiUsageBucket[] {
+  const buckets: ApiUsageBucket[] = [];
+  for (let t = start; t <= end; t += 86_400_000) {
+    const key = formatBucketKey(t, 'day');
+    const rows = byKey.get(key) ?? [];
+    if (range === 'today' && rows.length === 0) continue;
+    buckets.push({
+      key,
+      startTs: t,
+      perProvider: rows
+        .filter((row) => row.totalTokens > 0 || (row.cost ?? 0) > 0)
+        .sort((a, b) => a.provider.localeCompare(b.provider)),
+    });
+  }
+  return buckets;
+}
+
+function startOfLocalDayMs(ts: number): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function parseCost(value: string): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function currencyFromSnapshot(snapshot: QuotaSnapshot): string | null {
+  for (const window of snapshot.windows) {
+    const match = /^credits:([A-Z]{3,})\b/.exec(window.name);
+    if (match) return match[1]!;
+  }
+  return null;
 }
 
 /**

@@ -60,6 +60,9 @@ export type {
   UsageSummary,
   UsageSummaryInput,
   UsageTimeseriesBucket,
+  ApiUsageSummary,
+  ApiUsageBucket,
+  ApiUsageNotice,
 
   // Quota
   QuotaWindow,

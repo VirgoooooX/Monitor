@@ -25,6 +25,7 @@ import {
   translateQuotaWindowDisplayName,
 } from '../lib/quota-display';
 import { useT } from '../lib/i18n';
+import { formatTokens } from '../lib/format';
 import type { Translator } from '../../i18n';
 import { ProviderIcon } from './ProviderIcon';
 
@@ -588,15 +589,18 @@ export function UsageSparkline({
   const GAP = 1;
 
   // Trim to the most recent MAX_BARS entries, then back-fill any
-  // missing calendar days with zero-cost placeholders so the
+  // missing calendar days with zero-value placeholders so the
   // sparkline shows a stable "one tick per day" rhythm even when
   // the adapter response skips days with no usage.
   const filled = fillMissingDays(dailyUsage ?? [], MAX_BARS);
 
-  const values = filled.map((p) => Number(p.cost));
+  const usesTokens = filled.some((p) => p.totalTokens > 0);
+  const values = usesTokens
+    ? filled.map((p) => p.totalTokens)
+    : filled.map((p) => Number(p.cost));
   const max = values.reduce((m, v) => (v > m ? v : m), 0);
   const barWidth = (VIEW_W - GAP * (MAX_BARS - 1)) / MAX_BARS;
-  const hasData = filled.some((p) => Number(p.cost) > 0);
+  const hasData = values.some((v) => Number.isFinite(v) && v > 0);
 
   return (
     <span
@@ -622,9 +626,11 @@ export function UsageSparkline({
         {filled.map((point, idx) => {
           const value = Number.isFinite(values[idx]) ? values[idx]! : 0;
           const x = idx * (barWidth + GAP);
-          const tip = `${point.date} · ${symbol}${point.cost}${
-            currencyCode ? ` ${currencyCode}` : ''
-          }`;
+          const tip = usesTokens
+            ? `${point.date} · ${formatTokens(point.totalTokens)} tok`
+            : `${point.date} · ${symbol}${point.cost}${
+                currencyCode ? ` ${currencyCode}` : ''
+              }`;
 
           // Recency fade: most recent RECENT_BARS days at 100%,
           // older days drop off linearly toward 35%. Total span
@@ -651,9 +657,13 @@ export function UsageSparkline({
                 y={VIEW_H - 1}
                 width={barWidth}
                 height={1}
-                className="quota-strip__sparkline-zero"
-              >
-                <title>{`${point.date} · ${symbol}0`}</title>
+              className="quota-strip__sparkline-zero"
+            >
+                <title>
+                  {usesTokens
+                    ? `${point.date} · 0 tok`
+                    : `${point.date} · ${symbol}0`}
+                </title>
               </rect>
             );
           }

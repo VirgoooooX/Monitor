@@ -814,6 +814,41 @@ export interface UsageSummary {
   bucketRangeStartTs?: number;
   /** Inclusive epoch-ms anchor of the last bucket. */
   bucketRangeEndTs?: number;
+  /**
+   * Remote/API usage reported by quota adapters that can query
+   * provider billing history. This is intentionally separate from
+   * `buckets`: local log events can be hourly, while provider billing
+   * APIs generally expose only per-day aggregates.
+   */
+  apiUsage?: ApiUsageSummary;
+}
+
+export interface ApiUsageSummary {
+  readonly granularity: 'day';
+  readonly tokenBuckets: ApiUsageBucket[];
+  readonly costBuckets: ApiUsageBucket[];
+  readonly notices: ApiUsageNotice[];
+}
+
+export interface ApiUsageBucket {
+  /** Local-time `YYYY-MM-DD`. */
+  readonly key: string;
+  /** Epoch ms at the local day boundary the bucket starts on. */
+  readonly startTs: number;
+  readonly perProvider: ReadonlyArray<{
+    readonly provider: string;
+    readonly totalTokens: number;
+    readonly cost: number | null;
+    readonly currency: string | null;
+  }>;
+}
+
+export interface ApiUsageNotice {
+  readonly provider: string;
+  readonly code:
+    | 'daily_usage_unavailable'
+    | 'deepseek_user_token_required';
+  readonly message: string;
 }
 
 /**

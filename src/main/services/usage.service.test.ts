@@ -372,4 +372,154 @@ describe('usage service provider list', () => {
     expect(dsSummary!.hasTokenBreakdown).toBe(true);
     expect(dsSummary!.inputTokens).toBe(10);
   });
+
+  it('builds day-level remote token buckets from quota dailyUsage without local events', () => {
+    const importedAt = new Date('2026-06-10T10:00:00+08:00').getTime();
+    const rowBase: ProviderAuthRow = {
+      id: '00000000-0000-4000-8000-000000000003',
+      provider: 'xiaomi',
+      label: 'xiaomi:active',
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: 'official',
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: true,
+      secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000003',
+    };
+
+    const service = createUsageService({
+      settings: createSettingsRepo(baseSettings()),
+      usageEvents: createUsageEventsRepoStub([]),
+      providerAuth: createProviderAuthRepoStub([rowBase]),
+      quotaSnapshots: () => [
+        {
+          provider: 'xiaomi',
+          capturedAt: importedAt,
+          source: 'imported_auth' as const,
+          windows: [
+            { name: 'credits:CNY 总额 16.54 / 现金 16.54 / 赠金 0.00', percentLeft: null, resetAt: null, windowSeconds: null },
+          ],
+          providerAuthId: rowBase.id,
+          accountLabel: 'xiaomi:active',
+          accountId: null,
+          projectId: null,
+          kind: 'credits' as const,
+          status: 'ok' as const,
+          rawPlanLabel: null,
+          modelGroup: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          dailyUsage: [
+            { date: '2026-06-12', cost: '0.0500', totalTokens: 500 },
+            { date: '2026-06-13', cost: '0.1200', totalTokens: 2400 },
+          ],
+        },
+      ],
+      now: () => new Date('2026-06-13T10:00:00+08:00').getTime(),
+    });
+
+    const summary = service.getUsageSummary({ range: 'today' });
+
+    expect(summary.apiUsage?.granularity).toBe('day');
+    expect(summary.apiUsage?.tokenBuckets).toHaveLength(1);
+    expect(summary.apiUsage?.tokenBuckets[0]).toMatchObject({
+      key: '2026-06-13',
+      perProvider: [
+        {
+          provider: 'xiaomi',
+          totalTokens: 2400,
+          cost: 0.12,
+          currency: 'CNY',
+        },
+      ],
+    });
+    expect(summary.apiUsage?.costBuckets).toEqual([]);
+  });
+
+  it('builds remote cost buckets without mixing cost-only usage into token buckets', () => {
+    const importedAt = new Date('2026-06-10T10:00:00+08:00').getTime();
+    const rowBase: ProviderAuthRow = {
+      id: '00000000-0000-4000-8000-000000000004',
+      provider: 'deepseek',
+      label: 'deepseek:active',
+      source: 'manual-api-key',
+      accountId: null,
+      projectId: null,
+      quotaCapability: 'official',
+      importedAt,
+      updatedAt: importedAt,
+      lastValidatedAt: null,
+      lastQuotaAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      enabled: true,
+      secretKey: 'cpaAuth.providerAuth.00000000-0000-4000-8000-000000000004',
+    };
+
+    const service = createUsageService({
+      settings: createSettingsRepo(baseSettings()),
+      usageEvents: createUsageEventsRepoStub([]),
+      providerAuth: createProviderAuthRepoStub([rowBase]),
+      quotaSnapshots: () => [
+        {
+          provider: 'deepseek',
+          capturedAt: importedAt,
+          source: 'imported_auth' as const,
+          windows: [
+            { name: 'credits:CNY 总额 93.33 / 现金 93.33', percentLeft: null, resetAt: null, windowSeconds: null },
+          ],
+          providerAuthId: rowBase.id,
+          accountLabel: 'deepseek:active',
+          accountId: null,
+          projectId: null,
+          kind: 'credits' as const,
+          status: 'ok' as const,
+          rawPlanLabel: null,
+          modelGroup: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          dailyUsage: [
+            { date: '2026-06-11', cost: '0.42', totalTokens: 0 },
+            { date: '2026-06-12', cost: '0.18', totalTokens: 0 },
+          ],
+        },
+      ],
+      now: () => new Date('2026-06-13T10:00:00+08:00').getTime(),
+    });
+
+    const summary = service.getUsageSummary({ range: 'week' });
+
+    const tokenProviders = summary.apiUsage?.tokenBuckets.flatMap((b) => b.perProvider) ?? [];
+    expect(tokenProviders).toEqual([]);
+    expect(summary.apiUsage?.costBuckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: '2026-06-11',
+          perProvider: [
+            expect.objectContaining({
+              provider: 'deepseek',
+              cost: 0.42,
+              currency: 'CNY',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          key: '2026-06-12',
+          perProvider: [
+            expect.objectContaining({
+              provider: 'deepseek',
+              cost: 0.18,
+              currency: 'CNY',
+            }),
+          ],
+        }),
+      ]),
+    );
+  });
 });

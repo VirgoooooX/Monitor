@@ -581,9 +581,9 @@ describe('official quota adapters — DeepSeek', () => {
               currency: 'CNY',
               total: '0.85',
               days: [
-                { day: '2026-05-25', cost: 0.42 },
+                { day: '2026-05-25', cost: 0.42, totalToken: 1200 },
                 { day: '2026-05-26', cost: 0.18 },
-                { day: '2026-05-27', cost: 0.25 },
+                { day: '2026-05-27', cost: 0.25, total_tokens: 900 },
               ],
             },
           ],
@@ -620,9 +620,9 @@ describe('official quota adapters — DeepSeek', () => {
       'credits:CNY 总额 5.75 / 现金 4.25 / 赠金 1.50',
     );
     expect(snapshot.dailyUsage).toEqual([
-      { date: '2026-05-25', cost: '0.42', totalTokens: 0 },
+      { date: '2026-05-25', cost: '0.42', totalTokens: 1200 },
       { date: '2026-05-26', cost: '0.18', totalTokens: 0 },
-      { date: '2026-05-27', cost: '0.25', totalTokens: 0 },
+      { date: '2026-05-27', cost: '0.25', totalTokens: 900 },
     ]);
   });
 
@@ -843,6 +843,66 @@ describe('official quota adapters — Xiaomi MiMo', () => {
       'https://platform.xiaomimimo.com/api/v1/usage/detail/list',
     );
     expect(calls[3]!.method).toBe('POST');
+  });
+
+  it('parses usage detail rows from a nested data.list envelope', async () => {
+    const nestedUsageBody = JSON.stringify({
+      code: 0,
+      data: {
+        list: [
+          {
+            date: '2026-05-28',
+            model: 'mimo-v2.5-pro',
+            totalToken: 3210,
+            consumedAmount: '0.88',
+          },
+        ],
+      },
+    });
+    const { requestRaw } = makeRequestRaw([
+      {
+        urlContains: '/pass/serviceLogin',
+        respond: () => ({ status: 200, body: SERVICE_LOGIN_BODY }),
+      },
+      {
+        urlContains: 'platform.xiaomimimo.com/sts',
+        respond: () => ({
+          status: 200,
+          headers: {
+            'set-cookie': [
+              `api-platform_serviceToken="${FAKE_SERVICE_TOKEN}"; Path=/`,
+            ],
+          },
+          body: '',
+        }),
+      },
+      {
+        urlContains: '/api/v1/balance',
+        respond: () => ({ status: 200, body: SUCCESS_BALANCE_BODY }),
+      },
+      {
+        urlContains: '/api/v1/usage/detail/list',
+        respond: () => ({ status: 200, body: nestedUsageBody }),
+      },
+    ]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = (await import('./xiaomi.adapter')).createXiaomiAdapter({
+      requestRaw: requestRaw as any,
+    });
+
+    const snapshot = await adapter.refresh({
+      account: row('xiaomi'),
+      getSecret: () => ({
+        xiaomiPassToken: FAKE_PASS_TOKEN,
+        xiaomiUserId: FAKE_USER_ID,
+      }),
+      now: NOW,
+    });
+
+    expect(snapshot.dailyUsage).toEqual([
+      { date: '2026-05-28', cost: '0.8800', totalTokens: 3210 },
+    ]);
   });
 
   it('returns auth_missing when the passToken cookie is absent', async () => {

@@ -442,6 +442,8 @@ function parseConsoleUsageCost(
         numericValue(d['fee']);
       const tokens =
         numericValue(d['tokens']) ??
+        numericValue(d['totalToken']) ??
+        numericValue(d['totalTokens']) ??
         numericValue(d['total_token']) ??
         numericValue(d['total_tokens']) ??
         0;

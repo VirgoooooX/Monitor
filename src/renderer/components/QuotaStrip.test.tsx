@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
-import { QuotaStrip } from './QuotaStrip';
+import { QuotaStrip, UsageSparkline } from './QuotaStrip';
 import type { QuotaSnapshot, QuotaStatus } from '../lib/types';
 
 function snapshot(overrides: Partial<QuotaSnapshot>): QuotaSnapshot {
@@ -166,5 +166,38 @@ describe('QuotaStrip — credits rows', () => {
     // Misleading "100%" / progress bar must not appear for credits rows.
     expect(screen.queryByText('100%')).toBeNull();
     expect(document.querySelector('.quota-strip__row--credits .quota-strip__track')).toBeNull();
+  });
+});
+
+describe('UsageSparkline', () => {
+  it('uses totalTokens before cost when token usage is available', () => {
+    render(
+      <UsageSparkline
+        dailyUsage={[
+          { date: '2026-06-12', cost: '0', totalTokens: 0 },
+          { date: '2026-06-13', cost: '0', totalTokens: 2400 },
+        ]}
+        currencySymbol="¥"
+        currencyCode="CNY"
+      />,
+    );
+
+    expect(document.querySelector('.quota-strip__sparkline')?.getAttribute('data-has-data')).toBe('true');
+    expect(screen.getByText('2026-06-13 · 2.4k tok')).toBeTruthy();
+  });
+
+  it('falls back to cost when token usage is unavailable', () => {
+    render(
+      <UsageSparkline
+        dailyUsage={[
+          { date: '2026-06-12', cost: '0.18', totalTokens: 0 },
+        ]}
+        currencySymbol="¥"
+        currencyCode="CNY"
+      />,
+    );
+
+    expect(document.querySelector('.quota-strip__sparkline')?.getAttribute('data-has-data')).toBe('true');
+    expect(screen.getByText('2026-06-12 · ¥0.18 CNY')).toBeTruthy();
   });
 });
